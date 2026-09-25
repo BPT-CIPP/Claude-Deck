@@ -1,0 +1,19 @@
+{
+  "name": "claude-deck",
+  "version": "1.0.0",
+  "description": "A Windows dashboard for running, watching and resuming Claude Code sessions, as in-app chats or Windows Terminal tabs.",
+  "private": true,
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js --open",
+    "serve": "node src/server.js",
+    "syntax": "node tools/check-syntax.js",
+    "test": "node --test \"test/*.test.js\"",
+    "verify": "node tools/check-syntax.js && node --test \"test/*.test.js\"",
+    "sandbox": "node tools/sandbox.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}

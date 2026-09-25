@@ -1,0 +1,31 @@
+# Claude Deck keeps its runtime data (prefs, token, chats, trash) in %LOCALAPPDATA%\ClaudeDeck,
+# outside the repo, so there's nothing app-specific to ignore here. This covers local clutter.
+
+# Claude Code: the SHARED agent configuration is committed on purpose. The Stop hook and the
+# permission rules in .claude/ are how this repo's rules are enforced rather than merely stated,
+# and a rule that lives on one machine binds nobody. Only the machine-specific pieces are ignored.
+.claude/settings.local.json
+.claude/*.lock
+.claude/scheduled_tasks*
+
+# Personal Claude Code notes for this repo (account, auth, local workflow); see CLAUDE.md
+CLAUDE.local.md
+
+# Dependencies (there are none, but npm creates this if someone runs npm install)
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local environment files
+.env
+.env.*
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
