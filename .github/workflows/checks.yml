@@ -1,0 +1,31 @@
+# Pull request gate. Runs exactly what `npm run verify` runs locally, which is also what the Stop
+# hook in .claude/settings.json runs before a Claude Code session can end, so CI and a working tree
+# can't disagree about what "green" means.
+#
+# Windows, because Claude Deck is Windows-only: the tests expect drive letters, and the syntax
+# check parses Start-ClaudeDeck.ps1 with Windows PowerShell 5.1. There's deliberately no list of
+# test files: `node --test "test/*.test.js"` picks up any new test/*.test.js on its own, so a test
+# can't be added and then silently never run.
+name: checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Every .js file, plus Start-ClaudeDeck.ps1 with Windows PowerShell 5.1's parser.
+      - name: Syntax
+        run: npm run syntax
+
+      # The node:test suite. No Claude API calls: it uses test/fixtures/fake-claude.js.
+      - name: Tests
+        run: npm test

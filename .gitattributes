@@ -1,0 +1,6 @@
+# Same line endings in every clone, whatever each machine's core.autocrlf says, so diffs show only
+# real changes. Windows tools here (Node, Windows PowerShell 5.1, Edge) all read LF files fine.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
