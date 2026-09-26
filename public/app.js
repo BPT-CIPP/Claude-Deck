@@ -458,14 +458,20 @@
       acts.push(h('button', { class: 'danger small', onclick: () => endSession(it) }, 'End session'));
     }
 
+    // Running chats get pickers; everything else shows what's known as text.
     let modelFact = it.model;
-    let modeFact = null;
+    let effortFact = isChat(it) ? it.requestedEffort || null : null;
+    let modeFact = isChat(it) ? it.permissionMode || null : null;
     if (isChat(it) && it.state !== 'exited') {
       modelFact = Deck.modelPicker(S.boot.enums.models, it.requestedModel || '',(m) => run("Couldn't change the model", () => api('POST', `/api/chats/${it.id}/model`, { model: m })), `Default (${it.model || 'from settings'})`);
+      effortFact = h('select', { class: 'small', 'aria-label': 'Effort', onchange: (e) => run("Couldn't change the effort", () => api('POST', `/api/chats/${it.id}/effort`, { effort: e.target.value })) },
+        h('option', { value: '' }, 'Default'),
+        S.boot.enums.efforts.map((v) => h('option', { value: v, selected: v === it.requestedEffort }, v)));
       const modes = ['default', ...S.boot.enums.permissionModes.filter((m) => m !== 'manual')];
       modeFact = h('select', { class: 'small', 'aria-label': 'Permission mode', onchange: (e) => run("Couldn't change the permission mode", () => api('POST', `/api/chats/${it.id}/mode`, { mode: e.target.value })) },
         modes.map((m) => h('option', { value: m, selected: m === (it.permissionMode || 'default') }, m)));
     }
+    const settingFacts = [fact('Model', modelFact), fact('Effort', effortFact), fact('Permissions', modeFact)].filter(Boolean);
 
     return h('div', { class: 'detail-head' },
       h('div', { class: 'card-status' },
@@ -480,24 +486,24 @@
       it.kind === 'external' ? h('p', { class: 'faint', style: { margin: '6px 0 0' } }, 'Started outside Claude Deck. Choose Continue here to reply to it from the dashboard.') : null,
       it.state === 'failed' && it.launchError ? h('p', { class: 'error' }, it.launchError) : null,
       h('dl', { class: 'facts' },
+        // Cut from the start, so the folder's own name stays visible.
         fact('Folder', it.cwd ? h('span', { class: 'row-path' },
-          h('span', { class: 'path-text', title: it.cwd }, it.cwd),
+          h('span', { class: 'path-text', title: it.cwd }, h('bdi', null, it.cwd)),
           h('button', { class: 'ghost icon small', title: 'Copy folder path', onclick: () => copy(it.cwd, 'Folder path copied') }, '⎘'),
           h('button', { class: 'ghost icon small', title: 'Open folder in Explorer', onclick: () => openFolder(it.cwd) }, '↗')
         ) : null, true),
         fact('Branch', it.gitBranch && it.gitBranch !== 'HEAD' ? it.gitBranch : null),
-        fact('Model', modelFact),
-        fact('Permissions', modeFact),
+        fact('Session ID', it.sessionId, true),
         fact('Prompts', it.userTurns || null),
         fact('Est. cost', money(it.costUSD)),
-        fact('Session ID', it.sessionId, true),
         isTerminal(it) ? fact('Window', it.windowName) : it.kind === 'external' ? fact('Process', it.pid) : null),
+      settingFacts.length ? h('dl', { class: 'facts' }, settingFacts) : null,
       h('div', { class: 'actions' }, acts));
   }
 
   // Only rebuild the header when something it shows changed, so dropdowns aren't reset mid-use.
   function headSignature(it) {
-    return JSON.stringify([it.key, it.state, it.status, it.waitingFor, heading(it), it.title, it.name, it.model, it.requestedModel, it.permissionMode,
+    return JSON.stringify([it.key, it.state, it.status, it.waitingFor, heading(it), it.title, it.name, it.model, it.requestedModel, it.requestedEffort, it.permissionMode,
       it.costUSD, it.sessionId, it.color, it.gitBranch, it.cwd, it.exitCode, it.note, it.userTurns, ago(it.statusSince),
       it.runningTasks, it.taskCount, Boolean(S.showTasks[it.id]), Boolean(S.showChanges[it.key])]);
   }

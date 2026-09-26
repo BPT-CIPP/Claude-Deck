@@ -18,7 +18,7 @@ const { EventEmitter } = require('events');
 const paths = require('./paths');
 const prefsStore = require('./prefs');
 const { isScript } = require('./claude-locate');
-const { normalizeOptions, buildClaudeArgs, displayCommand, requireClaude, requireFolder, PERMISSION_MODES } = require('./launcher');
+const { normalizeOptions, buildClaudeArgs, displayCommand, requireClaude, requireFolder, PERMISSION_MODES, EFFORTS } = require('./launcher');
 const { readTranscript } = require('./history');
 const { SubagentLog } = require('./subagents');
 const { readJson, writeJsonAtomic, clip, UserError } = require('./util');
@@ -767,6 +767,19 @@ class ChatManager extends EventEmitter {
     return { ok: true };
   }
 
+  // Changes a running chat's effort for its next requests; '' goes back to the model's default.
+  // apply_flag_settings is session-scoped, like --effort (docs/CLAUDE-CODE-INTERNALS.md).
+  async setEffort(id, effort) {
+    const chat = this._get(id);
+    if (effort !== '' && !EFFORTS.includes(effort)) throw new UserError('Unknown effort level.');
+    await this._request(chat, { subtype: 'apply_flag_settings', settings: { effortLevel: effort || null } });
+    chat.options.effort = effort;
+    this._push(chat, { kind: 'note', text: `Effort changed to ${effort || 'the default'}.` });
+    this._changed(chat);
+    this._save();
+    return { ok: true };
+  }
+
   async setPermissionMode(id, mode) {
     const chat = this._get(id);
     if (!PERMISSION_MODES.includes(mode) && mode !== 'default') throw new UserError('Unknown permission mode.');
@@ -884,6 +897,7 @@ class ChatManager extends EventEmitter {
       lastReply: chat.lastReply,
       chatModel: chat.model,
       requestedModel: chat.options.model || '',
+      requestedEffort: chat.options.effort || '',
       permissionMode: chat.permissionMode,
       chatCost: chat.costUSD,
       exitCode: chat.exitCode,

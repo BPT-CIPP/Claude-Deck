@@ -8,7 +8,8 @@
 // Stream mode (--input-format stream-json): speaks the same JSON protocol as the real CLI.
 // Prompts containing "write" ask permission for Write, "ask" asks a question, "slow" takes 3s
 // (and can be interrupted), "delegate" / "delegate slow" / "delegate foreground" start subagents,
-// "run slow" runs a shell command reported as a task; anything else is echoed back.
+// "run slow" runs a shell command reported as a task, "which effort" reports the effort level;
+// anything else is echoed back.
 
 const fs = require('fs');
 const path = require('path');
@@ -85,6 +86,7 @@ function streamMode() {
   let n = 0;
   let turn = Promise.resolve();
   let interrupted = null;
+  let effort = flagValue('--effort');
 
   const init = () => out({ type: 'system', subtype: 'init', session_id: sessionId, model: flagValue('--model') || 'claude-fake', permissionMode: flagValue('--permission-mode') || 'default', cwd: process.cwd() });
   const text = (t) => {
@@ -224,6 +226,11 @@ function streamMode() {
       text('Slow reply done.');
       return result();
     }
+    // Reports the effort the next request would use: --effort, as changed by apply_flag_settings.
+    if (/which effort/i.test(prompt)) {
+      text(`Effort: ${effort || 'default'}`);
+      return result();
+    }
     text(`Echo: ${prompt}`);
     return result();
   }
@@ -248,6 +255,8 @@ function streamMode() {
           else setImmediate(() => { if (interrupted) interrupted(); });
         }
         if (sub === 'stop_task' && stopTask.has(m.request.task_id)) stopTask.get(m.request.task_id)();
+        // Like the real CLI: effortLevel changes the session's effort; null goes back to the default.
+        if (sub === 'apply_flag_settings' && m.request.settings && 'effortLevel' in m.request.settings) effort = m.request.settings.effortLevel;
         let response = sub === 'initialize' ? { commands: [{ name: 'compact', description: 'Summarize the conversation', argumentHint: '' }] } : {};
         // Like the real CLI (2.1.281): rewinding needs checkpointing turned on by env var. The
         // file named by FAKE_REWIND_FILE stands in for a file the turn created; rewinding deletes it.

@@ -83,7 +83,8 @@ session_id}`. `content` can include `{type:'image', source:{type:'base64', media
 blocks, and image-only messages work. Control requests are
 `{type:'control_request', request_id, request:{subtype, ...}}` with subtypes `initialize`
 (returns `commands`, the slash commands), `interrupt`, `set_model`, `set_permission_mode`,
-`stop_task` `{task_id}` and `rewind_files` (see File checkpoints).
+`apply_flag_settings` (effort, below), `stop_task` `{task_id}` and `rewind_files` (see File
+checkpoints).
 
 ✅ **Received:** `system` (`init`, `status`, `task_*`), `assistant`, `user` (tool results),
 `result`, `control_request`, `control_cancel_request`, `control_response`, `command_lifecycle`.
@@ -111,6 +112,13 @@ capabilities in `system/init` (`interrupt_receipt_v1`, `interrupt_cancel_queued_
 also accepts `cancel_queued: true` (cancels everything queued; the response lists `cancelled`), and
 its response reports `still_queued` (uuids that survive a plain interrupt). The field descriptions
 inside `claude.exe` document these; verified by probe against the mock.
+
+✅ **Changing effort mid-session.** There's no `set_effort`. `control_request` `apply_flag_settings`
+`{settings:{effortLevel}}` changes it for the running session, from the next API request on:
+`output_config.effort` in the request follows it (`low`, `high`, `xhigh`, `max` checked), and
+`effortLevel: null` goes back to the model's default (`medium` for Opus). Like `--effort`, it only
+lasts for this process; nothing is written to settings files. Verified with 2.1.281 against the
+mock, which logs each request's `output_config` (a direct probe, and through Claude Deck's picker).
 
 ✅ **Text as it's written.** `--include-partial-messages` adds `stream_event` messages
 (`content_block_delta` / `text_delta`, ~60 ms apart, thinking deltas too). Claude Deck deliberately
