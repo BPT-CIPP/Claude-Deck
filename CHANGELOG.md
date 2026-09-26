@@ -6,6 +6,14 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.4.0] - 2026-09-26
+
+### Added
+- Each release now includes a manifest (`claude-deck-vX.Y.Z-manifest.json`) listing every file with
+  its size and SHA-256. `node tools\release-manifest.js verify <manifest>` checks that a folder
+  holds exactly that release and names any file that's missing or different. Earlier releases
+  have one too.
+
 ## [1.3.1] - 2026-09-26
 
 ### Fixed
@@ -55,6 +63,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.4.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.1.0...v1.2.0

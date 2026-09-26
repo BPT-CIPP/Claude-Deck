@@ -1,6 +1,7 @@
 # Publishes a release for each version that reaches main. When a merge brings a package.json version
 # that has no vX.Y.Z tag yet, this tags the merge commit and creates the GitHub release, with that
-# version's CHANGELOG.md section as the notes. Merges that don't change the version publish nothing.
+# version's CHANGELOG.md section as the notes and the release manifest (every file with its SHA-256,
+# tools/release-manifest.js) attached. Merges that don't change the version publish nothing.
 # The version and changelog were already checked on the pull request (checks.yml).
 name: release
 
@@ -36,5 +37,7 @@ jobs:
             exit 0
           fi
           node tools/changelog.js notes "$version" > "$RUNNER_TEMP/notes.md"
-          gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --notes-file "$RUNNER_TEMP/notes.md"
+          manifest="$RUNNER_TEMP/claude-deck-$tag-manifest.json"
+          node tools/release-manifest.js build "$GITHUB_SHA" > "$manifest"
+          gh release create "$tag" "$manifest" --target "$GITHUB_SHA" --title "$tag" --notes-file "$RUNNER_TEMP/notes.md"
           echo "Released $tag."
