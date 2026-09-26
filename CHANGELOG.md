@@ -6,6 +6,14 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.6.1] - 2026-09-26
+
+### Fixed
+- Hovering over a plugin in the Plugins menu (or tabbing to it) shows a card with its name,
+  marketplace, category, install count and its full description. Before, the tooltip showed only
+  the plugin's ID, and descriptions over 300 characters (41 in the official marketplace) were cut
+  off.
+
 ## [1.6.0] - 2026-09-26
 
 ### Added
@@ -93,6 +101,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.6.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.3.1...v1.4.0

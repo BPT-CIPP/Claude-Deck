@@ -505,7 +505,49 @@
   // Claude Code's plugins, through its own CLI (src/plugins.js). A change applies to every Claude
   // Code session; the chat whose menu it is picks it up at once (reload_plugins). The menu lives on
   // <body>, not in the header, because the header is rebuilt whenever the chat's status changes.
-  const plugins = { byCwd: new Map(), loading: new Map(), pop: null, search: '', openCategories: new Set() };
+  const plugins = { byCwd: new Map(), loading: new Map(), pop: null, search: '', openCategories: new Set(), card: null };
+  const PLUGIN_CARD_DELAY_MS = 300;
+
+  // A plugin's full name and description, beside the menu, while its row is hovered or focused
+  // (the row itself shows two lines of the description).
+  function withPluginCard(rowEl, pl) {
+    let timer = null;
+    const show = () => {
+      hidePluginCard();
+      const pop = plugins.pop && plugins.pop.el;
+      if (!pop || !rowEl.isConnected) return;
+      const facts = [
+        pl.marketplace,
+        pl.category ? pl.category.charAt(0).toUpperCase() + pl.category.slice(1) : null,
+        pl.installCount ? `${pl.installCount.toLocaleString()} installs` : null,
+        pl.version ? `version ${pl.version}` : null,
+      ].filter(Boolean).join(' · ');
+      const card = h('div', { class: 'pp-card', role: 'tooltip' },
+        h('strong', null, pl.name),
+        facts ? h('small', { class: 'faint' }, facts) : null,
+        h('p', null, pl.description || 'No description.'),
+        h('code', null, pl.id));
+      document.body.appendChild(card);
+      const box = pop.getBoundingClientRect();
+      const row = rowEl.getBoundingClientRect();
+      let left = box.left - card.offsetWidth - 8;
+      if (left < 8) left = Math.min(box.right + 8, window.innerWidth - card.offsetWidth - 8);
+      card.style.left = `${Math.round(left)}px`;
+      card.style.top = `${Math.round(Math.max(8, Math.min(row.top, window.innerHeight - card.offsetHeight - 8)))}px`;
+      plugins.card = card;
+    };
+    const hide = () => { clearTimeout(timer); hidePluginCard(); };
+    rowEl.addEventListener('mouseenter', () => { clearTimeout(timer); timer = setTimeout(show, PLUGIN_CARD_DELAY_MS); });
+    rowEl.addEventListener('mouseleave', hide);
+    rowEl.addEventListener('focusin', show);
+    rowEl.addEventListener('focusout', hide);
+    return rowEl;
+  }
+
+  function hidePluginCard() {
+    if (plugins.card) plugins.card.remove();
+    plugins.card = null;
+  }
 
   function pluginSummary(list) {
     if (!list) return 'Plugins';
@@ -551,6 +593,7 @@
 
   function closePluginsMenu() {
     const p = plugins.pop;
+    hidePluginCard();
     if (!p) return;
     p.el.remove();
     if (p.btn) p.btn.setAttribute('aria-expanded', 'false');
@@ -562,6 +605,7 @@
     closePluginsMenu();
     const el = h('div', { class: 'plugin-pop', role: 'dialog', 'aria-label': 'Plugins' });
     el.addEventListener('click', (e) => e.stopPropagation());
+    el.addEventListener('scroll', hidePluginCard);
     document.body.appendChild(el);
     plugins.pop = { el, btn, chatId: it.id, cwd: it.cwd || '', busy: new Set(), error: null };
     btn.setAttribute('aria-expanded', 'true');
@@ -576,6 +620,7 @@
     const p = plugins.pop;
     if (!p) return;
     const list = plugins.byCwd.get(p.cwd);
+    hidePluginCard();
     const el = clear(p.el);
     el.appendChild(h('div', { class: 'pp-head' },
       h('strong', null, 'Plugins'),
@@ -588,26 +633,27 @@
     el.appendChild(h('div', { class: 'pp-section' }, 'Installed'));
     if (!list.installed.length) el.appendChild(h('p', { class: 'faint pp-empty' }, 'No plugins installed yet. Install one from the marketplace below.'));
     for (const pl of list.installed) {
-      el.appendChild(h('label', { class: 'pp-row', title: pl.id },
+      el.appendChild(withPluginCard(h('label', { class: 'pp-row' },
         h('span', { class: 'pp-name' }, pl.name, h('small', { class: 'faint' }, pl.marketplace)),
         pl.description ? h('span', { class: 'pp-desc' }, pl.description) : null,
-        h('input', { type: 'checkbox', class: 'pp-control', checked: pl.enabled, disabled: p.busy.has(pl.id), 'aria-label': `Turn ${pl.name} on`, onchange: (e) => setPluginEnabled(pl, e.target.checked) })));
+        h('input', { type: 'checkbox', class: 'pp-control', checked: pl.enabled, disabled: p.busy.has(pl.id), 'aria-label': `Turn ${pl.name} on`, onchange: (e) => setPluginEnabled(pl, e.target.checked) })), pl));
     }
     el.appendChild(h('div', { class: 'pp-section' }, 'Marketplace'));
     const search = h('input', { type: 'search', class: 'pp-search', value: plugins.search, placeholder: `Search ${list.available.length} plugin${list.available.length === 1 ? '' : 's'}`, spellcheck: 'false', 'aria-label': 'Search the marketplace' });
     const results = h('div', { class: 'pp-results' });
     const row = (pl) => {
       const busy = p.busy.has(pl.id);
-      return h('div', { class: 'pp-row', title: pl.id },
+      return withPluginCard(h('div', { class: 'pp-row' },
         h('span', { class: 'pp-name' }, pl.name, h('small', { class: 'faint' }, pl.marketplace)),
         pl.description ? h('span', { class: 'pp-desc' }, pl.description) : null,
-        h('button', { type: 'button', class: 'ghost small pp-control', disabled: busy, onclick: () => installPlugin(pl) }, busy ? 'Installing…' : 'Install'));
+        h('button', { type: 'button', class: 'ghost small pp-control', disabled: busy, onclick: () => installPlugin(pl) }, busy ? 'Installing…' : 'Install')), pl);
     };
     // Grouped by the category each marketplace gives its plugins (plain list if none have one).
     // Groups start closed; a search opens every group with a match.
     const fill = () => {
       const q = plugins.search.trim().toLowerCase();
       const hits = list.available.filter((pl) => !q || `${pl.name} ${pl.description} ${pl.marketplace} ${pl.category || ''}`.toLowerCase().includes(q));
+      hidePluginCard();
       clear(results);
       if (!list.available.length) results.appendChild(h('p', { class: 'faint pp-empty' }, 'Nothing more to install. Add marketplaces in Claude Code Settings.'));
       else if (!hits.length) results.appendChild(h('p', { class: 'faint pp-empty' }, 'No plugins match.'));

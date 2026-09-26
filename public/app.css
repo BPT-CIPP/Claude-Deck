@@ -1236,6 +1236,27 @@ label.pp-row { cursor: pointer; }
 .pp-group[open] > summary::before { transform: rotate(90deg); }
 .pp-group > summary:hover { background: var(--raise); }
 .pp-group > .pp-row { margin-left: 14px; }
+.pp-card {
+  position: fixed;
+  z-index: 31;
+  width: min(360px, calc(100vw - 16px));
+  max-height: 70vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--line-soft);
+  padding: 12px 14px;
+  pointer-events: none;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.pp-card strong { font-size: 14px; overflow-wrap: anywhere; }
+.pp-card p { margin: 6px 0 2px; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pp-card code { font-family: var(--mono); font-size: 11px; color: var(--faint); overflow-wrap: anywhere; }
 .plugin-pop .pp-search { display: block; width: calc(100% - 16px); margin: 2px 8px 6px; }
 .pp-empty { margin: 4px 8px 8px; font-size: 12.5px; }
 .pp-foot { border-top: 1px solid var(--line-soft); margin-top: 6px; padding: 8px 8px 2px; }

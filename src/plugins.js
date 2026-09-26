@@ -18,6 +18,8 @@ const { readJson, clip, UserError } = require('./util');
 const LIST_TTL_MS = 60 * 1000;
 // Installs and marketplace updates clone git repositories.
 const RUN_TIMEOUT_MS = 5 * 60 * 1000;
+// Descriptions are shown in full in the menu's hover card; the official marketplace's longest is ~700.
+const DESCRIPTION_MAX = 2000;
 // Install refusals that mean "a person has to see this command first", not a failure.
 const NEEDS_CONFIRMATION = new Set(['command_source_refused', 'entry_helper_unconfirmed']);
 
@@ -69,10 +71,10 @@ class PluginManager {
       installed: data.installed.map((p) => {
         const meta = readJson(path.join(String(p.installPath || ''), '.claude-plugin', 'plugin.json'), {}) || {};
         const [name, marketplace] = String(p.id).split('@');
-        return { id: p.id, name: meta.name || name, marketplace, description: clip(String(meta.description || ''), 300), category: categoryOf(name, marketplace), version: p.version || null, scope: p.scope || null, enabled: p.enabled === true };
+        return { id: p.id, name: meta.name || name, marketplace, description: clip(String(meta.description || ''), DESCRIPTION_MAX), category: categoryOf(name, marketplace), version: p.version || null, scope: p.scope || null, enabled: p.enabled === true };
       }).sort((a, b) => a.name.localeCompare(b.name)),
       available: (Array.isArray(data.available) ? data.available : []).map((p) => ({
-        id: p.pluginId, name: p.name, marketplace: p.marketplaceName, description: clip(String(p.description || ''), 300), category: categoryOf(p.name, p.marketplaceName), installCount: p.installCount || null,
+        id: p.pluginId, name: p.name, marketplace: p.marketplaceName, description: clip(String(p.description || ''), DESCRIPTION_MAX), category: categoryOf(p.name, p.marketplaceName), installCount: p.installCount || null,
       })).filter((p) => p.id).sort((a, b) => a.name.localeCompare(b.name)),
     };
     this.cache.set(key, { at: Date.now(), value });
