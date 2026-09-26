@@ -149,6 +149,7 @@ class ChatManager extends EventEmitter {
       commands: [],
       tasks: new Map(), // subagents: task_id -> task
       agentLogs: new Map(), // task_id -> SubagentLog (its transcript, read as it grows)
+      queuedImages: new Map(), // commandUuid -> full images of a message still waiting, so it can be taken back
       stderr: '',
       exitCode: null,
       ending: false,
@@ -282,6 +283,7 @@ class ChatManager extends EventEmitter {
       if (t.status === 'running') { t.status = 'stopped'; t.endedAt = Date.now(); }
     }
     // Messages still waiting in line were never read.
+    chat.queuedImages.clear();
     for (const it of chat.items) {
       if (it.kind === 'user' && it.queued) {
         it.queued = false;
@@ -407,6 +409,8 @@ class ChatManager extends EventEmitter {
         break;
       case 'command_lifecycle':
         // "started" means Claude has picked the message up, so it's no longer waiting in line.
+        // Either way, once it's out of the queue its images needn't be kept for taking it back.
+        if (m.state !== 'queued') chat.queuedImages.delete(m.command_uuid);
         if (m.state === 'started') {
           const it = [...chat.items].reverse().find((x) => x.kind === 'user' && x.commandUuid === m.command_uuid);
           if (it && it.queued) {
@@ -532,8 +536,37 @@ class ChatManager extends EventEmitter {
     const imageNote = images.length ? `[${images.length} image${images.length === 1 ? '' : 's'}]` : '';
     chat.lastPrompt = clip(`${imageNote} ${text.trim().replace(/\s+/g, ' ')}`.trim(), 300);
     this._push(chat, { kind: 'user', text, images: images.map((img) => img.thumb).filter(Boolean), imageCount: images.length, commandUuid: uuid, queued: wasBusy });
+    // Only while it waits in line: if it's taken back to edit, its images go back with it.
+    if (wasBusy && images.length) chat.queuedImages.set(uuid, images.map((img) => ({ mediaType: img.mediaType, data: img.data, thumb: img.thumb })));
     this._changed(chat);
     return { queued: chat.queued > 0 };
+  }
+
+  // Takes the messages still waiting in Claude's queue back out, oldest first, so they can be
+  // edited and sent again (↑ in the reply box). Claude drops each one it hasn't started yet
+  // (cancel_async_message); one it has already picked up stays in the conversation.
+  async unqueue(id) {
+    const chat = this._get(id);
+    const waiting = chat.items.filter((it) => it.kind === 'user' && it.queued);
+    const messages = [];
+    for (const it of waiting) {
+      // Taken before asking: Claude reports the "cancelled" lifecycle (which drops them) before
+      // it answers the request.
+      const images = chat.queuedImages.get(it.commandUuid) || [];
+      let res = null;
+      try {
+        res = await this._request(chat, { subtype: 'cancel_async_message', message_uuid: it.commandUuid });
+      } catch { /* this Claude Code can't take it back; leave it queued */ }
+      if (!res || res.cancelled !== true) continue;
+      messages.push({ text: it.text, images });
+      chat.queuedImages.delete(it.commandUuid);
+      it.queued = false;
+      it.withdrawn = true;
+      chat.queued = Math.max(0, chat.queued - 1);
+      this._touch(chat, it);
+    }
+    if (messages.length) this._changed(chat);
+    return { messages };
   }
 
   // Stop what Claude is doing, then send this message right away.

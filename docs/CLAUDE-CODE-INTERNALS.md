@@ -100,8 +100,17 @@ picks up after an interrupt (it may merge several into one turn), so busy state 
 ends with `terminal_reason: aborted_streaming`.
 
 ✅ **Queued messages.** `command_lifecycle` `{command_uuid, state}` reports `queued`, `started` and
-`completed`, keyed by the `uuid` we sent, which is how a message sent while Claude works is shown as
-queued until it's picked up.
+then one of `completed`, `cancelled`, `discarded` or `refused`, keyed by the `uuid` we sent, which is
+how a message sent while Claude works is shown as queued until it's picked up. Messages queued
+behind a running reply stay queued until it finishes, then usually run together as one turn.
+
+✅ **Taking a queued message back.** `control_request` `cancel_async_message` `{message_uuid}` drops
+it from the queue: the response is `{cancelled: true}`, or `{cancelled: false}` if Claude already
+started it. The `cancelled` lifecycle arrives *before* the response. Advertised with 2.1.281's
+capabilities in `system/init` (`interrupt_receipt_v1`, `interrupt_cancel_queued_v1`): `interrupt`
+also accepts `cancel_queued: true` (cancels everything queued; the response lists `cancelled`), and
+its response reports `still_queued` (uuids that survive a plain interrupt). The field descriptions
+inside `claude.exe` document these; verified by probe against the mock.
 
 ✅ **Text as it's written.** `--include-partial-messages` adds `stream_event` messages
 (`content_block_delta` / `text_delta`, ~60 ms apart, thinking deltas too). Claude Deck deliberately

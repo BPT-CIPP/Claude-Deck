@@ -127,7 +127,7 @@ over.
 | --- | --- |
 | **Board** | Every session as a card, grouped by what it needs: *Needs you* (a permission prompt or question), *Working*, *Idle*, *Ended*. Each card shows the title, Claude's last reply or your last prompt, folder, branch and how long it has been in that state. Answer permission prompts right on the card (**Allow** / **Deny**); **End** stops a session. |
 | **Focus view** | The session list on the left, one session in full on the right. **F** switches between board and focus. |
-| **Chat** | Each reply appears whole once Claude has finished it, while a spinner (with Claude Code's playful verbs and the elapsed time) shows it's working. Tool calls expand to show their input and result. **Enter** sends, **Shift+Enter** adds a line, **/** lists the session's slash commands. While Claude works, **Enter** queues your message (marked *Queued* until Claude picks it up) and **Interrupt** stops Claude and sends it now. Change model or permission mode from the header. |
+| **Chat** | Each reply appears whole once Claude has finished it, while a spinner (with Claude Code's playful verbs and the elapsed time) shows it's working. Tool calls expand to show their input and result. **Enter** sends, **Shift+Enter** adds a line, **/** lists the session's slash commands. While Claude works, **Enter** queues your message (marked *Queued* until Claude picks it up) and **Interrupt** stops Claude and sends it now. As in Claude Code's terminal, **↑** in an empty reply box takes queued messages back out of the queue to edit (images included), or otherwise brings back your previous messages, for example the one you just interrupted; **↓** steps forward again. Change model or permission mode from the header. |
 | **Images** | Paste with **Ctrl+V** or **Alt+V** (as in Claude Code), drop image files on the reply box, or use **Image**. Large images are scaled down to fit the API's limits. |
 | **Permission prompts** | *Allow once*, Claude's own suggestion (for example *Always allow Bash(npm test:\*) in this project*), or *Deny*, optionally telling Claude what to do instead. |
 | **Questions** | When Claude asks a multiple-choice question, pick one or more options or type your own answer. |
@@ -152,6 +152,7 @@ Press **?** in Claude Deck for this list.
 | **↑ ↓ ← →** | Move between sessions |
 | **Enter** | Open the selected session; resume it if it's an ended chat |
 | **Esc** | Back to the board |
+| **↑** / **↓** in an empty reply box | Take queued messages back to edit; otherwise step through your earlier messages |
 | **Ctrl+Tab** / **Ctrl+Shift+Tab** | Next / previous session, even while typing a reply |
 | **Ctrl+W** | End the selected chat (with Undo). On an ended chat, remove it. Asks first if Claude is mid-task. |
 | **Ctrl+K** | Search sessions, history and commands |

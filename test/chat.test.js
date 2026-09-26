@@ -163,6 +163,32 @@ test('a message sent while Claude works is marked queued until Claude picks it u
   assert.strictEqual(idle.queued, false, 'a message sent while idle is never labelled queued');
 });
 
+test('queued messages can be taken back to edit, with their images, and Claude never answers them', async () => {
+  mgr.send(id, 'slow first');
+  await waitFor(() => mgr.summary(mgr.chats.get(id)).status === 'busy' || null, 'busy');
+  mgr.send(id, { text: 'take me back', images: [{ mediaType: 'image/png', data: PNG, thumb: `data:image/png;base64,${PNG}` }] });
+  mgr.send(id, 'and me');
+  const [a, b] = items().filter((i) => i.kind === 'user').slice(-2);
+  assert.ok(a.queued && b.queued);
+
+  const res = await mgr.unqueue(id);
+  assert.deepStrictEqual(res.messages.map((m) => [m.text, m.images.length]), [['take me back', 1], ['and me', 0]], 'oldest first, with the full image');
+  assert.strictEqual(res.messages[0].images[0].data, PNG);
+  for (const n of [a.n, b.n]) {
+    const it = items().find((i) => i.n === n);
+    assert.strictEqual(it.withdrawn, true);
+    assert.strictEqual(it.queued, false);
+  }
+  await waitFor(() => lastOf('assistant') && lastOf('assistant').text === 'Slow reply done.' || null, 'the slow turn finishes');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(!items().some((i) => i.kind === 'assistant' && /take me back|and me/.test(i.text)), 'Claude never answered them');
+  assert.strictEqual(mgr.summary(mgr.chats.get(id)).status, 'idle');
+  assert.deepStrictEqual((await mgr.unqueue(id)).messages, [], 'nothing left to take back');
+  // The chat carries on normally, and the edited message is simply sent again.
+  mgr.send(id, 'take me back, edited');
+  await waitFor(() => lastOf('assistant') && lastOf('assistant').text === 'Echo: take me back, edited' || null, 'reply to the edited message');
+});
+
 test('after an interrupt, the chat shows busy while Claude works on the new message', async () => {
   mgr.send(id, 'slow one');
   await waitFor(() => mgr.summary(mgr.chats.get(id)).status === 'busy' || null, 'busy');

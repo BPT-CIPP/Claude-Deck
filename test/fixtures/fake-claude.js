@@ -109,6 +109,8 @@ function streamMode() {
   const toolResult = (id, content, isError) => out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: isError || undefined }] }, parent_tool_use_id: null, session_id: sessionId });
 
   const stopTask = new Map(); // task_id -> stop()
+  const queuedUuids = new Set(); // messages waiting for their turn
+  const cancelledUuids = new Set(); // messages taken back with cancel_async_message
 
   // A background subagent, in the message shapes the real CLI uses: system task_* messages, plus
   // the subagent's own tool calls tagged with parent_tool_use_id. "delegate slow" runs ~3s.
@@ -252,6 +254,18 @@ function streamMode() {
             response = { canRewind: true, skippedLinks: [] };
           }
         }
+        // Like the real CLI: drops a message still waiting in the queue (lifecycle "cancelled"),
+        // or answers cancelled:false once it has started.
+        if (sub === 'cancel_async_message') {
+          const id = m.request.message_uuid;
+          const waitingInLine = queuedUuids.has(id);
+          if (waitingInLine) {
+            queuedUuids.delete(id);
+            cancelledUuids.add(id);
+            out({ type: 'command_lifecycle', command_uuid: id, state: 'cancelled', session_id: sessionId });
+          }
+          response = { cancelled: waitingInLine };
+        }
         // Like the real CLI: no system/init until the first user message arrives.
         out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response } });
       } else if (m.type === 'control_response') {
@@ -268,7 +282,14 @@ function streamMode() {
         // turn begins, completed after its result (as the real CLI reports it).
         const lifecycle = (state) => { if (m.uuid) out({ type: 'command_lifecycle', command_uuid: m.uuid, state, session_id: sessionId }); };
         lifecycle('queued');
-        turn = turn.then(async () => { lifecycle('started'); await handle(prompt, images); lifecycle('completed'); });
+        if (m.uuid) queuedUuids.add(m.uuid);
+        turn = turn.then(async () => {
+          if (cancelledUuids.has(m.uuid)) return; // taken back before its turn
+          queuedUuids.delete(m.uuid);
+          lifecycle('started');
+          await handle(prompt, images);
+          lifecycle('completed');
+        });
       }
     }
   });
