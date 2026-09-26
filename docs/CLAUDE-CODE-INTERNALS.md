@@ -100,6 +100,13 @@ picks up after an interrupt (it may merge several into one turn), so busy state 
 `result` ends a turn. Its `total_cost_usd` is cumulative for the process, and an interrupted turn
 ends with `terminal_reason: aborted_streaming`.
 
+✅ **Sleep mid-turn.** If the PC sleeps while Claude works, the turn carries on after waking. The
+transcript shows `system` entries with subtype `api_error` ("Connection error." / "Can't reach the
+API server") while Claude retries, then the turn resumes and ends normally. `duration_ms` in the
+`result` is clock time, sleep included, so Claude Deck subtracts the sleep it detects
+(`_checkSleep` in `src/chat.js`). Seen in a 2.1.281 transcript: a 7-minute gap, then retries, then
+a 140-minute gap between retries, then the turn finished.
+
 ✅ **Queued messages.** `command_lifecycle` `{command_uuid, state}` reports `queued`, `started` and
 then one of `completed`, `cancelled`, `discarded` or `refused`, keyed by the `uuid` we sent, which is
 how a message sent while Claude works is shown as queued until it's picked up. Messages queued

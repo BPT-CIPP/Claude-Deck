@@ -29,6 +29,10 @@ const STREAM_ARGS = ['--output-format', 'stream-json', '--verbose', '--input-for
 const MAX_ITEMS = 1500;
 // How often running subagents' transcripts are read for live steps and token usage.
 const AGENT_POLL_MS = 1500;
+// Sleep detection: nothing runs while Windows sleeps, so on waking the time since the last check
+// (every SLEEP_TICK_MS) is far longer than usual. A gap over SLEEP_GAP_MS counts as asleep.
+const SLEEP_TICK_MS = 1000;
+const SLEEP_GAP_MS = 15000;
 
 function toolDetail(input) {
   if (!input || typeof input !== 'object') return '';
@@ -118,6 +122,27 @@ class ChatManager extends EventEmitter {
     }
     this.saveTimer = null;
     this.agentTimer = null;
+    this.lastAwake = Date.now();
+    this.sleepTimer = setInterval(() => this._checkSleep(), SLEEP_TICK_MS);
+    this.sleepTimer.unref();
+  }
+
+  // Time the PC spent asleep isn't time Claude spent working: it's taken out of a working chat's
+  // timer (statusSince moves forward) and out of the turn's "Done in". Chats waiting on you or
+  // idle keep counting, since they really were waiting that long. Also runs before each message
+  // from Claude, which can arrive on waking before the next tick.
+  _checkSleep(now = Date.now()) {
+    const slept = now - this.lastAwake;
+    this.lastAwake = now;
+    if (slept < SLEEP_GAP_MS) return;
+    for (const chat of this.chats.values()) {
+      if (!chat.proc || !chat.busy) continue;
+      chat.turnSleptMs += slept;
+      if (this._status(chat).status === 'busy') {
+        chat.statusSince = Math.min(now, chat.statusSince + slept);
+        this._changed(chat);
+      }
+    }
   }
 
   _blank(fields) {
@@ -155,6 +180,7 @@ class ChatManager extends EventEmitter {
       ending: false,
       statusKey: null,
       statusSince: Date.now(),
+      turnSleptMs: 0, // time asleep during the current turn, left out of its "Done in"
       command: fields.command || '',
     };
   }
@@ -274,6 +300,7 @@ class ChatManager extends EventEmitter {
     chat.proc = null;
     chat.pid = null;
     chat.busy = false;
+    chat.turnSleptMs = 0;
     for (const w of chat.requests.values()) w.reject(new Error('Claude Code exited.'));
     chat.requests.clear();
     for (const p of chat.pending.values()) this._resolveItem(chat, p.requestId, 'cancelled', 'Claude ended before this was answered.');
@@ -338,6 +365,7 @@ class ChatManager extends EventEmitter {
   }
 
   _onMessage(chat, m) {
+    this._checkSleep();
     switch (m.type) {
       case 'system':
         if (m.subtype === 'init') {
@@ -399,7 +427,10 @@ class ChatManager extends EventEmitter {
           const detail = m.result || (Array.isArray(m.errors) ? m.errors.join('\n') : '') || m.subtype;
           this._push(chat, { kind: 'error', text: `Claude hit an error: ${clip(String(detail), 2000)}` });
         }
-        this._push(chat, { kind: 'result', durationMs: m.duration_ms || null, isError: m.is_error === true, aborted });
+        // Claude's duration_ms is clock time, sleep included.
+        const durationMs = m.duration_ms ? Math.max(0, m.duration_ms - chat.turnSleptMs) : null;
+        chat.turnSleptMs = 0;
+        this._push(chat, { kind: 'result', durationMs, isError: m.is_error === true, aborted });
         this._changed(chat);
         this._save();
         break;
