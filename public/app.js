@@ -1243,7 +1243,11 @@
       if (spin.chatId === it.id || !isChat(it)) stopSpinner();
       return;
     }
-    if (spin.chatId === it.id && spin.timer) return;
+    if (spin.chatId === it.id && spin.timer) {
+      // The server moves statusSince forward after the PC sleeps, so sleep isn't counted as working.
+      if (it.statusSince) spin.since = it.statusSince;
+      return;
+    }
     stopSpinner();
     Object.assign(spin, { chatId: it.id, frame: 0, verb: pickVerb(), verbAt: Date.now(), since: it.statusSince || Date.now() });
     spin.timer = setInterval(spinTick, SPIN_FRAME_MS);

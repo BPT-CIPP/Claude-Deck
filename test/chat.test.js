@@ -95,6 +95,38 @@ test('effort changes for the running session, and back to the default', async ()
   }
 });
 
+test('time the PC spends asleep is not counted as working time', () => {
+  // A stand-in for a chat whose Claude is mid-turn; the demo chat (idle) is left as it is.
+  const chat = mgr._blank({ id: 'sleep-check', cwd });
+  Object.assign(chat, { proc: {}, state: 'running', busy: true, statusKey: 'busy' });
+  mgr.chats.set(chat.id, chat);
+  const idle = mgr.chats.get(id);
+  try {
+    const now = Date.now();
+    chat.statusSince = now - 30 * 60000; // working for 30 minutes by the clock...
+    const idleSince = idle.statusSince;
+    mgr.lastAwake = now - 20 * 60000; // ...20 of them asleep
+    mgr._checkSleep(now);
+    assert.strictEqual(mgr.summary(chat).statusSince, now - 10 * 60000);
+    assert.strictEqual(idle.statusSince, idleSince, 'an idle chat really was idle that long');
+    // An ordinary gap between checks isn't sleep.
+    mgr._checkSleep(now + 5000);
+    assert.strictEqual(chat.statusSince, now - 10 * 60000);
+    // Waiting on you: the timer keeps counting, but the turn's "Done in" still leaves sleep out.
+    chat.pending.set('req-1', { requestId: 'req-1', toolName: 'Write' });
+    const waitingSince = chat.statusSince;
+    mgr._checkSleep(now + 5000 + 5 * 60000);
+    assert.strictEqual(chat.statusSince, waitingSince);
+    chat.pending.clear();
+    mgr._onMessage(chat, { type: 'result', subtype: 'success', duration_ms: 40 * 60000, total_cost_usd: 0 });
+    assert.strictEqual([...chat.items].reverse().find((i) => i.kind === 'result').durationMs, 15 * 60000);
+    assert.strictEqual(chat.turnSleptMs, 0, 'the next turn starts fresh');
+  } finally {
+    mgr.chats.delete(chat.id);
+    mgr.lastAwake = Date.now();
+  }
+});
+
 test('a permission prompt waits for an answer; deny sends the message back', async () => {
   mgr.send(id, 'please write a file');
   const perm = await waitFor(() => { const p = lastOf('permission'); return p && p.status === 'pending' ? p : null; }, 'permission prompt');
