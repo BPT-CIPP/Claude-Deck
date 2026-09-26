@@ -98,7 +98,10 @@ http.createServer((req, res) => {
     try { body = JSON.parse(raw || '{}'); } catch { /* ignore */ }
     const lastUser = [...(body.messages || [])].reverse().find((m) => m.role === 'user');
     const blocks = lastUser && Array.isArray(lastUser.content) ? lastUser.content.map((b) => b.type).join(',') : '-';
-    console.log(`[mock] ${req.method} ${url} model=${body.model || '-'} tools=${(body.tools || []).length} last-user-blocks=${blocks}`);
+    // Effort and thinking settings, so probes can see what Claude asked for.
+    const effort = body.output_config ? JSON.stringify(body.output_config) : '-';
+    const thinking = body.thinking ? JSON.stringify(body.thinking) : '-';
+    console.log(`[mock] ${req.method} ${url} model=${body.model || '-'} tools=${(body.tools || []).length} last-user-blocks=${blocks} output_config=${effort} thinking=${thinking}`);
     if (url.endsWith('/count_tokens')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ input_tokens: 42 }));

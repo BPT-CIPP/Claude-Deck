@@ -322,6 +322,7 @@ async function main() {
     // Takes queued messages back out of Claude's queue to edit: { messages: [{ text, images }] }.
     'POST /api/chats/:id/unqueue': (req, p) => chats.unqueue(p.id),
     'POST /api/chats/:id/model': async (req, p) => chats.setModel(p.id, (await readBody(req)).model),
+    'POST /api/chats/:id/effort': async (req, p) => chats.setEffort(p.id, (await readBody(req)).effort),
     'POST /api/chats/:id/mode': async (req, p) => chats.setPermissionMode(p.id, (await readBody(req)).mode),
     // { keep? }: keep leaves the chat on the board as ended (Ctrl+W's first press).
     'POST /api/chats/:id/end': async (req, p) => {

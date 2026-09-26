@@ -67,6 +67,34 @@ test('replies arrive whole: Claude is not asked for text as it is written', asyn
   assert.ok(!('partial' in mgr.detail(id)));
 });
 
+test('effort changes for the running session, and back to the default', async () => {
+  const c = mgr.create({ cwd, effort: 'low', prompt: 'which effort at the start?' });
+  const its = () => mgr.detail(c.id).items;
+  const last = (kind) => [...its()].reverse().find((i) => i.kind === kind);
+  const replies = () => its().filter((i) => i.kind === 'result').length;
+  try {
+    await waitFor(() => replies() === 1, 'first reply');
+    assert.strictEqual(last('assistant').text, 'Effort: low');
+    assert.strictEqual(mgr.summary(mgr.chats.get(c.id)).requestedEffort, 'low');
+    await assert.rejects(mgr.setEffort(c.id, 'extreme'), /Unknown effort level/);
+    await mgr.setEffort(c.id, 'xhigh');
+    assert.strictEqual(mgr.summary(mgr.chats.get(c.id)).requestedEffort, 'xhigh');
+    assert.strictEqual(mgr.optionsOf(c.id).effort, 'xhigh');
+    assert.strictEqual(last('note').text, 'Effort changed to xhigh.');
+    mgr.send(c.id, 'which effort now?');
+    await waitFor(() => replies() === 2, 'reply at xhigh');
+    assert.strictEqual(last('assistant').text, 'Effort: xhigh');
+    await mgr.setEffort(c.id, '');
+    assert.strictEqual(mgr.summary(mgr.chats.get(c.id)).requestedEffort, '');
+    assert.strictEqual(last('note').text, 'Effort changed to the default.');
+    mgr.send(c.id, 'which effort now?');
+    await waitFor(() => replies() === 3, 'reply at the default');
+    assert.strictEqual(last('assistant').text, 'Effort: default');
+  } finally {
+    await mgr.end(c.id);
+  }
+});
+
 test('a permission prompt waits for an answer; deny sends the message back', async () => {
   mgr.send(id, 'please write a file');
   const perm = await waitFor(() => { const p = lastOf('permission'); return p && p.status === 'pending' ? p : null; }, 'permission prompt');
