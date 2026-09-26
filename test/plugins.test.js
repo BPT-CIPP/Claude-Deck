@@ -46,10 +46,19 @@ test('lists installed plugins and what the marketplaces offer, and caches the li
   assert.strictEqual(await pm.list(cwd), list, 'the second call is served from the cache');
 });
 
+test("each plugin carries the category its marketplace gives it, or none", async () => {
+  const list = await pm.list(cwd, { refresh: true });
+  assert.deepStrictEqual(list.available.map((p) => [p.id, p.category]), [
+    ['hello@fake-market', 'productivity'],
+    ['scripted@fake-market', null],
+    ['tools@fake-market', 'development'],
+  ]);
+});
+
 test('installing moves a plugin to installed, with its description from its own plugin.json', async () => {
   assert.deepStrictEqual(await pm.install('hello@fake-market', { cwd }), { ok: true, scope: 'user' });
   const list = await pm.list(cwd);
-  assert.deepStrictEqual(list.installed.map((p) => [p.id, p.enabled, p.scope, p.description]), [['hello@fake-market', true, 'user', 'Adds a /hello command.']]);
+  assert.deepStrictEqual(list.installed.map((p) => [p.id, p.enabled, p.scope, p.description, p.category]), [['hello@fake-market', true, 'user', 'Adds a /hello command.', 'productivity']]);
   assert.ok(!list.available.some((p) => p.id === 'hello@fake-market'));
 });
 

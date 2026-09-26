@@ -357,8 +357,8 @@ function loadPluginState() {
     return {
       marketplaces: [{ name: 'fake-market', source: 'github', repo: 'example/fake-market' }],
       catalog: [
-        { id: 'hello@fake-market', description: 'Adds a /hello command.' },
-        { id: 'tools@fake-market', description: 'Adds tools through an MCP server.', tools: true },
+        { id: 'hello@fake-market', description: 'Adds a /hello command.', category: 'productivity' },
+        { id: 'tools@fake-market', description: 'Adds tools through an MCP server.', category: 'development', tools: true },
         { id: 'scripted@fake-market', description: 'Installed by a command the marketplace declares.', command: 'npx fake-plugin-installer', sha256: 'f00dfeed' },
       ],
       installed: {},
@@ -416,7 +416,14 @@ function pluginMode() {
     const [sub, ...more] = rest;
     const what = more.find((a) => !a.startsWith('-'));
     if (sub === 'list') {
-      process.stdout.write(`${JSON.stringify(state.marketplaces.map((m) => ({ ...m, installLocation: path.join('marketplaces', m.name) })), null, 2)}\n`);
+      // Like the real CLI: each marketplace's own catalog, with categories, is in its installLocation.
+      const home = path.join(process.env.CLAUDE_CONFIG_DIR || '.', 'plugins', 'marketplaces');
+      for (const m of state.marketplaces) {
+        const listed = state.catalog.filter((c) => c.id.endsWith(`@${m.name}`)).map((c) => ({ name: c.id.split('@')[0], description: c.description, source: `./plugins/${c.id.split('@')[0]}`, ...(c.category ? { category: c.category } : {}) }));
+        fs.mkdirSync(path.join(home, m.name, '.claude-plugin'), { recursive: true });
+        fs.writeFileSync(path.join(home, m.name, '.claude-plugin', 'marketplace.json'), JSON.stringify({ name: m.name, owner: { name: 'fake' }, plugins: listed }));
+      }
+      process.stdout.write(`${JSON.stringify(state.marketplaces.map((m) => ({ ...m, installLocation: path.join(home, m.name) })), null, 2)}\n`);
       return;
     }
     if (sub === 'add') {
@@ -424,7 +431,8 @@ function pluginMode() {
       const name = what.split(/[\\/]/).pop();
       state.marketplaces.push({ name, source: 'github', repo: what });
       save();
-      process.stdout.write(`Adding marketplace…√ Successfully added marketplace: ${name} (declared in user settings)\n`);
+      // The real CLI prints progress lines first (a fresh GitHub add prints several).
+      process.stdout.write(`Adding marketplace…Cloning repository (timeout: 120s): ${what}\nClone complete, validating marketplace…√ Successfully added marketplace: ${name} (declared in user settings)\n`);
       return;
     }
     if (sub === 'remove') {
@@ -436,7 +444,7 @@ function pluginMode() {
     }
     if (sub === 'update') {
       const n = what ? 1 : state.marketplaces.length;
-      process.stdout.write(`Updating marketplaces... Successfully updated ${n} marketplace${n === 1 ? '' : 's'}\n`);
+      process.stdout.write(`Updating marketplaces...√ Successfully updated ${n} marketplace${n === 1 ? '' : 's'}\n`);
       return;
     }
   }
