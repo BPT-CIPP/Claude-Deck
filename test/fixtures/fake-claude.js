@@ -240,7 +240,13 @@ function streamMode() {
       const m = JSON.parse(line);
       if (m.type === 'control_request') {
         const sub = m.request.subtype;
-        if (sub === 'interrupt' && interrupted) interrupted();
+        // An interrupt can arrive in the same read as the message it's meant for, before that turn
+        // has started. Like the real CLI, which latches it, still stop that turn: give it a moment
+        // to start first. Without this the interrupt tests were flaky (fine locally, failed in CI).
+        if (sub === 'interrupt') {
+          if (interrupted) interrupted();
+          else setImmediate(() => { if (interrupted) interrupted(); });
+        }
         if (sub === 'stop_task' && stopTask.has(m.request.task_id)) stopTask.get(m.request.task_id)();
         let response = sub === 'initialize' ? { commands: [{ name: 'compact', description: 'Summarize the conversation', argumentHint: '' }] } : {};
         // Like the real CLI (2.1.281): rewinding needs checkpointing turned on by env var. The
