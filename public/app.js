@@ -639,6 +639,8 @@
     }
     S.chat.items.set(e.item.n, e.item);
     upsertChatNode(e.item);
+    // A message joining or leaving the queue changes the reply box's hint.
+    if (e.item.kind === 'user') { const it = findItem(`d:${e.id}`); if (it) updateComposer(it); }
   }
 
   function onChatTasks(e) {
@@ -1056,8 +1058,10 @@
     const n = String(it.n);
     switch (it.kind) {
       case 'user': {
+        // Taken back out of the queue to edit (↑): it's in the reply box now, not the conversation.
+        if (it.withdrawn) return h('div', { dataset: { n }, hidden: true });
         const node = h('div', { class: `msg msg-user${it.queued ? ' queued' : ''}`, dataset: { n }, title: when(it.ts) });
-        if (it.queued) node.appendChild(h('span', { class: 'msg-tag waiting', title: 'Claude reads this when it finishes what it is doing now' }, 'Queued'));
+        if (it.queued) node.appendChild(h('span', { class: 'msg-tag waiting', title: 'Claude reads this when it finishes what it is doing now. Press ↑ in an empty reply box to take it back and edit it.' }, 'Queued'));
         else if (it.undelivered) node.appendChild(h('span', { class: 'msg-tag ended', title: 'The chat ended before Claude read this message' }, 'Not delivered'));
         if (it.images && it.images.length) node.appendChild(h('div', { class: 'msg-images' }, it.images.map((src) => h('img', { src, alt: 'Attached image', class: 'msg-thumb' }))));
         else if (it.imageCount) node.appendChild(h('div', { class: 'faint small' }, `${it.imageCount} image${it.imageCount === 1 ? '' : 's'} attached`));
@@ -1265,6 +1269,21 @@
     if (res) toast('Stopping…');
   }
 
+  // Your earlier messages in the open chat, newest first, for ↑ in the reply box. Queued ones are
+  // left out: ↑ takes those back out of the queue instead.
+  function sentMessages() {
+    if (!S.chat) return [];
+    const live = [...S.chat.items.values()].filter((x) => x.kind === 'user' && !x.withdrawn && !x.queued).sort((a, b) => b.n - a.n).map((x) => x.text);
+    const past = (S.chat.past || []).filter((x) => x.kind === 'user').map((x) => x.text).reverse();
+    const out = [];
+    for (const t of [...live, ...past]) {
+      if (t && t.trim() && !/^\[\d+ images?\]$/.test(t) && out[out.length - 1] !== t) out.push(t);
+    }
+    return out;
+  }
+
+  const hasQueued = () => Boolean(S.chat && [...S.chat.items.values()].some((x) => x.kind === 'user' && x.queued && !x.withdrawn));
+
   function composer(it) {
     const ta = h('textarea', { class: 'composer-input', rows: '1', placeholder: 'Reply to Claude', 'aria-label': 'Message to Claude', spellcheck: 'true' });
     ta.value = S.drafts[it.id] || '';
@@ -1322,7 +1341,59 @@
       ta.focus();
     };
 
+    // ↑ in an empty reply box, as in Claude Code's terminal: queued messages come back out of the
+    // queue to edit; otherwise it steps back through your earlier messages (↓ steps forward, back
+    // to an empty box). A draft you've typed is never replaced: ↑ then just moves the cursor.
+    let recall = null; // { list, index, draft, shown } while stepping through earlier messages
+    const show = (text) => {
+      ta.value = text;
+      S.drafts[it.id] = text;
+      autosize();
+      drawSlash();
+      ta.setSelectionRange(text.length, text.length);
+    };
+    const onFirstLine = () => ta.selectionStart === ta.selectionEnd && !ta.value.slice(0, ta.selectionStart).includes('\n');
+    const onLastLine = () => ta.selectionStart === ta.selectionEnd && !ta.value.slice(ta.selectionEnd).includes('\n');
+    const browsing = () => Boolean(recall && ta.value === recall.shown);
+    const recallOlder = async () => {
+      if (!browsing()) {
+        recall = null;
+        if (hasQueued()) {
+          const res = await run("Couldn't take the queued messages back", () => api('POST', `/api/chats/${it.id}/unqueue`));
+          if (res && res.messages.length) {
+            show(res.messages.map((m) => m.text).filter((t) => t && t.trim()).join('\n\n'));
+            for (const m of res.messages) {
+              for (const img of m.images) {
+                S.attachments[it.id].push({ name: 'Image', bytes: Math.round(img.data.length * 0.75), mediaType: img.mediaType, data: img.data, thumb: img.thumb || `data:${img.mediaType};base64,${img.data}` });
+              }
+            }
+            drawTray();
+            toast(res.messages.length === 1 ? 'Queued message is back in the reply box' : `${res.messages.length} queued messages are back in the reply box`);
+            return;
+          }
+          // Claude had already picked them up; carry on to earlier messages.
+        }
+        recall = { list: sentMessages(), index: -1, draft: ta.value, shown: null };
+      }
+      if (recall.index + 1 >= recall.list.length) return;
+      recall.index++;
+      recall.shown = recall.list[recall.index];
+      show(recall.shown);
+    };
+    const recallNewer = () => {
+      if (recall.index <= 0) {
+        const draft = recall.draft;
+        recall = null;
+        show(draft);
+        return;
+      }
+      recall.index--;
+      recall.shown = recall.list[recall.index];
+      show(recall.shown);
+    };
+
     const submit = async (interrupt) => {
+      recall = null;
       const text = ta.value;
       const list = S.attachments[it.id];
       if (!text.trim() && !list.length) {
@@ -1356,6 +1427,17 @@
         if (e.key === 'ArrowUp') { e.preventDefault(); slashIndex = (slashIndex - 1 + slashItems.length) % slashItems.length; drawSlash(); return; }
         if (e.key === 'Tab') { e.preventDefault(); pick(slashIndex); return; }
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); slash.hidden = true; return; }
+      }
+      const plainKey = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && !e.isComposing;
+      if (plainKey && e.key === 'ArrowUp' && onFirstLine() && (browsing() || (!ta.value && !S.attachments[it.id].length))) {
+        e.preventDefault();
+        recallOlder();
+        return;
+      }
+      if (plainKey && e.key === 'ArrowDown' && browsing() && onLastLine()) {
+        e.preventDefault();
+        recallNewer();
+        return;
       }
       if (e.altKey && e.key.toLowerCase() === 'v') {
         // Alt+V, as in Claude Code: read an image straight from the clipboard.
@@ -1411,9 +1493,13 @@
     c.querySelector('.send-btn').hidden = busy;
     c.querySelector('.send-btn').disabled = exited;
     c.querySelector('.interrupt-btn').hidden = !busy;
-    c.querySelector('.composer-hint').textContent = busy
-      ? 'Claude is working. Enter queues your message for when it finishes this step. Interrupt stops it and sends your message now.'
-      : 'Enter sends. Shift+Enter adds a line. Type / for commands. Ctrl+V or Alt+V pastes an image. Esc goes back to the board.';
+    c.querySelector('.composer-hint').textContent = composerHint(busy);
+  }
+
+  function composerHint(busy) {
+    if (hasQueued()) return 'Claude is working. Your queued messages go when it finishes this step. Press ↑ to take them back and edit them.';
+    if (busy) return 'Claude is working. Enter queues your message for when it finishes this step. Interrupt stops it and sends your message now.';
+    return 'Enter sends. Shift+Enter adds a line. ↑ recalls your last message. / for commands. Ctrl+V or Alt+V pastes an image. Esc goes back.';
   }
 
   // ---- images --------------------------------------------------------------------------------
