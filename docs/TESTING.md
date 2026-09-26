@@ -8,6 +8,7 @@ end-to-end checks run the real `claude.exe` against a local mock of the API.
 ```powershell
 npm run verify    # everything below; the gate for every change
 npm run syntax    # parse every .js file, and Start-ClaudeDeck.ps1 with Windows PowerShell 5.1
+npm run changelog # package.json's version is semver and CHANGELOG.md has a section for it
 npm test          # the node:test suite (test/*.test.js)
 ```
 

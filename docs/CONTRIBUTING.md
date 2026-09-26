@@ -42,8 +42,9 @@ never commit to it directly.
 4. **Verify**: `npm run verify`, plus a sandbox check for anything that changes behavior
    ([TESTING.md](TESTING.md)). If you learned something new about Claude Code's internals, record it
    in [CLAUDE-CODE-INTERNALS.md](CLAUDE-CODE-INTERNALS.md) in the same change.
-5. Bump the version in `package.json` ([Versioning](#versioning)), re-sync onto the newest `main`,
-   then publish:
+5. Bump the version in `package.json` and add its section to `CHANGELOG.md`
+   ([Versioning and releases](#versioning-and-releases)), re-sync onto the newest `main`, then
+   publish:
    ```powershell
    git pull --rebase origin main
    git push -u origin feature/<short-description>
@@ -86,9 +87,10 @@ feat!: move preferences to a new file format
 BREAKING CHANGE: prefs.json is converted on first start; older versions can't read the new file.
 ```
 
-## Versioning
+## Versioning and releases
 
-`package.json` `version` is the single source of truth: semver, bumped in the same change set.
+`package.json` `version` is the single source of truth: [semver](https://semver.org/), bumped in
+the same change set.
 
 | Commit type | Version bump |
 |---|---|
@@ -99,6 +101,18 @@ BREAKING CHANGE: prefs.json is converted on first start; older versions can't re
 
 **Work out the bump from `origin/main` when you push, not from when you branched.** `main` moves
 while you work, and resolving that conflict the wrong way lowers the version.
+
+**Every version bump gets a `CHANGELOG.md` section** in the same change set: a
+`## [X.Y.Z] - YYYY-MM-DD` heading, entries under `### Added` / `### Changed` / `### Fixed` /
+`### Removed` written for the people using Claude Deck, and an `[X.Y.Z]: <compare link>` line at the
+bottom. `npm run verify` (and so CI) fails without it. A change that doesn't bump the version
+(docs-only, for example) doesn't need a section.
+
+**Releases are automatic.** When a merge brings a new version to `main`,
+`.github/workflows/release.yml` tags the merge commit `vX.Y.Z` and publishes a GitHub release whose
+notes are that version's changelog section (`node tools/changelog.js notes X.Y.Z` prints them).
+Don't create tags or releases by hand. Preferences in Claude Deck shows the version the server is
+running, with a link to the releases.
 
 ## Getting a change to everyone
 

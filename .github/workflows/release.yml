@@ -1,0 +1,40 @@
+# Publishes a release for each version that reaches main. When a merge brings a package.json version
+# that has no vX.Y.Z tag yet, this tags the merge commit and creates the GitHub release, with that
+# version's CHANGELOG.md section as the notes. Merges that don't change the version publish nothing.
+# The version and changelog were already checked on the pull request (checks.yml).
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+# Two quick merges can't both try to create the same release.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Publish the release if this version is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="v$version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "$tag already exists; nothing to release."
+            exit 0
+          fi
+          node tools/changelog.js notes "$version" > "$RUNNER_TEMP/notes.md"
+          gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --notes-file "$RUNNER_TEMP/notes.md"
+          echo "Released $tag."
