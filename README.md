@@ -76,7 +76,7 @@ You can skip the task entirely and just use the shortcut ([Troubleshooting](#tro
 Opened as a plain Edge window, a taskbar pin turns into Edge. Installed as an app, Claude Deck gets
 its own name, icon and taskbar button:
 
-1. In Claude Deck, open **Preferences → Taskbar app → Install Claude Deck**. If that button isn't
+1. Open **Claude Deck Preferences → Taskbar app → Install Claude Deck**. If that button isn't
    offered, choose **Open in Edge to install**, then in that Edge tab select the install icon at the
    right end of the address bar (or **…** → **Apps** → **Install Claude Deck**).
 2. Right-click the Claude Deck taskbar icon → **Pin to taskbar**.
@@ -93,14 +93,14 @@ cd <your Claude-Deck folder>
 git pull
 ```
 
-Then in Claude Deck choose **Preferences → Stop server now**, and start it again with the **Start
+Then choose **Claude Deck Preferences → Stop server now**, and start it again with the **Start
 Claude Deck** shortcut or the taskbar pin. A stopped server stays stopped until you start it or next
 sign in. Open chats end when the server stops; they come back as *Ended*, and **Resume** (or Enter)
 continues them. If an update only changed the page itself, reloading the window (Ctrl+R) is enough.
 
 **Checking a copy.** Each [release](https://github.com/BPT-CIPP/Claude-Deck/releases) has a
 `claude-deck-vX.Y.Z-manifest.json` listing every file with its size and SHA-256. To confirm a
-folder holds exactly that release (**Preferences → Version** shows which one you're running),
+folder holds exactly that release (**Claude Deck Preferences → Version** shows which one you're running),
 download the manifest and run, from the folder:
 
 ```powershell
@@ -141,6 +141,7 @@ over.
 | **Board** | Every session as a card, grouped by what it needs: *Needs you* (a permission prompt or question), *Working*, *Idle*, *Ended*. Each card shows the title, Claude's last reply or your last prompt, folder, branch and how long it has been in that state. Answer permission prompts right on the card (**Allow** / **Deny**); **End** stops a session. |
 | **Focus view** | The session list on the left, one session in full on the right. **F** switches between board and focus. |
 | **Chat** | Each reply appears whole once Claude has finished it, while a spinner (with Claude Code's playful verbs and the elapsed time) shows it's working. Tool calls expand to show their input and result. **Enter** sends, **Shift+Enter** adds a line, **/** lists the session's slash commands. While Claude works, **Enter** queues your message (marked *Queued* until Claude picks it up) and **Interrupt** stops Claude and sends it now. As in Claude Code's terminal, **↑** in an empty reply box takes queued messages back out of the queue to edit (images included), or otherwise brings back your previous messages, for example the one you just interrupted; **↓** steps forward again. The header's top row shows the folder, session ID, prompt count and estimated cost; the row below changes the model, effort and permission mode, taking effect from Claude's next step. |
+| **Plugins** | **Plugins** in a chat's header lists Claude Code's plugins. *Installed* has a checkbox to turn each one on or off; *Marketplace* lists what your marketplaces offer, with search and **Install**. Changes apply to all your Claude Code sessions, as `/plugin` does, and the chat you're in picks them up right away. If a change would reset Claude's prompt cache mid-conversation (a plugin that adds tools), you're asked first. A plugin that installs by running a command shows you the command before anything runs. |
 | **Images** | Paste with **Ctrl+V** or **Alt+V** (as in Claude Code), drop image files on the reply box, or use **Image**. Large images are scaled down to fit the API's limits. |
 | **Permission prompts** | *Allow once*, Claude's own suggestion (for example *Always allow Bash(npm test:\*) in this project*), or *Deny*, optionally telling Claude what to do instead. |
 | **Questions** | When Claude asks a multiple-choice question, pick one or more options or type your own answer. |
@@ -150,9 +151,9 @@ over.
 | **History** | Every past conversation, searchable and filterable by folder. Preview it, then **Resume here**, **Resume in terminal** or **Fork a copy**. The trash button deletes a conversation you don't need (with **Undo**; open conversations can't be deleted). |
 | **Plan usage** | Next to *Sessions*: your current session and weekly limits, the same numbers as `/usage` in Claude Code. Click for every limit and reset time. |
 | **Notifications** | A desktop notification (and optional chime) when a session needs you or finishes. The taskbar icon's mascot sweats while anything is working and gets an amber dot when a session needs you. |
-| **Claude settings** | Edits your user, project and project-local `settings.json`, and your user and project `CLAUDE.md`, with a form for every setting, plus raw JSON. Every save backs up the previous file first, and a save is refused if Claude Code changed the file since you opened it. |
+| **Claude Code Settings** | Edits your user, project and project-local `settings.json`, and your user and project `CLAUDE.md`, with a form for every setting, plus raw JSON. Every save backs up the previous file first, and a save is refused if Claude Code changed the file since you opened it. **Plugin marketplaces** lists where Claude Code finds plugins, and adds, updates or removes them. |
 | **Search everything** | **Ctrl+K**: jump to a session, resume a conversation or run a command. |
-| **Themes** | **Preferences → Appearance**: Match Windows, Dark and Light, plus twelve more (Claude, Midnight, Graphite, Nord, Dracula, Forest, Ocean, Solarized Dark, High Contrast, Sepia, Solarized Light, Rose). |
+| **Themes** | **Claude Deck Preferences → Appearance**: Match Windows, Dark and Light, plus twelve more (Claude, Midnight, Graphite, Nord, Dracula, Forest, Ocean, Solarized Dark, High Contrast, Sepia, Solarized Light, Rose). |
 
 ## Keyboard shortcuts
 
@@ -170,9 +171,9 @@ Press **?** in Claude Deck for this list.
 | **Ctrl+W** | End the selected chat (with Undo). On an ended chat, remove it. Asks first if Claude is mid-task. |
 | **Ctrl+K** | Search sessions, history and commands |
 | **/** | Filter |
-| **Alt+1** … **Alt+4** | Sessions, History, Claude settings, Preferences |
+| **Alt+1** … **Alt+4** | Sessions, History, Claude Code Settings, Claude Deck Preferences |
 | **Ctrl+B** | Collapse or expand the sidebar |
-| **Ctrl+S** | Save Claude settings |
+| **Ctrl+S** | Save Claude Code Settings |
 
 Ctrl+Tab and Ctrl+W work in the installed Claude Deck app window. In a plain Edge tab, Edge keeps
 them for its own tabs.
@@ -191,6 +192,9 @@ them for its own tabs.
   editor (after a backup) or delete a conversation from History (moved to Claude Deck's trash, kept
   for 30 days). **Restore to before this turn** changes your project files, after saving their
   current versions for Undo.
+- **Plugins** are installed, turned on or off, and their marketplaces added, updated or removed
+  by Claude Code itself (`claude plugin ...`), only when you ask. Installing or updating downloads
+  from the marketplace's source, usually GitHub. Claude Deck doesn't touch the plugin files.
 
 ## Troubleshooting
 
@@ -202,7 +206,7 @@ downloaded a ZIP instead of cloning, unblock the files first: `Get-ChildItem -Re
 (an existing one won't see the updated PATH) and run the installer again.
 
 **"Claude Code was not found."** Check that `claude --version` works in a terminal. If Claude Code is
-installed somewhere unusual, set its location under **Preferences → Claude Code → Program**.
+installed somewhere unusual, set its location under **Claude Deck Preferences → Claude Code → Program**.
 
 **The sign-in task couldn't be created, or your security tool flags it.** Claude Deck works without
 it: start it with the **Start Claude Deck** shortcut, and leave **Start with Windows** off. To create
@@ -221,7 +225,7 @@ taskbar](#pin-it-to-the-taskbar)), then pin the Claude Deck icon that appears.
 
 **Ctrl+Tab or Ctrl+W doesn't work.** They only reach Claude Deck in the installed app window.
 
-**No desktop notifications.** Turn them on under **Preferences → Notifications** and allow them when
+**No desktop notifications.** Turn them on under **Claude Deck Preferences → Notifications** and allow them when
 Edge asks. Keep the Claude Deck window open (minimized is fine).
 
 **Plan usage is empty.** It needs Claude Code signed in with a Claude plan. API-key setups have no
@@ -240,7 +244,7 @@ Claude Code doesn't document, and an update may have changed them. Chats aren't 
 - **Some of Claude's longer mid-task notes don't appear in chats.** Claude Code saves them only as
   short "thinking" summaries, which Claude Deck doesn't show. Final answers always appear.
 - **Tab order.** In the shared terminal window, **Open terminal** picks the tab by launch order.
-  Dragging tabs around can land it on the wrong one; **Preferences → Windows Terminal** can open a
+  Dragging tabs around can land it on the wrong one; **Claude Deck Preferences → Windows Terminal** can open a
   separate window per session instead.
 - **Outside sessions** (started in your own terminals) can't be brought to the front. **Continue
   here** stops them there and continues the conversation as a chat.

@@ -13,7 +13,7 @@
   const OWN_TABS = new Set(['permissions', 'env', '$schema']);
   // Settings easily mistaken for Claude Deck's own.
   const NOTES = {
-    theme: "Claude Code's colors in terminal sessions (Windows Terminal). It doesn't change Claude Deck's look; that's Preferences → Appearance.",
+    theme: "Claude Code's colors in terminal sessions (Windows Terminal). It doesn't change Claude Deck's look; that's Claude Deck Preferences → Appearance.",
   };
   const SUGGESTIONS = {};
   const PERMISSION_LISTS = [
@@ -22,8 +22,11 @@
     ['deny', 'Never allow', 'Rules that are always refused, for example Read(./.env) or WebFetch.'],
     ['additionalDirectories', 'Extra folders Claude can access', 'Full paths, one per entry.'],
   ];
-  const SCOPE_ORDER = ['user', 'project', 'local', 'memory-user', 'memory-project'];
-  const SCOPE_TABS = { user: 'User', project: 'Project', local: 'Project (local)', 'memory-user': 'User memory', 'memory-project': 'Project memory' };
+  // Plugin marketplaces aren't a file: Claude Code's own `claude plugin marketplace` commands
+  // manage them (src/plugins.js), so they get their own page instead of the file editor.
+  const MARKETPLACES = 'marketplaces';
+  const SCOPE_ORDER = ['user', 'project', 'local', 'memory-user', 'memory-project', MARKETPLACES];
+  const SCOPE_TABS = { user: 'User', project: 'Project', local: 'Project (local)', 'memory-user': 'User memory', 'memory-project': 'Project memory', [MARKETPLACES]: 'Plugin marketplaces' };
 
   const T = {
     ctx: null,
@@ -47,6 +50,7 @@
     backups: [],
     mounted: false,
     loaded: false,
+    market: { list: null, error: null, busy: false },
   };
 
   const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
@@ -510,12 +514,84 @@
     load();
   }
 
+  // ---- plugin marketplaces -------------------------------------------------------------------
+  async function loadMarketplaces() {
+    T.market.error = null;
+    try {
+      T.market.list = await api('GET', '/api/plugins/marketplaces');
+    } catch (err) {
+      T.market.list = null;
+      T.market.error = err.message;
+    }
+    if (T.scope === MARKETPLACES) render();
+  }
+
+  // One change at a time; each one runs a Claude Code command, and adding or updating downloads.
+  async function marketplaceAction(label, fn) {
+    if (T.market.busy) return;
+    T.market.busy = true;
+    render();
+    try {
+      const res = await fn();
+      toast(res && res.message ? res.message : 'Done');
+    } catch (err) {
+      toast(`${label}: ${err.message}`, 'error');
+    }
+    T.market.busy = false;
+    await loadMarketplaces();
+  }
+
+  function marketplacesBody() {
+    const m = T.market;
+    const busy = m.busy;
+    const input = h('input', { type: 'text', placeholder: 'GitHub owner/repo, a git URL, or a folder', spellcheck: 'false', 'aria-label': 'Marketplace to add', disabled: busy });
+    const add = () => {
+      const source = input.value.trim();
+      if (!source) { input.focus(); return; }
+      marketplaceAction("Couldn't add the marketplace", () => api('POST', '/api/plugins/marketplaces', { source }));
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
+    let list;
+    if (m.error) list = h('p', { class: 's-error' }, m.error);
+    else if (!m.list) list = h('p', { class: 'faint' }, 'Loading…');
+    else if (!m.list.length) list = h('p', { class: 'faint' }, 'No marketplaces yet. Add one below.');
+    else {
+      list = h('div', { class: 'market-list' }, m.list.map((mk) => h('div', { class: 'market-row' },
+        h('div', { class: 'market-name' }, h('strong', null, mk.name), h('small', { class: 'faint' }, [mk.source, mk.location].filter(Boolean).join(' · '))),
+        h('button', { type: 'button', class: 'ghost small', disabled: busy, onclick: () => marketplaceAction(`Couldn't update ${mk.name}`, () => api('POST', '/api/plugins/marketplaces/update', { name: mk.name })) }, 'Update'),
+        h('button', {
+          type: 'button',
+          class: 'danger small',
+          disabled: busy,
+          onclick: async () => {
+            const ok = await Deck.confirm({ title: `Remove ${mk.name}?`, body: "Claude Code stops offering its plugins. Plugins you've already installed from it may stop getting updates.", ok: 'Remove', danger: true });
+            if (ok) marketplaceAction(`Couldn't remove ${mk.name}`, () => api('POST', '/api/plugins/marketplaces/remove', { name: mk.name }));
+          },
+        }, 'Remove'))));
+    }
+    return h('div', { class: 'inner market' },
+      h('p', { class: 'muted' }, "Where Claude Code finds plugins to install. Their plugins are listed under Marketplace in a chat's Plugins menu."),
+      h('div', { class: 'market-head' }, h('h3', null, 'Your marketplaces'), h('span', { class: 'spacer' }),
+        busy ? h('span', { class: 'faint' }, 'Working…') : null,
+        h('button', { type: 'button', class: 'ghost small', disabled: busy || !m.list || !m.list.length, onclick: () => marketplaceAction("Couldn't update the marketplaces", () => api('POST', '/api/plugins/marketplaces/update', {})) }, 'Update all')),
+      list,
+      h('h3', null, 'Add a marketplace'),
+      h('div', { class: 'row' }, input, h('button', { type: 'button', class: 'primary', disabled: busy, onclick: add }, 'Add')),
+      h('small', { class: 'faint' }, 'Claude Code downloads it from there. Only add marketplaces you trust: plugins run with your permissions.'));
+  }
+
   function render() {
     const root = clear(T.root);
-    const def = scopeDef();
     const scopes = h('div', { class: 'seg', role: 'tablist', 'aria-label': 'Which file' },
       SCOPE_ORDER.map((s) => h('button', { type: 'button', 'aria-pressed': String(T.scope === s), onclick: () => switchScope(s) }, SCOPE_TABS[s])));
     const bar = h('div', { class: 'scope-bar' }, scopes);
+    const title = h('header', { class: 'view-head' }, h('h1', { id: 'h-settings' }, 'Claude Code Settings'), h('div', { class: 'spacer' }),
+      h('span', { class: 'faint', style: { fontSize: '13px' } }, 'Running sessions may need a restart to pick up changes.'));
+    if (T.scope === MARKETPLACES) {
+      root.appendChild(h('div', { class: 'settings' }, title, bar, h('div', { class: 'settings-body' }, marketplacesBody())));
+      return;
+    }
+    const def = scopeDef();
     if (def.needsFolder) {
       const input = h('input', { type: 'text', value: T.folder, list: 'settings-folders', placeholder: 'Project folder', spellcheck: 'false', 'aria-label': 'Project folder' });
       const dl = h('datalist', { id: 'settings-folders' });
@@ -531,8 +607,7 @@
         h('button', { type: 'button', class: 'ghost', onclick: async () => { const p = await T.ctx.pickFolder(T.folder); if (p) go(p); } }, 'Browse…')));
     }
     root.appendChild(h('div', { class: 'settings' },
-      h('header', { class: 'view-head' }, h('h1', { id: 'h-settings' }, 'Claude settings'), h('div', { class: 'spacer' }),
-        h('span', { class: 'faint', style: { fontSize: '13px' } }, 'Running sessions may need a restart to pick up changes.')),
+      title,
       bar,
       T.file ? h('div', { class: 'file-line' },
         h('span', null, def.label),
@@ -567,6 +642,13 @@
     T.parseError = null;
     T.loadError = null;
     T.backups = [];
+    if (T.scope === MARKETPLACES) {
+      T.file = null;
+      T.loaded = true;
+      render();
+      loadMarketplaces();
+      return;
+    }
     if (scopeDef().needsFolder && !T.folder) {
       T.file = null;
       render();
@@ -645,6 +727,11 @@
     },
     show() {
       if (!T.loaded) load();
+    },
+    // From a chat's Plugins menu.
+    showMarketplaces() {
+      if (T.scope === MARKETPLACES && T.loaded) return loadMarketplaces();
+      return switchScope(MARKETPLACES);
     },
     save() {
       return save(false);

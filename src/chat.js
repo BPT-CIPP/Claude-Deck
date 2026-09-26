@@ -33,6 +33,16 @@ const AGENT_POLL_MS = 1500;
 // (every SLEEP_TICK_MS) is far longer than usual. A gap over SLEEP_GAP_MS counts as asleep.
 const SLEEP_TICK_MS = 1000;
 const SLEEP_GAP_MS = 15000;
+// How long a plugin reload keeps trying for Claude to notice the settings change, and how often.
+const PLUGIN_RELOAD_WAIT_MS = 8000;
+const PLUGIN_RELOAD_RETRY_MS = 750;
+
+// Slash commands, as initialize and reload_plugins report them.
+function commandList(commands) {
+  return Array.isArray(commands)
+    ? commands.map((c) => ({ name: String(c.name || ''), description: clip(String(c.description || ''), 160), argumentHint: String(c.argumentHint || '') })).filter((c) => c.name)
+    : [];
+}
 
 function toolDetail(input) {
   if (!input || typeof input !== 'object') return '';
@@ -288,9 +298,7 @@ class ChatManager extends EventEmitter {
         chat.state = 'running';
         this._changed(chat);
       }
-      chat.commands = Array.isArray(res.commands)
-        ? res.commands.map((c) => ({ name: String(c.name || ''), description: clip(String(c.description || ''), 160), argumentHint: String(c.argumentHint || '') })).filter((c) => c.name)
-        : [];
+      chat.commands = commandList(res.commands);
       this.emit('item', { id: chat.id, meta: true });
     }).catch(() => {});
   }
@@ -809,6 +817,31 @@ class ChatManager extends EventEmitter {
     this._changed(chat);
     this._save();
     return { ok: true };
+  }
+
+  // Applies a plugin change to a running chat, like /reload-plugins. The change is already in
+  // Claude Code's settings, but a running Claude re-reads them on its own schedule (about a second
+  // later), so this reloads until the plugin shows up (or is gone). Unless forced, Claude holds back
+  // a reload that would change its tools mid-conversation, which would lose its prompt cache; the
+  // page asks first. See docs/CLAUDE-CODE-INTERNALS.md, "Plugins".
+  async reloadPlugins(id, { pluginId, enabled, force } = {}) {
+    const chat = this._get(id);
+    if (!chat.proc) return { applied: false, reason: 'ended' };
+    const until = Date.now() + PLUGIN_RELOAD_WAIT_MS;
+    for (;;) {
+      const res = (await this._request(chat, { subtype: 'reload_plugins', ...(force ? {} : { hold_on_cache_impact: true }) }, 30000)) || {};
+      if (res.held) return { applied: false, held: true };
+      const loaded = Array.isArray(res.plugins) && res.plugins.some((p) => p && p.source === pluginId);
+      if (!pluginId || loaded === Boolean(enabled)) {
+        chat.commands = commandList(res.commands);
+        this.emit('item', { id: chat.id, meta: true });
+        if (pluginId) this._push(chat, { kind: 'note', text: `${pluginId.split('@')[0]} ${enabled ? 'is on' : 'is off'} in this chat now.` });
+        this._changed(chat);
+        return { applied: true };
+      }
+      if (Date.now() > until) return { applied: false, reason: 'timeout' };
+      await new Promise((r) => setTimeout(r, PLUGIN_RELOAD_RETRY_MS));
+    }
   }
 
   async setPermissionMode(id, mode) {

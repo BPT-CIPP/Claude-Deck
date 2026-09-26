@@ -27,7 +27,7 @@
 .PARAMETER InstallStartup
     Registers a scheduled task, "Claude Deck", that runs the server in the background every time
     you sign in to Windows, as you. The task keeps it running: it restarts the server if it
-    crashes, and leaves it stopped if you stop it on purpose (Preferences > Stop server now).
+    crashes, and leaves it stopped if you stop it on purpose (Claude Deck Preferences > Stop server now).
 
 .PARAMETER RemoveStartup
     Removes the sign-in task (and the older Startup-folder shortcut, if present).
@@ -178,7 +178,7 @@ if ($Install) {
     }
     $claudeFound = (Get-Command claude -ErrorAction SilentlyContinue) -or (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.local\bin\claude.exe'))
     if (-not $claudeFound) {
-        Write-Warning 'Claude Code was not found. Install it, or set its path later under Preferences > Claude Code.'
+        Write-Warning 'Claude Code was not found. Install it, or set its path later under Claude Deck Preferences > Claude Code.'
     }
     $edgePaths = @(
         (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'),

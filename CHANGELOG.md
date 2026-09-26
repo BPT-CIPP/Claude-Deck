@@ -6,6 +6,24 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.5.0] - 2026-09-26
+
+### Added
+- A Plugins menu in a chat's header, to the right of Permissions.
+  - *Installed* lists Claude Code's plugins, with a checkbox to turn each one on or off.
+  - *Marketplace* lists what your marketplaces offer, with search and **Install**. An installed
+    plugin moves up to *Installed*.
+  - Changes apply to all your Claude Code sessions, and the chat you're in picks them up right
+    away. If that would reset Claude's prompt cache mid-conversation (a plugin that adds tools),
+    you're asked first.
+  - A plugin that installs by running a command shows you the command before anything runs.
+- **Plugin marketplaces** in Claude Code Settings lists where Claude Code finds plugins, and adds,
+  updates or removes them.
+
+### Changed
+- "Claude settings" is now **Claude Code Settings**, and "Preferences" is now **Claude Deck
+  Preferences**, so each says whose settings it holds.
+
 ## [1.4.0] - 2026-09-26
 
 ### Added
@@ -63,6 +81,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.5.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.2.0...v1.3.0

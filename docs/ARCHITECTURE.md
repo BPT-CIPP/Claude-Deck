@@ -37,7 +37,7 @@ Edge app window ──HTTP + server-sent events (per-install token)──► nod
   last pass) and caches the index in `history-cache.json`.
 - **The page** (`public/`) is plain scripts on `window.Deck` with no framework and no build:
   `lib.js` (helpers), `app.js` (board, focus view, chat, history, palette, preferences),
-  `settings-ui.js` (the Claude settings editor), `spinner-verbs.js` and `tick-worker.js`.
+  `settings-ui.js` (the Claude Code Settings editor), `spinner-verbs.js` and `tick-worker.js`.
 
 ## Code layout
 
@@ -45,12 +45,14 @@ Edge app window ──HTTP + server-sent events (per-install token)──► nod
 Start-ClaudeDeck.ps1    launcher; -Install / -Uninstall; the sign-in task and its -Service supervisor loop
 src/server.js           HTTP API + events + static files; single instance via runtime.json
 src/chat.js             in-app chats: stream-json, permission/question answers, images, queue vs
-                        interrupt-and-send, subagent (task_*) tracking, model and permission mode
+                        interrupt-and-send, subagent (task_*) tracking, model, effort and permission
+                        mode, plugin reloads, sleep left out of working time
 src/live.js             joins chats + terminal registry + tab status + sessions/<pid>.json; notify events
 src/history.js          incremental transcript indexer + transcript reader
 src/launcher.js         claude argument building, model aliases, wt.exe new-tab / focus-tab, close / resume
 src/tab-host.js         runs inside each Windows Terminal tab; starts claude, reports pid and session id
 src/settings-files.js   Claude settings and CLAUDE.md: read, write (backup first), restore
+src/plugins.js          plugins and marketplaces, through Claude Code's own `claude plugin ... --json`
 src/folders.js          directory listing and new-folder for the in-app folder picker
 src/timeline.js         change timeline: files per turn from Claude's file checkpoints, diffs, restore, undo
 src/trash.js            deleting a conversation: moves its files to the trash, Undo, 30-day purge
@@ -63,8 +65,10 @@ public/                 index.html, app.css, lib.js, app.js, settings-ui.js, spi
 tools/check-syntax.js   parses every .js file, and Start-ClaudeDeck.ps1 with Windows PowerShell 5.1
 tools/sandbox.js        a throwaway Claude Deck against a mock API, for testing (see TESTING.md)
 tools/make-icons.js     generates public/icons/*.png and claude-deck.ico (pure Node)
+tools/changelog.js      checks CHANGELOG.md has the package.json version; prints a version's notes
+tools/release-manifest.js  every file in a release with its SHA-256; checks a copy against it
 test/*.test.js          node:test suite; test/helpers.js sandboxes CLAUDE_CONFIG_DIR and CLAUDE_DECK_DATA
-test/fixtures/          fake-claude.js (terminal and stream-json modes), mock-anthropic-api.js
+test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes), mock-anthropic-api.js
 ```
 
 ## Why it's built this way

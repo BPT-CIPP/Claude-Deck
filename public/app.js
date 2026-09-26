@@ -471,7 +471,7 @@
       modeFact = h('select', { class: 'small', 'aria-label': 'Permission mode', onchange: (e) => run("Couldn't change the permission mode", () => api('POST', `/api/chats/${it.id}/mode`, { mode: e.target.value })) },
         modes.map((m) => h('option', { value: m, selected: m === (it.permissionMode || 'default') }, m)));
     }
-    const settingFacts = [fact('Model', modelFact), fact('Effort', effortFact), fact('Permissions', modeFact)].filter(Boolean);
+    const settingFacts = [fact('Model', modelFact), fact('Effort', effortFact), fact('Permissions', modeFact), isChat(it) ? fact('Plugins', pluginsButton(it)) : null].filter(Boolean);
 
     return h('div', { class: 'detail-head' },
       h('div', { class: 'card-status' },
@@ -500,6 +500,193 @@
       settingFacts.length ? h('dl', { class: 'facts' }, settingFacts) : null,
       h('div', { class: 'actions' }, acts));
   }
+
+  // ---- plugins menu (chat header) ------------------------------------------------------------
+  // Claude Code's plugins, through its own CLI (src/plugins.js). A change applies to every Claude
+  // Code session; the chat whose menu it is picks it up at once (reload_plugins). The menu lives on
+  // <body>, not in the header, because the header is rebuilt whenever the chat's status changes.
+  const PLUGIN_RESULTS_MAX = 60;
+  const plugins = { byCwd: new Map(), loading: new Map(), pop: null, search: '' };
+
+  function pluginSummary(list) {
+    if (!list) return 'Plugins';
+    const on = list.installed.filter((p) => p.enabled).length;
+    return list.installed.length ? `${on} of ${list.installed.length} on` : 'None installed';
+  }
+
+  function loadPlugins(cwd, refresh) {
+    const key = cwd || '';
+    if (!refresh && plugins.loading.has(key)) return plugins.loading.get(key);
+    const req = api('GET', `/api/plugins?cwd=${encodeURIComponent(key)}${refresh ? '&refresh=1' : ''}`)
+      .then((list) => { plugins.byCwd.set(key, list); return list; })
+      .finally(() => plugins.loading.delete(key));
+    plugins.loading.set(key, req);
+    return req;
+  }
+
+  function updatePluginButtons() {
+    for (const b of $$('.plugin-btn')) b.textContent = `${pluginSummary(plugins.byCwd.get(b.dataset.cwd))} ▾`;
+  }
+
+  async function refreshPlugins(cwd) {
+    try { await loadPlugins(cwd, true); } catch (err) { if (plugins.pop) plugins.pop.error = err.message; }
+    updatePluginButtons();
+    renderPluginsMenu();
+  }
+
+  function pluginsButton(it) {
+    const key = it.cwd || '';
+    const btn = h('button', {
+      type: 'button',
+      class: 'ghost small plugin-btn',
+      dataset: { cwd: key },
+      'aria-haspopup': 'dialog',
+      'aria-expanded': String(Boolean(plugins.pop && plugins.pop.chatId === it.id)),
+      title: "Claude Code's plugins: turn them on or off, or install more",
+      onclick: (e) => { e.stopPropagation(); togglePluginsMenu(it, btn); },
+    }, `${pluginSummary(plugins.byCwd.get(key))} ▾`);
+    if (!plugins.byCwd.has(key)) loadPlugins(key).then(updatePluginButtons).catch(() => {});
+    if (plugins.pop && plugins.pop.chatId === it.id) plugins.pop.btn = btn;
+    return btn;
+  }
+
+  function closePluginsMenu() {
+    const p = plugins.pop;
+    if (!p) return;
+    p.el.remove();
+    if (p.btn) p.btn.setAttribute('aria-expanded', 'false');
+    plugins.pop = null;
+  }
+
+  function togglePluginsMenu(it, btn) {
+    if (plugins.pop && plugins.pop.chatId === it.id) { closePluginsMenu(); return; }
+    closePluginsMenu();
+    const el = h('div', { class: 'plugin-pop', role: 'dialog', 'aria-label': 'Plugins' });
+    el.addEventListener('click', (e) => e.stopPropagation());
+    document.body.appendChild(el);
+    plugins.pop = { el, btn, chatId: it.id, cwd: it.cwd || '', busy: new Set(), error: null };
+    btn.setAttribute('aria-expanded', 'true');
+    renderPluginsMenu();
+    const r = btn.getBoundingClientRect();
+    el.style.top = `${Math.round(r.bottom + 6)}px`;
+    el.style.left = `${Math.round(Math.max(8, Math.min(r.left, window.innerWidth - el.offsetWidth - 8)))}px`;
+    refreshPlugins(it.cwd);
+  }
+
+  function renderPluginsMenu() {
+    const p = plugins.pop;
+    if (!p) return;
+    const list = plugins.byCwd.get(p.cwd);
+    const el = clear(p.el);
+    el.appendChild(h('div', { class: 'pp-head' },
+      h('strong', null, 'Plugins'),
+      h('small', { class: 'faint' }, 'Changes apply to all your Claude Code sessions. This chat picks them up right away.')));
+    if (p.error) el.appendChild(h('p', { class: 'error pp-empty' }, p.error));
+    if (!list) {
+      if (!p.error) el.appendChild(h('p', { class: 'faint pp-empty' }, 'Loading…'));
+      return;
+    }
+    el.appendChild(h('div', { class: 'pp-section' }, 'Installed'));
+    if (!list.installed.length) el.appendChild(h('p', { class: 'faint pp-empty' }, 'No plugins installed yet. Install one from the marketplace below.'));
+    for (const pl of list.installed) {
+      el.appendChild(h('label', { class: 'pp-row', title: pl.id },
+        h('span', { class: 'pp-name' }, pl.name, h('small', { class: 'faint' }, pl.marketplace)),
+        pl.description ? h('span', { class: 'pp-desc' }, pl.description) : null,
+        h('input', { type: 'checkbox', class: 'pp-control', checked: pl.enabled, disabled: p.busy.has(pl.id), 'aria-label': `Turn ${pl.name} on`, onchange: (e) => setPluginEnabled(pl, e.target.checked) })));
+    }
+    el.appendChild(h('div', { class: 'pp-section' }, 'Marketplace'));
+    const search = h('input', { type: 'search', class: 'pp-search', value: plugins.search, placeholder: `Search ${list.available.length} plugin${list.available.length === 1 ? '' : 's'}`, spellcheck: 'false', 'aria-label': 'Search the marketplace' });
+    const results = h('div', { class: 'pp-results' });
+    const fill = () => {
+      const q = plugins.search.trim().toLowerCase();
+      const hits = list.available.filter((pl) => !q || `${pl.name} ${pl.description} ${pl.marketplace}`.toLowerCase().includes(q));
+      clear(results);
+      if (!list.available.length) results.appendChild(h('p', { class: 'faint pp-empty' }, 'Nothing more to install. Add marketplaces in Claude Code Settings.'));
+      else if (!hits.length) results.appendChild(h('p', { class: 'faint pp-empty' }, 'No plugins match.'));
+      for (const pl of hits.slice(0, PLUGIN_RESULTS_MAX)) {
+        const busy = p.busy.has(pl.id);
+        results.appendChild(h('div', { class: 'pp-row', title: pl.id },
+          h('span', { class: 'pp-name' }, pl.name, h('small', { class: 'faint' }, pl.marketplace)),
+          pl.description ? h('span', { class: 'pp-desc' }, pl.description) : null,
+          h('button', { type: 'button', class: 'ghost small pp-control', disabled: busy, onclick: () => installPlugin(pl) }, busy ? 'Installing…' : 'Install')));
+      }
+      if (hits.length > PLUGIN_RESULTS_MAX) results.appendChild(h('p', { class: 'faint pp-empty' }, `${hits.length - PLUGIN_RESULTS_MAX} more. Search to narrow the list.`));
+    };
+    search.addEventListener('input', () => { plugins.search = search.value; fill(); });
+    fill();
+    el.appendChild(search);
+    el.appendChild(results);
+    el.appendChild(h('div', { class: 'pp-foot' },
+      h('button', { type: 'button', class: 'link', onclick: () => { closePluginsMenu(); setView('settings'); Deck.SettingsUI.showMarketplaces(); } }, 'Manage marketplaces in Claude Code Settings')));
+  }
+
+  // What happened in the chat the change was made from.
+  async function afterPluginChange(chatId, pl, what, on, reload) {
+    const later = `${what}. This chat picks it up when it starts again.`;
+    if (!reload || reload.reason === 'ended') return toast(later);
+    if (reload.applied) return toast(`${what}, in this chat too.`);
+    if (!reload.held) return toast(later);
+    const ok = await Deck.confirm({
+      title: 'Apply it to this chat now?',
+      body: `${pl.name} changes the tools Claude has. Applying that mid-conversation makes Claude's next reply re-read the whole conversation instead of using its cache, which uses more of your plan (or costs more with an API key). Otherwise this chat picks it up when it starts again.`,
+      ok: 'Apply now',
+    });
+    if (!ok) return toast(later);
+    const r = await run("Couldn't apply it to this chat", () => api('POST', `/api/chats/${chatId}/reload-plugins`, { pluginId: pl.id, enabled: on, force: true }));
+    if (r) toast(r.applied ? `${what}, in this chat too.` : later);
+    return undefined;
+  }
+
+  async function setPluginEnabled(pl, on) {
+    const p = plugins.pop;
+    if (!p) return;
+    const { chatId, cwd } = p;
+    p.busy.add(pl.id);
+    renderPluginsMenu();
+    const res = await run(`Couldn't turn ${on ? 'on' : 'off'} ${pl.name}`, () => api('POST', '/api/plugins/enabled', { id: pl.id, enabled: on, cwd, chatId }));
+    p.busy.delete(pl.id);
+    await refreshPlugins(cwd);
+    if (res) afterPluginChange(chatId, pl, `${pl.name} is ${on ? 'on' : 'off'}`, on, res.reload);
+  }
+
+  // Some marketplaces install a plugin by running a command; Claude Code won't until a person has
+  // seen it, so it's shown here and accepted by its checksum (exactly that command, nothing else).
+  async function installPlugin(pl) {
+    const p = plugins.pop;
+    if (!p) return;
+    const { chatId, cwd } = p;
+    const install = (acceptCommand) => run(`Couldn't install ${pl.name}`, () => api('POST', '/api/plugins/install', { id: pl.id, cwd, chatId, acceptCommand }));
+    p.busy.add(pl.id);
+    renderPluginsMenu();
+    let res = await install();
+    if (res && res.needsConfirmation) {
+      const ok = await Deck.confirm({
+        title: `Run this command to install ${pl.name}?`,
+        body: 'This marketplace installs the plugin by running a command on this PC, as you. Only continue if you trust it.',
+        extra: h('pre', { class: 'pp-command' }, res.command),
+        ok: 'Run it and install',
+        danger: true,
+      });
+      res = ok ? await install(res.sha256) : null;
+      if (res && res.needsConfirmation) {
+        toast("The marketplace's command changed while you were deciding. Try installing again to see the new one.", 'error');
+        res = null;
+      }
+    }
+    p.busy.delete(pl.id);
+    await refreshPlugins(cwd);
+    if (res && res.ok) afterPluginChange(chatId, pl, `${pl.name} is installed and on`, true, res.reload);
+  }
+
+  document.addEventListener('click', closePluginsMenu);
+  window.addEventListener('resize', closePluginsMenu);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !plugins.pop) return;
+    e.stopPropagation();
+    const b = plugins.pop.btn;
+    closePluginsMenu();
+    if (b && b.isConnected) b.focus();
+  }, true);
 
   // Only rebuild the header when something it shows changed, so dropdowns aren't reset mid-use.
   function headSignature(it) {
@@ -532,6 +719,7 @@
 
     const fresh = S.detailKey !== it.key || !pane.querySelector('.convo');
     if (fresh) {
+      if (plugins.pop && plugins.pop.chatId !== it.id) closePluginsMenu();
       clear(pane);
       S.detailKey = it.key;
       S.headSig = headSignature(it);
@@ -2556,6 +2744,7 @@
   // ---- views + wiring ------------------------------------------------------------------------
   function setView(view) {
     if (!['sessions', 'history', 'settings', 'prefs'].includes(view)) view = 'sessions';
+    if (view !== S.view) closePluginsMenu();
     S.view = view;
     store.set('view', view);
     for (const v of ['sessions', 'history', 'settings', 'prefs']) $(`#view-${v}`).hidden = v !== view;
