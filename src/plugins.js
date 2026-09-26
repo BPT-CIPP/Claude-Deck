@@ -63,18 +63,37 @@ class PluginManager {
     const r = await this._exec(['plugin', 'list', '--available', '--json'], cwd);
     const data = lastJson(r.stdout);
     if (!data || !Array.isArray(data.installed)) throw new UserError(`Couldn't list Claude Code's plugins: ${failure(r)}`, 502);
+    const categories = await this._categories(cwd);
+    const categoryOf = (name, marketplace) => categories.get(`${name}@${marketplace}`) || null;
     const value = {
       installed: data.installed.map((p) => {
         const meta = readJson(path.join(String(p.installPath || ''), '.claude-plugin', 'plugin.json'), {}) || {};
         const [name, marketplace] = String(p.id).split('@');
-        return { id: p.id, name: meta.name || name, marketplace, description: clip(String(meta.description || ''), 300), version: p.version || null, scope: p.scope || null, enabled: p.enabled === true };
+        return { id: p.id, name: meta.name || name, marketplace, description: clip(String(meta.description || ''), 300), category: categoryOf(name, marketplace), version: p.version || null, scope: p.scope || null, enabled: p.enabled === true };
       }).sort((a, b) => a.name.localeCompare(b.name)),
       available: (Array.isArray(data.available) ? data.available : []).map((p) => ({
-        id: p.pluginId, name: p.name, marketplace: p.marketplaceName, description: clip(String(p.description || ''), 300), installCount: p.installCount || null,
+        id: p.pluginId, name: p.name, marketplace: p.marketplaceName, description: clip(String(p.description || ''), 300), category: categoryOf(p.name, p.marketplaceName), installCount: p.installCount || null,
       })).filter((p) => p.id).sort((a, b) => a.name.localeCompare(b.name)),
     };
     this.cache.set(key, { at: Date.now(), value });
     return value;
+  }
+
+  // Each plugin's category, as its marketplace defines it: `plugins[].category` in the marketplace's
+  // own .claude-plugin/marketplace.json (read only). `plugin list` doesn't pass it on. Plugins
+  // without one, or a marketplace that can't be read, just have no category.
+  async _categories(cwd) {
+    const out = new Map();
+    const r = await this._exec(['plugin', 'marketplace', 'list', '--json'], cwd);
+    const list = lastJson(r.stdout);
+    for (const m of Array.isArray(list) ? list : []) {
+      if (!m || !m.name || !m.installLocation) continue;
+      const catalog = readJson(path.join(String(m.installLocation), '.claude-plugin', 'marketplace.json'), null);
+      for (const p of catalog && Array.isArray(catalog.plugins) ? catalog.plugins : []) {
+        if (p && typeof p.name === 'string' && typeof p.category === 'string' && p.category.trim()) out.set(`${p.name}@${m.name}`, clip(p.category.trim(), 40));
+      }
+    }
+    return out;
   }
 
   async setEnabled(id, enabled, cwd) {
@@ -126,9 +145,16 @@ class PluginManager {
     const r = await this._exec(['plugin', 'marketplace', ...args]);
     this.cache.clear();
     if (r.code !== 0) throw new UserError(`${what}: ${failure(r)}`);
-    // "Adding marketplace…√ Successfully added …": keep the outcome, not the progress line.
-    return { ok: true, message: clip(plain(r.stdout).replace(/^[^.…]*(?:…|\.\.\.)\s*(?=\S)/, ''), 300) };
+    return { ok: true, message: clip(outcome(r.stdout), 300) };
   }
+}
+
+// Claude Code prints progress ("Cloning repository…", "Refreshing marketplace cache…") and then the
+// outcome after a √ (worked) or × (failed). Only the outcome is worth showing.
+function outcome(text) {
+  const t = String(text || '');
+  const at = Math.max(t.lastIndexOf('√'), t.lastIndexOf('×'));
+  return plain(at >= 0 ? t.slice(at + 1) : t);
 }
 
 function plain(text) {
@@ -137,7 +163,7 @@ function plain(text) {
 }
 
 function failure(r) {
-  return clip(plain(r.stderr) || plain(r.stdout) || `Claude Code exited with code ${r.code}`, 400);
+  return clip(outcome(r.stderr) || outcome(r.stdout) || `Claude Code exited with code ${r.code}`, 400);
 }
 
 function runClaude(args, cwd) {

@@ -6,6 +6,18 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.6.0] - 2026-09-26
+
+### Added
+- The Plugins menu's *Marketplace* list is grouped by the category each marketplace gives its
+  plugins (Database, Development, Productivity and so on). Groups start closed and show how many
+  plugins they hold; a search opens every group with a match and also matches category names.
+  Plugins without a category are under *Uncategorized*.
+
+### Fixed
+- Adding, updating or removing a marketplace now shows just the result, not Claude Code's
+  progress text (which could hide the result when it was long).
+
 ## [1.5.0] - 2026-09-26
 
 ### Added
@@ -81,6 +93,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.6.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.3.0...v1.3.1

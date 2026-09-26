@@ -165,10 +165,17 @@ with `failureCode` `command_source_refused` or `entry_helper_unconfirmed` and a 
 Inferred from the command's help text and the code inside `claude.exe`; not tried against a real
 marketplace that declares a command.
 
+✅ **Categories.** A marketplace's own catalog, `<installLocation>/.claude-plugin/marketplace.json`,
+gives plugins a `category` (`plugins[].category`, a lowercase word such as `development`,
+`database` or `productivity`). `plugin list` doesn't pass it on, so Claude Deck reads it from
+there, read only. In the official marketplace (2026-09-26), 300 of 314 plugins have one, across
+13 categories; a few also have `tags` or `keywords`.
+
 ✅ **Marketplaces.** `claude plugin marketplace list --json` prints `[{name, source, repo | url |
 path, installLocation}]`. `add <source>` (a GitHub owner/repo, a git URL or a folder), `remove
-<name>` and `update [name]` have no `--json`: the exit code says whether it worked, with
-`√ Successfully …` / `× …` text.
+<name>` and `update [name]` have no `--json`: the exit code says whether it worked. The
+output is progress text ("Cloning repository…", several lines for a fresh GitHub add), then the
+outcome after a `√` (worked) or `×` (failed).
 
 ✅ **Applying a change to a running session.** `control_request` `reload_plugins` (what
 `/reload-plugins` sends) answers `{commands, agents, plugins: [{name, path, source: <id>, version}],

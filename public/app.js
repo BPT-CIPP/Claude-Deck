@@ -505,8 +505,7 @@
   // Claude Code's plugins, through its own CLI (src/plugins.js). A change applies to every Claude
   // Code session; the chat whose menu it is picks it up at once (reload_plugins). The menu lives on
   // <body>, not in the header, because the header is rebuilt whenever the chat's status changes.
-  const PLUGIN_RESULTS_MAX = 60;
-  const plugins = { byCwd: new Map(), loading: new Map(), pop: null, search: '' };
+  const plugins = { byCwd: new Map(), loading: new Map(), pop: null, search: '', openCategories: new Set() };
 
   function pluginSummary(list) {
     if (!list) return 'Plugins';
@@ -597,20 +596,44 @@
     el.appendChild(h('div', { class: 'pp-section' }, 'Marketplace'));
     const search = h('input', { type: 'search', class: 'pp-search', value: plugins.search, placeholder: `Search ${list.available.length} plugin${list.available.length === 1 ? '' : 's'}`, spellcheck: 'false', 'aria-label': 'Search the marketplace' });
     const results = h('div', { class: 'pp-results' });
+    const row = (pl) => {
+      const busy = p.busy.has(pl.id);
+      return h('div', { class: 'pp-row', title: pl.id },
+        h('span', { class: 'pp-name' }, pl.name, h('small', { class: 'faint' }, pl.marketplace)),
+        pl.description ? h('span', { class: 'pp-desc' }, pl.description) : null,
+        h('button', { type: 'button', class: 'ghost small pp-control', disabled: busy, onclick: () => installPlugin(pl) }, busy ? 'Installing…' : 'Install'));
+    };
+    // Grouped by the category each marketplace gives its plugins (plain list if none have one).
+    // Groups start closed; a search opens every group with a match.
     const fill = () => {
       const q = plugins.search.trim().toLowerCase();
-      const hits = list.available.filter((pl) => !q || `${pl.name} ${pl.description} ${pl.marketplace}`.toLowerCase().includes(q));
+      const hits = list.available.filter((pl) => !q || `${pl.name} ${pl.description} ${pl.marketplace} ${pl.category || ''}`.toLowerCase().includes(q));
       clear(results);
       if (!list.available.length) results.appendChild(h('p', { class: 'faint pp-empty' }, 'Nothing more to install. Add marketplaces in Claude Code Settings.'));
       else if (!hits.length) results.appendChild(h('p', { class: 'faint pp-empty' }, 'No plugins match.'));
-      for (const pl of hits.slice(0, PLUGIN_RESULTS_MAX)) {
-        const busy = p.busy.has(pl.id);
-        results.appendChild(h('div', { class: 'pp-row', title: pl.id },
-          h('span', { class: 'pp-name' }, pl.name, h('small', { class: 'faint' }, pl.marketplace)),
-          pl.description ? h('span', { class: 'pp-desc' }, pl.description) : null,
-          h('button', { type: 'button', class: 'ghost small pp-control', disabled: busy, onclick: () => installPlugin(pl) }, busy ? 'Installing…' : 'Install')));
+      const groups = new Map();
+      for (const pl of hits) {
+        const k = pl.category || '';
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(pl);
       }
-      if (hits.length > PLUGIN_RESULTS_MAX) results.appendChild(h('p', { class: 'faint pp-empty' }, `${hits.length - PLUGIN_RESULTS_MAX} more. Search to narrow the list.`));
+      if (groups.size === 1 && groups.has('')) {
+        for (const pl of hits) results.appendChild(row(pl));
+        return;
+      }
+      const keys = [...groups.keys()].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b));
+      for (const k of keys) {
+        const items = groups.get(k);
+        const group = h('details', { class: 'pp-group', open: Boolean(q) || plugins.openCategories.has(k) },
+          h('summary', null, k ? k.charAt(0).toUpperCase() + k.slice(1) : 'Uncategorized', h('small', { class: 'faint' }, String(items.length))),
+          items.map(row));
+        group.addEventListener('toggle', () => {
+          if (q) return; // opened for the search, not by the person
+          if (group.open) plugins.openCategories.add(k);
+          else plugins.openCategories.delete(k);
+        });
+        results.appendChild(group);
+      }
     };
     search.addEventListener('input', () => { plugins.search = search.value; fill(); });
     fill();
