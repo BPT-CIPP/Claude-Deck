@@ -110,7 +110,11 @@ bottom. `npm run verify` (and so CI) fails without it. A change that doesn't bum
 
 **Releases are automatic.** When a merge brings a new version to `main`,
 `.github/workflows/release.yml` tags the merge commit `vX.Y.Z` and publishes a GitHub release whose
-notes are that version's changelog section (`node tools/changelog.js notes X.Y.Z` prints them).
+notes are that version's changelog section (`node tools/changelog.js notes X.Y.Z` prints them), with
+the release manifest attached: `claude-deck-vX.Y.Z-manifest.json`, every file in that commit with
+its size and SHA-256, from `node tools/release-manifest.js build <commit>`. It's built from git, not
+a working folder, so it describes exactly what was tagged; `verify` checks a copy against it (see
+the README).
 Don't create tags or releases by hand. Preferences in Claude Deck shows the version the server is
 running, with a link to the releases.
 

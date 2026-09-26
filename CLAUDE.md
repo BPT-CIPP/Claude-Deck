@@ -35,6 +35,7 @@ npm run syntax     # parse every .js file, and Start-ClaudeDeck.ps1 with Windows
 npm run changelog  # package.json's version is semver and CHANGELOG.md has a section for it
 npm test           # the node:test suite, test/*.test.js
 npm run sandbox    # a throwaway Claude Deck: real claude.exe against the mock API (tools/sandbox.js)
+node tools/release-manifest.js build [ref] | verify <manifest> [folder]   # the file list each release carries
 node tools/make-icons.js   # regenerate public/icons after changing the mascot grid
 ```
 

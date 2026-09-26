@@ -98,6 +98,19 @@ Claude Deck** shortcut or the taskbar pin. A stopped server stays stopped until 
 sign in. Open chats end when the server stops; they come back as *Ended*, and **Resume** (or Enter)
 continues them. If an update only changed the page itself, reloading the window (Ctrl+R) is enough.
 
+**Checking a copy.** Each [release](https://github.com/BPT-CIPP/Claude-Deck/releases) has a
+`claude-deck-vX.Y.Z-manifest.json` listing every file with its size and SHA-256. To confirm a
+folder holds exactly that release (**Preferences → Version** shows which one you're running),
+download the manifest and run, from the folder:
+
+```powershell
+node tools\release-manifest.js verify <path to the manifest>
+```
+
+It names any file that's missing or different. Files that aren't part of Claude Deck (logs, your
+`CLAUDE.local.md`) are ignored. A clone of `main` can be ahead of the latest release; to check one
+release exactly, `git checkout vX.Y.Z` first.
+
 ## Uninstall
 
 ```powershell
