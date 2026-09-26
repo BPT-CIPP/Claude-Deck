@@ -55,6 +55,19 @@ test("each plugin carries the category its marketplace gives it, or none", async
   ]);
 });
 
+test('descriptions come through whole, for the hover card (some official ones are ~700 characters)', async () => {
+  const long = `${'A plugin description that goes on. '.repeat(20)}The end.`;
+  const stub = new PluginManager({
+    run: async (args) => ({
+      code: 0,
+      stderr: '',
+      stdout: args[1] === 'marketplace' ? '[]' : JSON.stringify({ installed: [], available: [{ pluginId: 'long@m', name: 'long', description: long, marketplaceName: 'm' }] }),
+    }),
+  });
+  assert.ok(long.length > 700);
+  assert.strictEqual((await stub.list(cwd)).available[0].description, long);
+});
+
 test('installing moves a plugin to installed, with its description from its own plugin.json', async () => {
   assert.deepStrictEqual(await pm.install('hello@fake-market', { cwd }), { ok: true, scope: 'user' });
   const list = await pm.list(cwd);
