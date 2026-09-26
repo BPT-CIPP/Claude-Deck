@@ -1205,6 +1205,46 @@ pre.code.small { font-size: 11px; max-height: 280px; overflow: auto; white-space
 .urow-top { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
 .upop-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
 
+/* plugins menu (chat header) */
+.plugin-btn { font-weight: 500; }
+.plugin-pop {
+  position: fixed;
+  z-index: 30;
+  width: min(440px, calc(100vw - 16px));
+  max-height: min(70vh, 620px);
+  overflow-y: auto;
+  background: var(--surface-overlay);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--line-soft);
+  padding: 8px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  animation: modal-in 0.16s var(--ease-spring);
+}
+.pp-head { display: flex; flex-direction: column; gap: 2px; padding: 4px 8px 8px; border-bottom: 1px solid var(--line-soft); }
+.pp-section { color: var(--faint); font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; padding: 10px 8px 4px; }
+.pp-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: center; padding: 6px 8px; border-radius: 7px; cursor: default; }
+label.pp-row { cursor: pointer; }
+.pp-row:hover { background: var(--raise); }
+.pp-name { grid-column: 1; display: flex; gap: 8px; align-items: baseline; font-weight: 600; font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pp-desc { grid-column: 1; color: var(--muted); font-size: 11.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pp-control { grid-column: 2; grid-row: 1 / span 2; }
+.plugin-pop .pp-search { display: block; width: calc(100% - 16px); margin: 2px 8px 6px; }
+.pp-empty { margin: 4px 8px 8px; font-size: 12.5px; }
+.pp-foot { border-top: 1px solid var(--line-soft); margin-top: 6px; padding: 8px 8px 2px; }
+.pp-command { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 10px 0 0; max-height: 200px; overflow-y: auto; }
+
+/* plugin marketplaces (Claude Code Settings) */
+.market { display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
+.market h3 { margin: 10px 0 0; font-size: 14px; }
+.market-head { display: flex; align-items: center; gap: 10px; }
+.market-head h3 { margin: 0; }
+.market-list { display: flex; flex-direction: column; gap: 6px; }
+.market-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 8px; }
+.market-name { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.market .row input { flex: 1; }
+
 /* queued messages */
 .msg-user { position: relative; }
 .msg-user.queued { border-style: dashed; border-color: color-mix(in srgb, var(--waiting) 55%, transparent); }

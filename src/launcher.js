@@ -92,7 +92,7 @@ function wtEscape(arg) {
 
 function requireClaude(prefs) {
   const claude = locateClaude(prefs.claudePath);
-  if (!claude) throw new UserError('Claude Code was not found. Set its path under Preferences.');
+  if (!claude) throw new UserError('Claude Code was not found. Set its path under Claude Deck Preferences.');
   return claude;
 }
 

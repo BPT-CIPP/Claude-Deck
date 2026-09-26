@@ -115,7 +115,7 @@ the release manifest attached: `claude-deck-vX.Y.Z-manifest.json`, every file in
 its size and SHA-256, from `node tools/release-manifest.js build <commit>`. It's built from git, not
 a working folder, so it describes exactly what was tagged; `verify` checks a copy against it (see
 the README).
-Don't create tags or releases by hand. Preferences in Claude Deck shows the version the server is
+Don't create tags or releases by hand. Claude Deck Preferences shows the version the server is
 running, with a link to the releases.
 
 ## Getting a change to everyone
@@ -128,7 +128,7 @@ git checkout main
 git pull --rebase origin main
 ```
 
-Then in Claude Deck, **Preferences → Stop server now**, and start it again with the **Start Claude
+Then choose **Claude Deck Preferences → Stop server now**, and start it again with the **Start Claude
 Deck** shortcut (the stopped server stays stopped until you do, or until you next sign in). Changes
 only to files in `public\` need just a reload of the window (Ctrl+R). Stopping the server ends open
 chats, which come back as *Ended* with *Resume*.

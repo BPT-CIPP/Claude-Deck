@@ -52,10 +52,12 @@ node tools/make-icons.js   # regenerate public/icons after changing the mascot g
   real `claude.exe` against `test/fixtures/mock-anthropic-api.js` (`npm run sandbox`).
 - **The plan-usage call is the only outbound request.** `src/usage.js` reads the sign-in token from
   `.credentials.json` and never refreshes or rewrites it (Claude Code owns it), and sends it only to
-  that endpoint. Tests stub the fetcher.
+  that endpoint. Tests stub the fetcher. (Installing a plugin or updating a marketplace downloads,
+  but that's Claude Code's own `claude plugin` command, run only when the user asks.)
 - **Never write to Claude Code's files** except through `src/settings-files.js` (backup first,
   refused if the file changed since it was read) and `src/trash.js` (deleting a conversation the user
   chose: moved to the trash, never deleted outright, refused while the conversation is open).
+  Plugins and marketplaces change only through Claude Code's own CLI (`src/plugins.js`).
 - **Never test against the live server.** A chat's `claude.exe` is a child of the server, so
   restarting it ends those chats, possibly including the session doing the work. Use
   `npm run sandbox`, and leave restarting the real one to the user.

@@ -19,6 +19,7 @@ const settingsFiles = require('./settings-files');
 const folders = require('./folders');
 const appInstall = require('./app-install');
 const { UsageMonitor } = require('./usage');
+const { PluginManager } = require('./plugins');
 const { HistoryIndex, readTranscript, UUID_RE } = require('./history');
 const { Registry } = require('./registry');
 const { Launcher, normalizeOptions, buildClaudeArgs, displayCommand, EFFORTS, PERMISSION_MODES, COLORS, MODEL_ALIASES } = require('./launcher');
@@ -193,6 +194,10 @@ async function main() {
   const live = new Live({ registry, history, chats });
   const timeline = new Timeline({ history });
   const usage = new UsageMonitor();
+  const plugins = new PluginManager();
+  // A plugin change is saved either way; applying it to the chat it was made from is a bonus.
+  const reloadChatPlugins = (chatId, pluginId, enabled) => chats.reloadPlugins(chatId, { pluginId, enabled })
+    .catch((err) => ({ applied: false, reason: err.message }));
   const clients = new Set();
   let port = opts.port;
   let idleTimer = null;
@@ -502,6 +507,30 @@ async function main() {
       const b = await readBody(req);
       return settingsFiles.restore(b.scope, b.folder, b.name);
     },
+
+    // Plugins, through Claude Code's CLI (src/plugins.js). cwd is the chat's folder, for plugins
+    // installed in a project; chatId applies the change to that running chat too.
+    'GET /api/plugins': (req, p, url) => plugins.list(url.searchParams.get('cwd') || undefined, { refresh: url.searchParams.get('refresh') === '1' }),
+    'POST /api/plugins/enabled': async (req) => {
+      const b = await readBody(req);
+      await plugins.setEnabled(b.id, b.enabled === true, b.cwd);
+      return { ok: true, reload: b.chatId ? await reloadChatPlugins(b.chatId, b.id, b.enabled === true) : null };
+    },
+    'POST /api/plugins/install': async (req) => {
+      const b = await readBody(req);
+      const r = await plugins.install(b.id, { acceptCommand: b.acceptCommand, cwd: b.cwd });
+      if (r.ok && b.chatId) r.reload = await reloadChatPlugins(b.chatId, b.id, true);
+      return r;
+    },
+    // { pluginId, enabled, force }: force applies a reload Claude held back (it resets the prompt cache).
+    'POST /api/chats/:id/reload-plugins': async (req, p) => {
+      const b = await readBody(req);
+      return chats.reloadPlugins(p.id, { pluginId: b.pluginId, enabled: b.enabled === true, force: b.force === true });
+    },
+    'GET /api/plugins/marketplaces': () => plugins.marketplaces(),
+    'POST /api/plugins/marketplaces': async (req) => plugins.addMarketplace((await readBody(req)).source),
+    'POST /api/plugins/marketplaces/remove': async (req) => plugins.removeMarketplace((await readBody(req)).name),
+    'POST /api/plugins/marketplaces/update': async (req) => plugins.updateMarketplaces((await readBody(req)).name),
 
     'GET /api/prefs': () => prefsStore.load(),
     'PUT /api/prefs': async (req) => {

@@ -24,7 +24,7 @@ Last full check: **Claude Code 2.1.281**.
 
 ## Finding Claude Code
 
-✅ `src/claude-locate.js` checks, in order: the path set in *Preferences*, `where.exe claude`, and
+✅ `src/claude-locate.js` checks, in order: the path set in *Claude Deck Preferences*, `where.exe claude`, and
 the native installer's `%USERPROFILE%\.local\bin\claude.exe`. An npm global install puts a
 `claude.cmd` shim on PATH that wraps
 `%APPDATA%\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe` (older versions ship
@@ -131,6 +131,55 @@ mock, which logs each request's `output_config` (a direct probe, and through Cla
 (`content_block_delta` / `text_delta`, ~60 ms apart, thinking deltas too). Claude Deck deliberately
 doesn't use it: replies are shown once each message is complete, because text arriving a chunk at
 a time read as choppy.
+
+## Plugins
+
+Claude Deck manages plugins only through Claude Code's CLI (`src/plugins.js`), never by editing
+these files. All checked with 2.1.281, offline, against a local test marketplace in a sandbox
+`CLAUDE_CONFIG_DIR` (a `directory` marketplace with two plugins, one adding a slash command).
+
+✅ **Files.** `~/.claude/plugins/installed_plugins.json` (`version: 2`, `plugins: {<id>: [{scope,
+installPath, version, installedAt, lastUpdated, gitCommitSha}]}`), `known_marketplaces.json`
+(`{<name>: {source, installLocation, lastUpdated}}`), `marketplaces/<name>/` and
+`cache/<marketplace>/<plugin>/<version>/`, with each plugin's own `.claude-plugin/plugin.json`
+(`name`, `version`, `description`). A plugin id is `<plugin>@<marketplace>`. Turning one on or off
+is `enabledPlugins: {<id>: true|false}` in a settings file; adding a marketplace from the CLI
+writes `extraKnownMarketplaces` in user settings.
+
+✅ **`claude plugin list --available --json`** prints `{installed: [{id, version, scope, enabled,
+installPath, installedAt, lastUpdated}], available: [{pluginId, name, description,
+marketplaceName, source, installCount?}]}`. Installed plugins aren't repeated in `available`, and
+`installed` has no description (read it from `plugin.json`). About 1 s locally and 2 s with the
+official marketplace's 313 plugins; the output is ~185 KB.
+
+✅ **`claude plugin install|enable|disable <id> --json`** prints one line: `{command, outcome:
+"ok"|"failed", plugin, pluginId, scope, message, failureCode?}`. On failure the exit code is 1 and
+the JSON is still on stdout. Install defaults to user scope; enable and disable find the scope
+themselves.
+
+⚠️ **Installs a person must confirm.** A marketplace can install a plugin by running a command it
+declares (`command_source`, or a `headersHelper` for the download). With `--json` Claude Code refuses
+with `failureCode` `command_source_refused` or `entry_helper_unconfirmed` and a `shownCommand`
+(`{kind, pluginId, command, archiveUrl?, catalogRevision, sha256}`). Installing again with
+`--accept-command <sha256>` accepts exactly that command, for that catalog, and nothing else.
+Inferred from the command's help text and the code inside `claude.exe`; not tried against a real
+marketplace that declares a command.
+
+✅ **Marketplaces.** `claude plugin marketplace list --json` prints `[{name, source, repo | url |
+path, installLocation}]`. `add <source>` (a GitHub owner/repo, a git URL or a folder), `remove
+<name>` and `update [name]` have no `--json`: the exit code says whether it worked, with
+`√ Successfully …` / `× …` text.
+
+✅ **Applying a change to a running session.** `control_request` `reload_plugins` (what
+`/reload-plugins` sends) answers `{commands, agents, plugins: [{name, path, source: <id>, version}],
+mcpServers, error_count}`. A running session picks up settings changes on its own schedule: a reload
+300 ms after `plugin disable` still listed the plugin, and one after 1 s didn't. Claude Deck
+reloads until `plugins` shows the change. With `hold_on_cache_impact: true`, Claude doesn't apply a
+reload that would change its tool list while the conversation's prompt cache depends on it; the
+response carries `held: true` and `cache_impact`, and a second reload without the flag applies it.
+Verified through Claude Deck: installing a test plugin whose `.mcp.json` starts a one-tool MCP
+server was held after the chat's first turn, and applied when forced. A plugin that adds only a
+slash command was never held, before or after a turn.
 
 ## Subagents and background tasks
 

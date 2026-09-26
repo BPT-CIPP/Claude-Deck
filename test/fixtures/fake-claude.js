@@ -3,13 +3,15 @@
 //
 // Terminal mode (default): writes the status file and transcript lines Claude Code would, on a
 // fixed schedule: busy (0s) -> waiting: permission prompt (3s) -> busy (9s) -> idle (12s). q exits.
-// Point Preferences > Claude Code > Program at this file, with CLAUDE_CONFIG_DIR set to a sandbox.
+// Point Claude Deck Preferences > Claude Code > Program at this file, with CLAUDE_CONFIG_DIR set to a sandbox.
 //
 // Stream mode (--input-format stream-json): speaks the same JSON protocol as the real CLI.
 // Prompts containing "write" ask permission for Write, "ask" asks a question, "slow" takes 3s
 // (and can be interrupted), "delegate" / "delegate slow" / "delegate foreground" start subagents,
 // "run slow" runs a shell command reported as a task, "which effort" reports the effort level;
-// anything else is echoed back.
+// anything else is echoed back. Answers reload_plugins from the plugin state below.
+//
+// Plugin mode (plugin ...): Claude Code's plugin and marketplace commands (see pluginMode).
 
 const fs = require('fs');
 const path = require('path');
@@ -19,6 +21,10 @@ const args = process.argv.slice(2);
 if (args[0] === '--version') {
   console.log('0.0.0 (fake Claude Code)');
   process.exit(0);
+}
+if (args[0] === 'plugin') {
+  pluginMode();
+  return;
 }
 if (args.includes('--input-format') && args[args.indexOf('--input-format') + 1] === 'stream-json') {
   streamMode();
@@ -87,6 +93,29 @@ function streamMode() {
   let turn = Promise.resolve();
   let interrupted = null;
   let effort = flagValue('--effort');
+  // The plugins this session loaded, as the real CLI keeps them until a reload.
+  let sessionPlugins = enabledPlugins(loadPluginState());
+
+  // Like the real CLI (2.1.281): a reload sees a settings change only once the session has
+  // re-read its settings, about a second after the change (here: once the file is 400ms old).
+  // With hold_on_cache_impact, a reload that would change the tools mid-conversation is held.
+  function reloadPlugins(request, conversationStarted) {
+    let next = sessionPlugins;
+    const file = pluginStateFile();
+    if (fs.existsSync(file) && Date.now() - fs.statSync(file).mtimeMs >= 400) next = enabledPlugins(loadPluginState());
+    const changed = [...next.filter((p) => !sessionPlugins.some((q) => q.id === p.id)), ...sessionPlugins.filter((p) => !next.some((q) => q.id === p.id))];
+    if (request.hold_on_cache_impact && conversationStarted && changed.some((p) => p.tools)) {
+      return { held: true, cache_impact: { tools_changed: true } };
+    }
+    sessionPlugins = next;
+    return {
+      commands: [{ name: 'compact', description: 'Summarize the conversation', argumentHint: '' }, ...pluginCommands(sessionPlugins)],
+      agents: [],
+      plugins: sessionPlugins.map((p) => ({ name: p.name, path: p.installPath, source: p.id, version: p.version })),
+      mcpServers: [],
+      error_count: 0,
+    };
+  }
 
   const init = () => out({ type: 'system', subtype: 'init', session_id: sessionId, model: flagValue('--model') || 'claude-fake', permissionMode: flagValue('--permission-mode') || 'default', cwd: process.cwd() });
   const text = (t) => {
@@ -257,7 +286,8 @@ function streamMode() {
         if (sub === 'stop_task' && stopTask.has(m.request.task_id)) stopTask.get(m.request.task_id)();
         // Like the real CLI: effortLevel changes the session's effort; null goes back to the default.
         if (sub === 'apply_flag_settings' && m.request.settings && 'effortLevel' in m.request.settings) effort = m.request.settings.effortLevel;
-        let response = sub === 'initialize' ? { commands: [{ name: 'compact', description: 'Summarize the conversation', argumentHint: '' }] } : {};
+        let response = sub === 'initialize' ? { commands: [{ name: 'compact', description: 'Summarize the conversation', argumentHint: '' }, ...pluginCommands(sessionPlugins)] } : {};
+        if (sub === 'reload_plugins') response = reloadPlugins(m.request, cost > 0);
         // Like the real CLI (2.1.281): rewinding needs checkpointing turned on by env var. The
         // file named by FAKE_REWIND_FILE stands in for a file the turn created; rewinding deletes it.
         if (sub === 'rewind_files') {
@@ -309,4 +339,106 @@ function streamMode() {
     }
   });
   process.stdin.on('end', () => turn.then(() => process.exit(0)));
+}
+
+// ---- plugins ---------------------------------------------------------------------------------
+// `claude plugin ...` with the output shapes claude.exe 2.1.281 prints (docs/CLAUDE-CODE-INTERNALS.md,
+// "Plugins"), over a state file in CLAUDE_CONFIG_DIR. The catalog has a plugin with a slash command,
+// one that adds tools (its reload is held mid-conversation), and one installed by a command the
+// marketplace declares (refused until that command's sha256 is accepted).
+function pluginStateFile() {
+  return path.join(process.env.CLAUDE_CONFIG_DIR || '.', 'fake-plugins.json');
+}
+
+function loadPluginState() {
+  try {
+    return JSON.parse(fs.readFileSync(pluginStateFile(), 'utf8'));
+  } catch {
+    return {
+      marketplaces: [{ name: 'fake-market', source: 'github', repo: 'example/fake-market' }],
+      catalog: [
+        { id: 'hello@fake-market', description: 'Adds a /hello command.' },
+        { id: 'tools@fake-market', description: 'Adds tools through an MCP server.', tools: true },
+        { id: 'scripted@fake-market', description: 'Installed by a command the marketplace declares.', command: 'npx fake-plugin-installer', sha256: 'f00dfeed' },
+      ],
+      installed: {},
+    };
+  }
+}
+
+function enabledPlugins(state) {
+  return Object.entries(state.installed).filter(([, p]) => p.enabled).map(([id, p]) => {
+    const item = state.catalog.find((c) => c.id === id) || {};
+    return { id, name: id.split('@')[0], installPath: p.installPath, version: p.version, tools: item.tools === true };
+  });
+}
+
+function pluginCommands(plugins) {
+  return plugins.filter((p) => p.id.startsWith('hello@')).map((p) => ({ name: `${p.name}:hello`, description: `(${p.name}) Say hello`, argumentHint: '' }));
+}
+
+function pluginMode() {
+  const state = loadPluginState();
+  const save = () => fs.writeFileSync(pluginStateFile(), JSON.stringify(state, null, 2));
+  const [, cmd, ...rest] = args;
+  const target = rest.find((a) => !a.startsWith('-'));
+  const opt = (name) => (rest.includes(name) ? rest[rest.indexOf(name) + 1] : null);
+  const line = (o, code = 0) => { process.stdout.write(`${JSON.stringify(o)}\n`); process.exit(code); };
+  const fail = (text) => { process.stderr.write(`× ${text}\n`); process.exit(1); };
+  if (cmd === 'list') {
+    const installed = Object.entries(state.installed).map(([id, p]) => ({ id, version: p.version, scope: p.scope, enabled: p.enabled, installPath: p.installPath, installedAt: p.installedAt, lastUpdated: p.installedAt }));
+    const available = state.catalog.filter((c) => !state.installed[c.id]).map((c) => ({ pluginId: c.id, name: c.id.split('@')[0], description: c.description, marketplaceName: c.id.split('@')[1], source: `./plugins/${c.id.split('@')[0]}`, installCount: 42 }));
+    process.stdout.write(`${JSON.stringify(rest.includes('--available') ? { installed, available } : installed, null, 2)}\n`);
+    return;
+  }
+  if (cmd === 'enable' || cmd === 'disable') {
+    const p = state.installed[target];
+    if (!p) line({ command: cmd, outcome: 'failed', plugin: target, message: `Plugin "${target}" is not installed`, failureCode: 'not_installed' }, 1);
+    p.enabled = cmd === 'enable';
+    save();
+    line({ command: cmd, outcome: 'ok', plugin: target, pluginId: target, scope: p.scope, message: `Successfully ${cmd}d plugin: ${target.split('@')[0]} (scope: ${p.scope})` });
+  }
+  if (cmd === 'install') {
+    const item = state.catalog.find((c) => c.id === target);
+    if (!item) line({ command: 'install', outcome: 'failed', plugin: target, message: `Plugin "${String(target).split('@')[0]}" not found in marketplace "fake-market".`, failureCode: 'not_found' }, 1);
+    if (item.command && opt('--accept-command') !== item.sha256) {
+      line({ command: 'install', outcome: 'failed', plugin: target, pluginId: target, message: 'This plugin is installed by running a command the marketplace declares.', failureCode: 'command_source_refused', shownCommand: { kind: 'command_source', pluginId: target, command: item.command, sha256: item.sha256 } }, 1);
+    }
+    const [name, market] = target.split('@');
+    const installPath = path.join(process.env.CLAUDE_CONFIG_DIR || '.', 'plugins', 'cache', market, name, '1.0.0');
+    fs.mkdirSync(path.join(installPath, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(path.join(installPath, '.claude-plugin', 'plugin.json'), JSON.stringify({ name, version: '1.0.0', description: item.description }));
+    state.installed[target] = { enabled: true, scope: opt('--scope') || 'user', version: '1.0.0', installPath, installedAt: new Date().toISOString() };
+    save();
+    line({ command: 'install', outcome: 'ok', plugin: target, pluginId: target, scope: state.installed[target].scope, message: `Successfully installed plugin: ${target} (scope: user)` });
+  }
+  if (cmd === 'marketplace') {
+    const [sub, ...more] = rest;
+    const what = more.find((a) => !a.startsWith('-'));
+    if (sub === 'list') {
+      process.stdout.write(`${JSON.stringify(state.marketplaces.map((m) => ({ ...m, installLocation: path.join('marketplaces', m.name) })), null, 2)}\n`);
+      return;
+    }
+    if (sub === 'add') {
+      if (/does-not-exist/.test(what)) fail(`Path does not exist: ${what}`);
+      const name = what.split(/[\\/]/).pop();
+      state.marketplaces.push({ name, source: 'github', repo: what });
+      save();
+      process.stdout.write(`Adding marketplace…√ Successfully added marketplace: ${name} (declared in user settings)\n`);
+      return;
+    }
+    if (sub === 'remove') {
+      if (!state.marketplaces.some((m) => m.name === what)) fail(`Marketplace '${what}' not found`);
+      state.marketplaces = state.marketplaces.filter((m) => m.name !== what);
+      save();
+      process.stdout.write(`√ Successfully removed marketplace: ${what}\n`);
+      return;
+    }
+    if (sub === 'update') {
+      const n = what ? 1 : state.marketplaces.length;
+      process.stdout.write(`Updating marketplaces... Successfully updated ${n} marketplace${n === 1 ? '' : 's'}\n`);
+      return;
+    }
+  }
+  fail(`fake-claude: unsupported plugin command: ${args.join(' ')}`);
 }
