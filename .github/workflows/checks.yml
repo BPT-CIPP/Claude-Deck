@@ -26,6 +26,10 @@ jobs:
       - name: Syntax
         run: npm run syntax
 
+      # A valid semver in package.json, with a CHANGELOG.md section for it.
+      - name: Changelog
+        run: npm run changelog
+
       # The node:test suite. No Claude API calls: it uses test/fixtures/fake-claude.js.
       - name: Tests
         run: npm test

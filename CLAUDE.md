@@ -30,8 +30,9 @@ task is. Read the one that matches the work:
 ## Commands
 
 ```
-npm run verify     # the gate: syntax + tests. A Stop hook runs it when .js/.json/.html/.css/.ps1 changed.
+npm run verify     # the gate: syntax + changelog + tests. A Stop hook runs it when .js/.json/.html/.css/.ps1 changed.
 npm run syntax     # parse every .js file, and Start-ClaudeDeck.ps1 with Windows PowerShell 5.1
+npm run changelog  # package.json's version is semver and CHANGELOG.md has a section for it
 npm test           # the node:test suite, test/*.test.js
 npm run sandbox    # a throwaway Claude Deck: real claude.exe against the mock API (tools/sandbox.js)
 node tools/make-icons.js   # regenerate public/icons after changing the mascot grid
@@ -110,6 +111,8 @@ Short, because a long list gets ignored. They apply to changes of any kind:
 
 `package.json` `version` is the single source of truth: semver, bumped in the same change set
 (`fix:` PATCH, `feat:` MINOR, `feat!:` / `BREAKING CHANGE:` MAJOR). Work out the bump from
-`origin/main` at push time. Commits follow [Conventional Commits](https://www.conventionalcommits.org/):
-`type: subject`, no scope, imperative, saying what and why. Details:
+`origin/main` at push time. Every bump adds its `CHANGELOG.md` section (`npm run verify` checks);
+merging a new version to `main` tags and releases it automatically, so never tag by hand. Commits
+follow [Conventional Commits](https://www.conventionalcommits.org/): `type: subject`, no scope,
+imperative, saying what and why. Details:
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).

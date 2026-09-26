@@ -34,6 +34,7 @@ if (!touched.length) process.exit(0);
 
 const steps = [
   ['Syntax', [path.join(root, 'tools', 'check-syntax.js')]],
+  ['Changelog', [path.join(root, 'tools', 'changelog.js'), 'check']],
   ['Tests', ['--test', 'test/*.test.js']],
 ];
 const failures = [];

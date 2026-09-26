@@ -29,6 +29,8 @@ const trash = require('./trash');
 const { locateClaude, claudeVersion } = require('./claude-locate');
 const { readJson, writeJsonAtomic, isPidAlive, UserError } = require('./util');
 
+// The version this server was started from; a pulled update shows once the server restarts.
+const VERSION = require('../package.json').version;
 const DEFAULT_PORT = 47821;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const IDLE_EXIT_MS = 90 * 1000;
@@ -277,6 +279,7 @@ async function main() {
     'GET /api/ping': () => ({ ok: true, pid: process.pid }),
 
     'GET /api/bootstrap': async () => ({
+      version: VERSION,
       prefs: prefsStore.load(),
       claude: claudeInfo || (await detectClaude()),
       enums: { efforts: EFFORTS, permissionModes: PERMISSION_MODES, colors: COLORS, models: MODEL_ALIASES },
