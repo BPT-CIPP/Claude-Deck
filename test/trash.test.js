@@ -70,6 +70,60 @@ test('only transcripts where Claude Code keeps them can be deleted', () => {
   assert.ok(fs.existsSync(stray) && fs.existsSync(transcript));
 });
 
+// Every file of the conversation, with its content, to check nothing was lost.
+const snapshot = () => [transcript, path.join(sideDir, 'r1.txt'), path.join(fileHistory, 'abc@v1')].map((f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : null)).concat(fs.existsSync(sessionEnv));
+const realRename = fs.renameSync;
+const realRm = fs.rmSync;
+const realCp = fs.cpSync;
+const busy = (p) => Object.assign(new Error(`EBUSY: resource busy or locked, '${p}'`), { code: 'EBUSY' });
+// As if the data folder were on another drive: every move is a copy, then removing the original.
+// (Claude Deck's own manifest writes, a rename within the trash, still work.)
+const acrossDrives = (t) => t.mock.method(fs, 'renameSync', (a, b) => {
+  if (a.endsWith('.tmp')) return realRename(a, b);
+  throw Object.assign(new Error('EXDEV'), { code: 'EXDEV' });
+});
+
+test('across drives, an original that cannot be removed is put back whole, and nothing is lost', (t) => {
+  const before = snapshot();
+  acrossDrives(t);
+  // Removing the original gets partway (one file gone) before a locked file stops it.
+  t.mock.method(fs, 'rmSync', (p, o) => {
+    if (p === fileHistory) { realRm(path.join(fileHistory, 'abc@v1')); throw busy(p); }
+    return realRm(p, o);
+  });
+  assert.throws(() => trash.trashSession(SID, transcript), (e) => e.status === 409 && /in use/.test(e.message));
+  t.mock.restoreAll();
+  assert.deepStrictEqual(snapshot(), before);
+});
+
+test('what cannot be put back after a failed delete stays in the trash, and Undo restores it', (t) => {
+  const before = snapshot();
+  acrossDrives(t);
+  t.mock.method(fs, 'rmSync', (p, o) => { if (p === sessionEnv) throw busy(p); return realRm(p, o); });
+  t.mock.method(fs, 'cpSync', (a, b, o) => { if (b === transcript) throw busy(b); return realCp(a, b, o); });
+  assert.throws(() => trash.trashSession(SID, transcript), (e) => e.status === 409 && /Nothing is lost/.test(e.message));
+  t.mock.restoreAll();
+  assert.ok(!fs.existsSync(transcript), 'the transcript could not be put back');
+  const trashRoot = path.join(box.dataDir, 'trash');
+  const kept = fs.readdirSync(trashRoot).find((n) => (JSON.parse(fs.readFileSync(path.join(trashRoot, n, 'manifest.json'), 'utf8')).items || []).some((it) => it.from === transcript));
+  assert.ok(kept, 'kept in the trash with a manifest');
+  trash.restore(kept);
+  assert.deepStrictEqual(snapshot(), before);
+});
+
+test('an Undo that fails partway can be tried again and finishes', (t) => {
+  const before = snapshot();
+  const { trashId } = trash.trashSession(SID, transcript);
+  const dir = path.join(box.dataDir, 'trash', trashId);
+  t.mock.method(fs, 'renameSync', (a, b) => { if (a === path.join(dir, '2')) throw busy(a); return realRename(a, b); });
+  assert.throws(() => trash.restore(trashId), (e) => e.status === 409 && /try Undo again/.test(e.message));
+  t.mock.restoreAll();
+  assert.ok(fs.existsSync(transcript), 'the first items are back');
+  trash.restore(trashId);
+  assert.deepStrictEqual(snapshot(), before);
+  assert.throws(() => trash.restore('..'), /Invalid trash ID/);
+});
+
 test('the trash is emptied of conversations deleted more than 30 days ago', () => {
   const { trashId } = trash.trashSession(SID, transcript);
   const dir = path.join(box.dataDir, 'trash', trashId);

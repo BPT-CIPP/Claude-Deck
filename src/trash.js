@@ -20,7 +20,8 @@ const { readJson, writeJsonAtomic, UserError } = require('./util');
 
 const TRASH_DAYS = 30;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ID_RE = /^[\w.-]{1,120}$/;
+// Never starting with a dot, so an id can't be . or .. (the trash folder or the data folder).
+const ID_RE = /^[\w-][\w.-]{0,119}$/;
 
 const trashDir = () => path.join(paths.dataDir(), 'trash');
 
@@ -42,15 +43,35 @@ function sessionItems(sessionId, transcript) {
   return candidates.filter((p) => fs.existsSync(p));
 }
 
+// Across drives a move is a copy, then removing the original. If the removal fails partway, the
+// copy is complete but the original isn't: the error says so (copied), and the copy is kept.
 function move(from, to) {
   fs.mkdirSync(path.dirname(to), { recursive: true });
   try {
     fs.renameSync(from, to);
   } catch (err) {
     if (err.code !== 'EXDEV') throw err;
-    fs.cpSync(from, to, { recursive: true });
-    fs.rmSync(from, { recursive: true, force: true });
+    try {
+      fs.cpSync(from, to, { recursive: true });
+    } catch (copyErr) {
+      fs.rmSync(to, { recursive: true, force: true }); // an incomplete copy; the original is untouched
+      throw copyErr;
+    }
+    try {
+      fs.rmSync(from, { recursive: true, force: true });
+    } catch (rmErr) {
+      rmErr.copied = true;
+      throw rmErr;
+    }
   }
+}
+
+// Puts an item back. One whose original was only partly removed (see move) is copied over what's left.
+function putBack(it, dir) {
+  const src = path.join(dir, it.name);
+  if (!it.partial) return move(src, it.from);
+  fs.cpSync(src, it.from, { recursive: true, force: true });
+  fs.rmSync(src, { recursive: true, force: true });
 }
 
 function inUse(err) {
@@ -65,21 +86,33 @@ function trashSession(sessionId, transcript, meta = {}) {
   const dir = path.join(trashDir(), trashId);
   fs.mkdirSync(dir, { recursive: true });
   const done = [];
+  const record = { sessionId, at: Date.now(), title: meta.title || null, cwd: meta.cwd || null };
   try {
     items.forEach((from, i) => {
-      move(from, path.join(dir, String(i)));
+      try {
+        move(from, path.join(dir, String(i)));
+      } catch (err) {
+        // Its complete copy is in the trash, so it's one of the moved items (see move).
+        if (err.copied) done.push({ from, name: String(i), partial: true });
+        throw err;
+      }
       done.push({ from, name: String(i) });
     });
   } catch (err) {
-    // Put back whatever already moved, so a conversation is never half deleted.
-    for (const d of done.reverse()) {
-      try { move(path.join(dir, d.name), d.from); } catch { /* reported below */ }
+    // Put back whatever already moved, so a conversation is never half deleted. Anything that
+    // can't be put back stays in the trash with its manifest, never deleted: Undo still works.
+    const left = done.reverse().filter((d) => {
+      try { putBack(d, dir); return false; } catch { return true; }
+    });
+    if (left.length) {
+      writeJsonAtomic(path.join(dir, 'manifest.json'), { ...record, items: left });
+      throw new UserError(`Claude Deck couldn't finish deleting this conversation (${err.message}) or put all of it back. Nothing is lost: what was moved is kept in ${dir}, whose manifest.json lists where each item came from.`, 409);
     }
     fs.rmSync(dir, { recursive: true, force: true });
     if (inUse(err)) throw new UserError('Windows says a file of this conversation is in use. Close anything using it and try again.', 409);
     throw err;
   }
-  writeJsonAtomic(path.join(dir, 'manifest.json'), { sessionId, at: Date.now(), title: meta.title || null, cwd: meta.cwd || null, items: done });
+  writeJsonAtomic(path.join(dir, 'manifest.json'), { ...record, items: done });
   return { trashId, moved: done.length };
 }
 
@@ -89,9 +122,20 @@ function restore(trashId) {
   const dir = path.join(trashDir(), trashId);
   const manifest = readJson(path.join(dir, 'manifest.json'), null);
   if (!manifest || !Array.isArray(manifest.items)) throw new UserError('That conversation is no longer in the trash.', 404);
-  const clash = manifest.items.find((it) => fs.existsSync(it.from));
+  const clash = manifest.items.find((it) => !it.partial && fs.existsSync(it.from));
   if (clash) throw new UserError(`Something already exists at ${clash.from}, so the conversation was not put back.`, 409);
-  for (const it of manifest.items) move(path.join(dir, it.name), it.from);
+  // The manifest is updated after each item, so if one fails, trying again carries on from there.
+  const items = [...manifest.items];
+  while (items.length) {
+    try {
+      putBack(items[0], dir);
+    } catch (err) {
+      const why = inUse(err) ? 'Windows says a file of it is in use' : err.message;
+      throw new UserError(`Only part of the conversation was put back (${why}). Close anything using it, then try Undo again.`, 409);
+    }
+    items.shift();
+    writeJsonAtomic(path.join(dir, 'manifest.json'), { ...manifest, items });
+  }
   fs.rmSync(dir, { recursive: true, force: true });
   return { sessionId: manifest.sessionId, restored: manifest.items.length };
 }

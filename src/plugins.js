@@ -45,6 +45,14 @@ class PluginManager {
     this.run = run || runClaude;
     this.cache = new Map(); // cwd -> { at, value }
     this.queue = Promise.resolve();
+    // Counts changes (install, enable, ...). A list that saw one happen while it was being made
+    // may be out of date, so it's returned but not kept.
+    this.changes = 0;
+  }
+
+  _changed() {
+    this.changes++;
+    this.cache.clear();
   }
 
   // One Claude Code command at a time: they read and write the same settings files.
@@ -62,6 +70,7 @@ class PluginManager {
     const key = cwd || '';
     const hit = this.cache.get(key);
     if (hit && !refresh && Date.now() - hit.at < LIST_TTL_MS) return hit.value;
+    const changesBefore = this.changes;
     const r = await this._exec(['plugin', 'list', '--available', '--json'], cwd);
     const data = lastJson(r.stdout);
     if (!data || !Array.isArray(data.installed)) throw new UserError(`Couldn't list Claude Code's plugins: ${failure(r)}`, 502);
@@ -77,7 +86,7 @@ class PluginManager {
         id: p.pluginId, name: p.name, marketplace: p.marketplaceName, description: clip(String(p.description || ''), DESCRIPTION_MAX), category: categoryOf(p.name, p.marketplaceName), installCount: p.installCount || null,
       })).filter((p) => p.id).sort((a, b) => a.name.localeCompare(b.name)),
     };
-    this.cache.set(key, { at: Date.now(), value });
+    if (this.changes === changesBefore) this.cache.set(key, { at: Date.now(), value });
     return value;
   }
 
@@ -100,7 +109,7 @@ class PluginManager {
 
   async setEnabled(id, enabled, cwd) {
     const r = await this._exec(['plugin', enabled ? 'enable' : 'disable', arg(id, 'plugin'), '--json'], cwd);
-    this.cache.clear();
+    this._changed();
     const res = lastJson(r.stdout);
     if (!res || res.outcome !== 'ok') throw new UserError(`Couldn't ${enabled ? 'turn on' : 'turn off'} ${id}: ${res && res.message ? res.message : failure(r)}`);
     return { ok: true };
@@ -113,7 +122,7 @@ class PluginManager {
     const args = ['plugin', 'install', arg(id, 'plugin'), '--json'];
     if (acceptCommand) args.push('--accept-command', arg(acceptCommand, 'command checksum'));
     const r = await this._exec(args, cwd);
-    this.cache.clear();
+    this._changed();
     const res = lastJson(r.stdout);
     if (res && res.outcome === 'ok') return { ok: true, scope: res.scope || null };
     if (res && NEEDS_CONFIRMATION.has(res.failureCode) && res.shownCommand && res.shownCommand.sha256) {
@@ -145,7 +154,7 @@ class PluginManager {
 
   async _marketplaceCommand(args, what) {
     const r = await this._exec(['plugin', 'marketplace', ...args]);
-    this.cache.clear();
+    this._changed();
     if (r.code !== 0) throw new UserError(`${what}: ${failure(r)}`);
     return { ok: true, message: clip(outcome(r.stdout), 300) };
   }

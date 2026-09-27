@@ -128,3 +128,20 @@ test('mid-conversation, a reload that changes the tools waits for a yes, then ap
   await mgr.end(c.id, { keep: true });
   assert.deepStrictEqual(await mgr.reloadPlugins(c.id, { pluginId: 'tools@fake-market', enabled: true }), { applied: false, reason: 'ended' });
 });
+
+test('a list made while a plugin was being installed is not kept as the current one', async () => {
+  let installed = false;
+  const run = async (args) => {
+    if (args[1] === 'install') installed = true;
+    if (args[1] === 'list') return { code: 0, stdout: JSON.stringify({ installed: installed ? [{ id: 'a@m', enabled: true }] : [], available: [] }), stderr: '' };
+    if (args[1] === 'marketplace') return { code: 0, stdout: '[]', stderr: '' };
+    return { code: 0, stdout: JSON.stringify({ outcome: 'ok' }), stderr: '' };
+  };
+  const { PluginManager } = require('../src/plugins');
+  const p = new PluginManager({ run });
+  // The list's first command runs, then the install, then the list's second command.
+  const listing = p.list('x');
+  await p.install('a@m', { cwd: 'x' });
+  assert.strictEqual((await listing).installed.length, 0, 'made before the install finished');
+  assert.strictEqual((await p.list('x')).installed.length, 1, 'the next list asks again');
+});

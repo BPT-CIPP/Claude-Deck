@@ -35,19 +35,38 @@ function resolveTarget(scope, folder) {
   return { scope, kind: def.kind, label: def.label, path: def.file(dir), folder: dir };
 }
 
+// The file's modification time is taken before and after reading it, and the read is repeated if
+// they differ: text read while something else was writing must never be paired with the newer
+// time, or saving it later would pass the "changed on disk" check and undo that write.
 function read(scope, folder) {
   const t = resolveTarget(scope, folder);
-  let text = '';
-  let exists = false;
-  let mtimeMs = null;
-  try {
-    text = readText(t.path);
-    exists = true;
-    mtimeMs = fs.statSync(t.path).mtimeMs;
-  } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
+  for (let attempt = 0; ; attempt++) {
+    let text = '';
+    let exists = false;
+    let mtimeMs = null;
+    let before = null;
+    try {
+      before = fs.statSync(t.path);
+      text = readText(t.path);
+      exists = true;
+      mtimeMs = before.mtimeMs;
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+    let after = null;
+    try { after = fs.statSync(t.path); } catch { /* gone */ }
+    const steady = before ? Boolean(after) && after.mtimeMs === before.mtimeMs && after.size === before.size : !after;
+    if (steady || attempt >= 4) return { ...t, exists, text, mtimeMs: steady ? mtimeMs : -1 };
   }
-  return { ...t, exists, text, mtimeMs };
+}
+
+// Keeps the file's own byte-order mark and line endings: the editor works in plain \n text.
+function inFileFormat(file, text) {
+  let raw = '';
+  try { raw = fs.readFileSync(file, 'utf8'); } catch { return text; }
+  let out = raw.includes('\r\n') ? text.replace(/\r?\n/g, '\r\n') : text;
+  if (raw.startsWith('﻿') && !out.startsWith('﻿')) out = `﻿${out}`;
+  return out;
 }
 
 function backupDir(target) {
@@ -102,17 +121,22 @@ function validate(target, text) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new UserError('Settings must be a JSON object.');
 }
 
-// baseMtimeMs is the modification time the editor loaded. If Claude Code (or anything else)
-// changed the file since, refuse unless force is set, so edits are never silently lost.
+// baseMtimeMs is the modification time the editor loaded (null: the file didn't exist). If Claude
+// Code (or anything else) created, changed or removed the file since, refuse unless force is set,
+// so edits are never silently lost.
+function refuseIfChanged(scope, folder, baseMtimeMs, force) {
+  const current = read(scope, folder);
+  if (!force && (baseMtimeMs ?? null) !== current.mtimeMs) {
+    throw new UserError('This file changed on disk since you opened it. Reload to see the new version, or save again to overwrite it.', 409);
+  }
+}
+
 function write(scope, folder, text, baseMtimeMs, force) {
   const target = resolveTarget(scope, folder);
   validate(target, text);
-  const current = read(scope, folder);
-  if (!force && current.exists && baseMtimeMs !== current.mtimeMs) {
-    throw new UserError('This file changed on disk since you opened it. Reload to see the new version, or save again to overwrite it.', 409);
-  }
+  refuseIfChanged(scope, folder, baseMtimeMs, force);
   const backupPath = backup(target);
-  writeFileAtomic(target.path, text);
+  writeFileAtomic(target.path, inFileFormat(target.path, text));
   return { ...read(scope, folder), backupPath };
 }
 
@@ -121,15 +145,20 @@ function listBackups(scope, folder) {
   return { path: target.path, backups: listBackupFiles(backupDir(target)) };
 }
 
-function restore(scope, folder, name) {
+// Backups are named by the time they were made (see backup()); nothing else in the folder is one.
+const BACKUP_NAME = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z(\.[\w]+)?$/;
+
+// Like write: refused if the file changed since the editor loaded it (baseMtimeMs).
+function restore(scope, folder, name, baseMtimeMs, force) {
   const target = resolveTarget(scope, folder);
-  if (typeof name !== 'string' || name !== path.basename(name)) throw new UserError('Invalid backup name.');
+  if (typeof name !== 'string' || !BACKUP_NAME.test(name)) throw new UserError('Invalid backup name.');
   const src = path.join(backupDir(target), name);
   if (!fs.existsSync(src)) throw new UserError('That backup no longer exists.', 404);
   const text = readText(src);
   validate(target, text);
+  refuseIfChanged(scope, folder, baseMtimeMs, force);
   const backupPath = backup(target);
-  writeFileAtomic(target.path, text);
+  writeFileAtomic(target.path, fs.readFileSync(src)); // the backup's own bytes, BOM and line endings included
   return { ...read(scope, folder), backupPath };
 }
 

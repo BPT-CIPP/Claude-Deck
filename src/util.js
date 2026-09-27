@@ -21,8 +21,11 @@ function sleepSync(ms) {
 }
 
 // Write to a temp file, then rename over the target so readers never see a half-written file.
-// Rename is retried because Windows briefly locks files that another process has open.
-function writeFileAtomic(file, text) {
+// Rename is retried because Windows briefly locks files that another process has open. A symbolic
+// link is written through (to the file it points at), so the link itself stays a link.
+function writeFileAtomic(target, text) {
+  let file = target;
+  try { file = fs.realpathSync(target); } catch { /* doesn't exist yet */ }
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(tmp, text);
@@ -79,7 +82,7 @@ function parseArgString(input) {
       hasToken = true;
     }
   }
-  if (inQuotes) throw new Error('Extra arguments have an unclosed double quote.');
+  if (inQuotes) throw new UserError('Extra arguments have an unclosed double quote.');
   if (hasToken) args.push(current);
   return args;
 }

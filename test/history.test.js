@@ -34,6 +34,14 @@ test('promptText skips tool results, wrappers and interruptions', () => {
   assert.strictEqual(promptText({ content: [{ type: 'tool_result', content: 'x' }] }), null);
   assert.strictEqual(promptText({ content: '<command-name>/clear</command-name>' }), null);
   assert.strictEqual(promptText({ content: '[Request interrupted by user]' }), null);
+  assert.strictEqual(promptText({ content: '<local-command-stdout>done</local-command-stdout>' }), null);
+  assert.strictEqual(promptText({ content: '<task-notification>\n<task-id>x</task-id>' }), null);
+});
+
+test("promptText keeps the person's own prompts that start with <", () => {
+  assert.strictEqual(promptText({ content: "<Button> doesn't render" }), "<Button> doesn't render");
+  assert.strictEqual(promptText({ content: '<div class="x">fix this</div>' }), '<div class="x">fix this</div>');
+  assert.strictEqual(promptText({ content: '<pasted_content id="1">the log</pasted_content>\nwhat broke?' }), 'the log\nwhat broke?', 'pasted text, without its wrapper');
 });
 
 test('promptText keeps prompts that are only images', () => {
@@ -149,4 +157,15 @@ test('readTranscript returns prompts, assistant text and tool calls', async () =
   assert.deepStrictEqual(items.map((i) => i.kind), ['user', 'assistant', 'tool']);
   assert.strictEqual(items[2].detail, 'git status');
   assert.ok(!JSON.stringify(items).includes('secret'), 'thinking is not exposed');
+});
+
+test('readTranscript reads only what was added to a transcript that grew', async () => {
+  const first = line({ ...base, type: 'user', message: { role: 'user', content: 'One' } });
+  fs.writeFileSync(file, first);
+  assert.deepStrictEqual((await readTranscript(file, 50)).map((i) => i.text), ['One']);
+  fs.appendFileSync(file, line({ ...base, type: 'user', message: { role: 'user', content: 'Two' } }));
+  assert.deepStrictEqual((await readTranscript(file, 50)).map((i) => i.text), ['One', 'Two']);
+  // Rewritten (shorter): read again from the start.
+  fs.writeFileSync(file, line({ ...base, type: 'user', message: { role: 'user', content: 'Z' } }));
+  assert.deepStrictEqual((await readTranscript(file, 50)).map((i) => i.text), ['Z']);
 });
