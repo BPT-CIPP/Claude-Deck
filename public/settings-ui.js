@@ -444,7 +444,7 @@
         const ok = await Deck.confirm({ title: 'Restore this backup?', body: 'The file goes back to that version. What is there now is backed up first, so you can undo this.', ok: 'Restore' });
         if (!ok) return;
         try {
-          await api('POST', '/api/settings/restore', { scope: T.scope, folder: T.folder, name });
+          await api('POST', '/api/settings/restore', { scope: T.file.scope, folder: T.file.folder || '', name, baseMtimeMs: T.file.mtimeMs });
           toast('Backup restored');
           load();
         } catch (err) {
@@ -654,10 +654,16 @@
       render();
       return;
     }
+    // Only the latest load counts: switching scope or folder while one is on its way must not let
+    // the earlier file's content arrive last and be saved into the newly chosen one.
+    const gen = (T.loadGen = (T.loadGen || 0) + 1);
+    T.file = null;
+    T.model = null;
     T.loading = true;
     render();
     try {
       const f = await api('GET', `/api/settings?scope=${encodeURIComponent(T.scope)}&folder=${encodeURIComponent(T.folder)}`);
+      if (gen !== T.loadGen) return;
       T.file = f;
       if (f.kind === 'json') {
         let parsed = {};
@@ -678,6 +684,7 @@
         T.memoryText = f.text;
       }
     } catch (err) {
+      if (gen !== T.loadGen) return;
       T.file = null;
       T.loadError = err.message;
     }
@@ -695,7 +702,8 @@
     }
     const text = T.file.kind === 'json' ? `${JSON.stringify(T.model, null, 2)}\n` : T.memoryText;
     try {
-      const f = await api('PUT', '/api/settings', { scope: T.scope, folder: T.folder, text, baseMtimeMs: T.file.mtimeMs, force: force === true });
+      // To the file this content was loaded from, whatever is selected by the time this runs.
+      const f = await api('PUT', '/api/settings', { scope: T.file.scope, folder: T.file.folder || '', text, baseMtimeMs: T.file.mtimeMs, force: force === true });
       T.file = f;
       T.conflict = false;
       if (f.kind === 'json') T.original = clone(T.model);

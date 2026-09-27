@@ -81,7 +81,7 @@
         </div>
         <div class="banner banner-danger" id="billing-banner" role="alert" hidden></div>
         <div class="focus" id="focus">
-          <div class="focus-list" id="focus-list" role="listbox" aria-label="Sessions"></div>
+          <div class="focus-list" id="focus-list" role="group" aria-label="Sessions" tabindex="-1"></div>
           <div class="focus-splitter" id="focus-splitter" role="separator" aria-label="Resize session list" tabindex="0"></div>
           <div class="focus-detail" id="focus-detail"></div>
         </div>
@@ -133,7 +133,7 @@
       <div class="chips" id="l-folders"></div>
 
       <div class="grid-2">
-        <label class="field"><span>Name <em>optional</em></span><input type="text" id="l-name" placeholder="Shown on the card and the tab"></label>
+        <label class="field"><span>Name <em>optional</em></span><input type="text" id="l-name" placeholder="Shown in the session list and the tab"></label>
         <label class="field"><span>Preset</span>
           <div class="row"><select id="l-preset"><option value="">None</option></select><button type="button" class="ghost" id="l-save-preset">Save as preset</button></div>
         </label>
@@ -159,8 +159,8 @@
       </div>
 
       <div class="field">
-        <span class="field-label">Card color</span>
-        <div class="swatches" id="l-colors" role="radiogroup" aria-label="Card color"></div>
+        <span class="field-label">Tag color</span>
+        <div class="swatches" id="l-colors" role="radiogroup" aria-label="Tag color"></div>
       </div>
 
       <details class="more">

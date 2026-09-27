@@ -5,13 +5,23 @@
   const Deck = (window.Deck = window.Deck || {});
 
   // ---- token + API ---------------------------------------------------------------------------
+  // A token in the address (?t=, from the server's own link) replaces the saved one only once the
+  // server accepts it: any web page can open this address with a made-up token, and saving that
+  // would lock the installed app out. A rejected one is dropped and the page reloads with the saved one.
   function takeToken() {
     const url = new URL(location.href);
     let token = url.searchParams.get('t');
     if (token) {
-      try { localStorage.setItem('deck-token', token); } catch { /* storage unavailable */ }
       url.searchParams.delete('t');
       history.replaceState(null, '', url.pathname + url.search + url.hash);
+      const offered = token;
+      fetch('/api/ping', { headers: { 'x-deck-token': offered } }).then((res) => {
+        if (res.ok) {
+          try { localStorage.setItem('deck-token', offered); } catch { /* storage unavailable */ }
+        } else if (res.status === 401) {
+          location.reload();
+        }
+      }).catch(() => { /* server not reachable; nothing to decide */ });
     } else {
       try { token = localStorage.getItem('deck-token'); } catch { token = null; }
     }
@@ -141,7 +151,8 @@
   Deck.richText = function richText(text) {
     const frag = document.createDocumentFragment();
     const str = String(text);
-    const regex = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g;
+    // Any language name (c++, objective-c), and Windows line endings after it.
+    const regex = /```([^\s`]*)[ \t]*\r?\n([\s\S]*?)```/g;
     let lastIndex = 0;
     let match;
 
@@ -163,7 +174,7 @@
         addProse(str.slice(lastIndex, match.index));
       }
       const lang = match[1] || 'code';
-      const code = match[2].replace(/\n$/, '');
+      const code = match[2].replace(/\r?\n$/, '');
       const copyBtn = Deck.h('button', { class: 'code-block-copy', title: 'Copy code' }, 'Copy');
       copyBtn.addEventListener('click', async () => {
         await Deck.copy(code, 'Code copied');
@@ -181,7 +192,7 @@
 
     if (lastIndex < str.length) {
       const rest = str.slice(lastIndex);
-      const unclosed = rest.match(/```([a-zA-Z0-9_-]*)\n?([\s\S]*)$/);
+      const unclosed = rest.match(/```([^\s`]*)[ \t]*\r?\n?([\s\S]*)$/);
       if (unclosed && unclosed.index === 0) {
         const lang = unclosed[1] || 'code';
         const code = unclosed[2];
