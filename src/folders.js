@@ -20,17 +20,22 @@ function isDir(p) {
   }
 }
 
-function drives() {
-  const out = [];
-  for (let c = 65; c <= 90; c++) {
-    const root = `${String.fromCharCode(c)}:\\`;
-    if (isDir(root)) out.push({ name: root, path: root });
-  }
-  return out;
+// Asynchronous, for folders that may be on a network drive: a disconnected one can take the
+// network timeout to answer, and the server keeps serving meanwhile.
+function isDirAsync(p) {
+  return fs.promises.stat(p).then((st) => st.isDirectory(), () => false);
+}
+
+// All drive letters are checked at once, so one slow drive costs its own wait, not 26 of them.
+async function drives() {
+  const roots = [];
+  for (let c = 65; c <= 90; c++) roots.push(`${String.fromCharCode(c)}:\\`);
+  const ok = await Promise.all(roots.map(isDirAsync));
+  return roots.filter((r, i) => ok[i]).map((root) => ({ name: root, path: root }));
 }
 
 // Shortcuts shown beside the list. OneDrive-redirected Documents/Desktop are included when present.
-function places() {
+async function places() {
   const home = os.homedir();
   const candidates = [
     ['Home', home],
@@ -46,11 +51,12 @@ function places() {
     candidates.push([`${label} Documents`, path.join(root, 'Documents')]);
     candidates.push([`${label} Desktop`, path.join(root, 'Desktop')]);
   }
+  const ok = await Promise.all(candidates.map(([, p]) => isDirAsync(p)));
   const seen = new Set();
   const out = [];
-  for (const [name, p] of candidates) {
+  for (const [i, [name, p]] of candidates.entries()) {
     const key = p.toLowerCase();
-    if (seen.has(key) || !isDir(p)) continue;
+    if (seen.has(key) || !ok[i]) continue;
     seen.add(key);
     out.push({ name, path: p });
   }
@@ -58,14 +64,17 @@ function places() {
 }
 
 // Subfolders of `dir`, sorted by name. An empty `dir` lists the drives.
-function listDir(dir) {
-  if (!dir) return { path: '', parent: null, entries: drives(), places: places() };
+async function listDir(dir) {
+  if (!dir) {
+    const [entries, shortcuts] = await Promise.all([drives(), places()]);
+    return { path: '', parent: null, entries, places: shortcuts };
+  }
   if (!path.isAbsolute(dir)) throw new UserError('Enter a full folder path, like C:\\Projects.');
   const full = path.resolve(dir);
-  if (!isDir(full)) throw new UserError(`Folder not found: ${full}`, 404);
+  if (!(await isDirAsync(full))) throw new UserError(`Folder not found: ${full}`, 404);
   let dirents;
   try {
-    dirents = fs.readdirSync(full, { withFileTypes: true });
+    dirents = await fs.promises.readdir(full, { withFileTypes: true });
   } catch (err) {
     if (err.code === 'EPERM' || err.code === 'EACCES') throw new UserError(`Windows won't let Claude Deck read ${full}.`, 403);
     throw err;

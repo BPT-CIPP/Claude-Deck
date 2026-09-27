@@ -108,6 +108,16 @@ function requireFolder(cwd) {
   if (!st.isDirectory()) throw new UserError(`Not a folder: ${cwd}`);
 }
 
+// Everything that must hold before a session starts: Claude Code found, the folder there, and the
+// plan (not an API account) paying for it. Run before ending anything a new session replaces.
+function preflight(rawOptions) {
+  const o = normalizeOptions(rawOptions);
+  const claude = requireClaude(prefsStore.load());
+  requireFolder(o.cwd);
+  requirePlanBilling(o.cwd, { args: parseArgString(o.extraArgs) });
+  return { o, claude };
+}
+
 function tabTitle(o) {
   return o.name || path.basename(o.cwd) || o.cwd;
 }
@@ -119,11 +129,8 @@ class Launcher {
   }
 
   launch(rawOptions) {
-    const o = normalizeOptions(rawOptions);
+    const { o, claude } = preflight(rawOptions);
     const prefs = prefsStore.load();
-    const claude = requireClaude(prefs);
-    requireFolder(o.cwd);
-    requirePlanBilling(o.cwd);
 
     const id = crypto.randomUUID();
     const sessionId = o.mode === 'new' ? crypto.randomUUID() : null;
@@ -138,6 +145,8 @@ class Launcher {
       command: claude.path,
       args,
       baseArgs,
+      // For the billing check when the tab resumes Claude itself (tab-host.js).
+      extraArgs: parseArgString(o.extraArgs),
       cwd: o.cwd,
       env,
       claudeDir: paths.claudeDir(),
@@ -200,7 +209,7 @@ class Launcher {
   resume(id) {
     const entry = this.registry.get(id);
     if (!entry) throw new UserError('That session is no longer tracked.', 404);
-    requirePlanBilling(entry.cwd);
+    requirePlanBilling(entry.cwd, { args: parseArgString(entry.options && entry.options.extraArgs) });
     const status = readJson(path.join(paths.tabsDir(), `${id}.json`), null);
     if (status && status.state === 'exited' && isPidAlive(status.hostPid) && status.sessionId) {
       fs.writeFileSync(path.join(paths.tabsDir(), `${id}.resume`), String(Date.now()));
@@ -228,6 +237,7 @@ module.exports = {
   wtEscape,
   requireClaude,
   requireFolder,
+  preflight,
   EFFORTS,
   PERMISSION_MODES,
   COLORS,

@@ -55,7 +55,7 @@ function save(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new UserError('Preferences must be an object.');
   const next = load();
   for (const [key, value] of Object.entries(patch)) {
-    if (!(key in DEFAULTS)) throw new UserError(`Unknown preference: ${key}`);
+    if (!Object.hasOwn(DEFAULTS, key)) throw new UserError(`Unknown preference: ${key}`);
     if (!sameType(DEFAULTS[key], value)) throw new UserError(`Preference ${key} has the wrong type.`);
     if (ENUMS[key] && !ENUMS[key].includes(value)) throw new UserError(`Preference ${key} must be one of: ${ENUMS[key].join(', ')}`);
     next[key] = value;

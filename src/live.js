@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const { EventEmitter } = require('events');
+const { execFile } = require('child_process');
 const paths = require('./paths');
 const prefsStore = require('./prefs');
 const { readJson, isPidAlive } = require('./util');
@@ -65,7 +66,7 @@ class Live extends EventEmitter {
     this.ticking = false;
     this.again = false;
     this.watchers = [];
-    // Chat changes are pushed, not polled, so the board reacts at once.
+    // Chat changes are pushed, not polled, so the session list reacts at once.
     if (this.chats) this.chats.on('change', () => this.poke(30));
   }
 
@@ -77,18 +78,29 @@ class Live extends EventEmitter {
   start() {
     this.tick();
     this.timer = setInterval(() => this.tick(), 1500);
-    for (const dir of [paths.sessionsDir(), paths.tabsDir()]) {
-      try {
-        fs.mkdirSync(dir, { recursive: true });
-        this.watchers.push(fs.watch(dir, () => this.poke()));
-      } catch {
-        // polling still covers it
-      }
+    for (const dir of [paths.sessionsDir(), paths.tabsDir()]) this._watch(dir);
+  }
+
+  _watch(dir) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const w = fs.watch(dir, () => this.poke());
+      // A watched folder that's deleted or renamed ends its watcher with an error; without this
+      // handler that error would stop the server. Polling covers the gap until it's watched again.
+      w.on('error', () => {
+        w.close();
+        this.watchers = this.watchers.filter((x) => x !== w);
+        if (this.timer) setTimeout(() => { if (this.timer) this._watch(dir); }, 5000);
+      });
+      this.watchers.push(w);
+    } catch {
+      // polling still covers it
     }
   }
 
   stop() {
     clearInterval(this.timer);
+    this.timer = null;
     for (const w of this.watchers) w.close();
   }
 
@@ -209,6 +221,7 @@ class Live extends EventEmitter {
           waitingFor: rec.status === 'waiting' ? rec.waitingFor || 'input needed' : null,
           statusSince: rec.statusUpdatedAt || rec.updatedAt || null,
           startedAt: rec.startedAt || null,
+          procStart: rec.procStart || null,
           transcriptStamp: rec.sessionId ? this.history.stamp(rec.sessionId) : null,
           ...describe(meta),
           tokens: rec.sessionId ? this.history.tokensFor(rec.sessionId) : null,
@@ -246,4 +259,23 @@ class Live extends EventEmitter {
   }
 }
 
-module.exports = { Live, readSessionRecords };
+// Whether pid is still the process that wrote a session file. Claude Code records its process's
+// creation time there (procStart, a Windows FILETIME); a file left behind by a killed Claude can
+// name a pid Windows has since given to another program, which has a different creation time.
+// Asked with PowerShell (a Windows built-in). Without procStart (older Claude Code), it can't tell.
+function isSameProcess(pid, procStart) {
+  if (!procStart || process.platform !== 'win32') return Promise.resolve(true);
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${Number(pid)} -ErrorAction Stop).StartTime.ToFileTimeUtc()`], { windowsHide: true, timeout: 15000 }, (err, stdout) => {
+      if (err) return resolve(false);
+      try {
+        // FILETIME counts 100 ns steps; allow a second either way for rounding.
+        resolve(Math.abs(Number(BigInt(String(stdout).trim()) - BigInt(procStart))) <= 1e7);
+      } catch {
+        resolve(false);
+      }
+    });
+  });
+}
+
+module.exports = { Live, readSessionRecords, isSameProcess };

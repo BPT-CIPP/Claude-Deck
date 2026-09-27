@@ -12,9 +12,22 @@ function npmPackageTargets(shimDir) {
   return [path.join(pkg, 'bin', 'claude.exe'), path.join(pkg, 'cli.js')];
 }
 
+// A shim (claude.cmd, claude.bat) can't be started without a shell; the program it wraps can.
+const isShim = (file) => /\.(cmd|bat)$/i.test(file);
+
+function isFile(p) {
+  try { return fs.statSync(p).isFile(); } catch { return false; }
+}
+
 function candidates(preferred) {
   const list = [];
-  if (preferred) list.push({ path: preferred, source: 'preferences' });
+  if (preferred && isShim(preferred)) {
+    for (const target of npmPackageTargets(path.dirname(preferred))) list.push({ path: target, source: 'preferences' });
+  } else if (preferred) {
+    list.push({ path: preferred, source: 'preferences' });
+  }
+  // The path set in Preferences is used without looking anything up.
+  if (list.some((c) => isFile(c.path))) return list;
   let found = [];
   try {
     found = execFileSync('where.exe', ['claude'], { encoding: 'utf8', windowsHide: true, timeout: 5000 })
@@ -34,14 +47,7 @@ function candidates(preferred) {
 }
 
 function locateClaude(preferred) {
-  for (const c of candidates(preferred)) {
-    try {
-      if (fs.statSync(c.path).isFile()) return c;
-    } catch {
-      // try the next one
-    }
-  }
-  return null;
+  return candidates(preferred).find((c) => isFile(c.path) && !isShim(c.path)) || null;
 }
 
 function isScript(file) {
@@ -53,9 +59,14 @@ function claudeVersion(claudePath) {
   return new Promise((resolve) => {
     const cmd = isScript(claudePath) ? process.execPath : claudePath;
     const args = isScript(claudePath) ? [claudePath, '--version'] : ['--version'];
-    execFile(cmd, args, { windowsHide: true, timeout: 15000 }, (err, stdout) => {
-      resolve(err ? null : String(stdout).trim());
-    });
+    try {
+      execFile(cmd, args, { windowsHide: true, timeout: 15000 }, (err, stdout) => {
+        resolve(err ? null : String(stdout).trim());
+      });
+    } catch {
+      // Some files can't be started at all (Node refuses a .cmd without a shell).
+      resolve(null);
+    }
   });
 }
 

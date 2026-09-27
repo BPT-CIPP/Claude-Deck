@@ -80,14 +80,16 @@ function run(args) {
     return;
   }
   let exited = false;
+  let poll = null;
   child.on('error', (err) => {
+    clearInterval(poll);
     if (exited) return;
     exited = true;
     process.stdout.write(`\nClaude Deck could not start Claude Code: ${err.message}\n`);
     afterExit(null);
   });
   writeStatus({ state: 'running', claudePid: child.pid || null, runs: status.runs + 1, exitCode: null });
-  const poll = setInterval(() => learnSessionId(child.pid), 2000);
+  poll = setInterval(() => learnSessionId(child.pid), 2000);
   child.on('exit', (code) => {
     clearInterval(poll);
     if (exited) return;
@@ -128,6 +130,12 @@ function waitForChoice(canResume) {
     try { chooser.kill(); } catch { /* already exited */ }
     if (what === 'resume') {
       removeMarkers();
+      const refused = billingRefusal();
+      if (refused) {
+        process.stdout.write(`\n${refused}\n`);
+        afterExit(null);
+        return;
+      }
       process.stdout.write('\nResuming…\n');
       run([...spec.baseArgs, '--resume', status.sessionId]);
     } else {
@@ -144,6 +152,20 @@ function waitForChoice(canResume) {
     decide(canResume && code === 1 ? 'resume' : 'close');
   });
   chooser.on('error', () => decide('close'));
+}
+
+// Resuming here starts Claude Code again, so it gets the same billing check as any other start
+// (settings may have changed since the tab opened). This process has Windows Terminal's
+// environment, not the server's, so it's pointed at Claude Deck's data folder (where the tabs
+// folder is) for the Allow API billing preference.
+function billingRefusal() {
+  process.env.CLAUDE_DECK_DATA = path.dirname(tabs);
+  try {
+    require('./billing').requirePlanBilling(spec.cwd, { args: spec.extraArgs || [], claudeDir: spec.claudeDir });
+    return null;
+  } catch (err) {
+    return err.message;
+  }
 }
 
 function finish() {
