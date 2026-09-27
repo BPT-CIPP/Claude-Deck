@@ -95,6 +95,94 @@ test('effort changes for the running session, and back to the default', async ()
   }
 });
 
+const near = (a, b) => Math.abs(a - b) < 1e-9;
+
+test("a chat's cost and tokens carry on across /clear, while the current cost starts again", async () => {
+  const c = mgr.create({ cwd, prompt: 'hello' });
+  const its = () => mgr.detail(c.id).items;
+  const replies = () => its().filter((i) => i.kind === 'result').length;
+  const sum = () => mgr.summary(mgr.chats.get(c.id));
+  try {
+    await waitFor(() => replies() === 1, 'first reply');
+    assert.ok(near(sum().chatCost, 0.01));
+    assert.ok(near(sum().spend.costUSD, 0.01));
+    assert.deepStrictEqual([sum().spend.input, sum().spend.output, sum().spend.cacheRead], [100, 20, 1000]);
+    assert.deepStrictEqual(its().find((i) => i.kind === 'result').tokens, { input: 100, output: 20, cacheRead: 1000, cacheWrite: 0 }, "the reply's own tokens");
+    await waitFor(() => sum().context && sum().context.tokens === 6000, 'context after the first reply');
+    assert.deepStrictEqual(sum().context, { tokens: 6000, max: 200000, percent: 3 });
+
+    const firstSession = sum().sessionId;
+    mgr.send(c.id, '/clear');
+    await waitFor(() => replies() === 2, '/clear done');
+    assert.ok(its().some((i) => i.kind === 'note' && /^Context cleared/.test(i.text)));
+    assert.notStrictEqual(sum().sessionId, firstSession, 'a new conversation');
+    assert.strictEqual(sum().chatCost, 0, 'the current cost starts again');
+    assert.ok(near(sum().spend.costUSD, 0.01), "the chat's cost is kept");
+    assert.strictEqual(its().filter((i) => i.kind === 'result')[1].tokens.input, 0, '/clear itself used nothing');
+    await waitFor(() => sum().context && sum().context.tokens === 5000, 'context after /clear');
+
+    mgr.send(c.id, 'after the clear');
+    await waitFor(() => replies() === 3, 'reply after /clear');
+    assert.ok(near(sum().chatCost, 0.01));
+    assert.ok(near(sum().spend.costUSD, 0.02), 'both conversations counted');
+    assert.strictEqual(sum().spend.input, 200);
+  } finally {
+    await mgr.end(c.id);
+  }
+});
+
+test('compact summarizes the conversation, and waits until Claude is done', async () => {
+  const c = mgr.create({ cwd, prompt: 'hello' });
+  const its = () => mgr.detail(c.id).items;
+  const replies = () => its().filter((i) => i.kind === 'result').length;
+  const sum = () => mgr.summary(mgr.chats.get(c.id));
+  try {
+    await waitFor(() => replies() === 1, 'first reply');
+    mgr.send(c.id, 'slow please');
+    await waitFor(() => sum().status === 'busy' || null, 'busy');
+    assert.throws(() => mgr.compact(c.id), (e) => e.status === 409);
+    await waitFor(() => replies() === 2 && sum().status === 'idle', 'slow reply');
+    mgr.compact(c.id);
+    await waitFor(() => replies() === 3, 'compacted');
+    const notes = its().filter((i) => i.kind === 'note').map((i) => i.text);
+    assert.ok(notes.includes('Compacting the conversation…'));
+    assert.ok(notes.includes('Conversation compacted (7,000 → 1,500 tokens). Claude now works from a summary of the earlier turns.'), notes.join(' | '));
+    assert.ok(its().some((i) => i.kind === 'user' && i.text === '/compact'), 'sent as /compact');
+    await waitFor(() => sum().context && sum().context.tokens === 1500, 'smaller context');
+    assert.ok(near(sum().spend.costUSD, 0.03), 'summarizing costs something too');
+    assert.strictEqual(its().filter((i) => i.kind === 'result')[2].tokens.input, 100);
+  } finally {
+    await mgr.end(c.id);
+  }
+});
+
+test("a resumed conversation's earlier cost isn't counted again", () => {
+  // Claude carries on from the conversation's saved cost-state; only what this chat adds counts.
+  const RESUMED = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const history = { get: (sid) => (sid === RESUMED ? { costState: { costUSD: 5, input: 1000, output: 100, cacheRead: 0, cacheWrite: 0 } } : null) };
+  const m = new ChatManager({ history, file: path.join(box.root, 'resumed-chats.json') });
+  const chat = m._blank({ id: 'resumed', cwd, sessionId: RESUMED });
+  const usage = (input, output) => ({ 'claude-x': { inputTokens: input, outputTokens: output, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } });
+  const result = (sessionId, cost, input, output) => m._onMessage(chat, { type: 'result', subtype: 'success', session_id: sessionId, total_cost_usd: cost, modelUsage: usage(input, output) });
+  result(RESUMED, 5.25, 1100, 120);
+  assert.ok(near(chat.spend.costUSD, 0.25));
+  assert.deepStrictEqual([chat.spend.input, chat.spend.output], [100, 20]);
+  result(RESUMED, 5.5, 1200, 140);
+  assert.ok(near(chat.spend.costUSD, 0.5));
+  // After /clear: a new session, counted from zero.
+  result('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 0.1, 50, 5);
+  assert.ok(near(chat.spend.costUSD, 0.6));
+  assert.deepStrictEqual([chat.spend.input, chat.spend.output], [250, 45]);
+  assert.strictEqual([...chat.items].reverse().find((i) => i.kind === 'result').tokens.input, 50);
+  // A fork has a new session id but carries on the original's totals (checked with 2.1.281).
+  const fork = m._blank({ id: 'fork', cwd });
+  fork.forkedFrom = RESUMED;
+  m._onMessage(fork, { type: 'result', subtype: 'success', session_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', total_cost_usd: 5.1, modelUsage: usage(1010, 101) });
+  assert.ok(near(fork.spend.costUSD, 0.1));
+  assert.deepStrictEqual([fork.spend.input, fork.spend.output], [10, 1]);
+  clearInterval(m.sleepTimer);
+});
+
 test('time the PC spends asleep is not counted as working time', () => {
   // A stand-in for a chat whose Claude is mid-turn; the demo chat (idle) is left as it is.
   const chat = mgr._blank({ id: 'sleep-check', cwd });
@@ -366,6 +454,8 @@ test('chats survive a restart as ended conversations, and end removes them', asy
   assert.ok(restored, 'restored from chats.json');
   assert.strictEqual(restored.state, 'exited');
   assert.strictEqual(restored.sessionId, sessionId);
+  assert.deepStrictEqual(restored.spend, mgr.summary(mgr.chats.get(id)).spend, "the chat's totals are kept");
+  assert.ok(restored.spend.costUSD > 0);
 
   await mgr.end(id);
   assert.ok(!mgr.list().some((c) => c.id === id), 'ended chat is gone');

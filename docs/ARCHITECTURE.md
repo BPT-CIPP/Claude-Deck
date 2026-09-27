@@ -48,7 +48,8 @@ src/chat.js             in-app chats: stream-json, permission/question answers, 
                         interrupt-and-send, subagent (task_*) tracking, model, effort and permission
                         mode, plugin reloads, sleep left out of working time
 src/live.js             joins chats + terminal registry + tab status + sessions/<pid>.json; notify events
-src/history.js          incremental transcript indexer + transcript reader
+src/history.js          incremental transcript indexer (titles, cost, token usage by hour, context
+                        size; subagent transcripts on request) + transcript reader
 src/launcher.js         claude argument building, model aliases, wt.exe new-tab / focus-tab, close / resume
 src/tab-host.js         runs inside each Windows Terminal tab; starts claude, reports pid and session id
 src/settings-files.js   Claude settings and CLAUDE.md: read, write (backup first), restore
@@ -87,7 +88,9 @@ test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes),
   service runs elsewhere, as another account, and would need a wrapper executable. The task runs
   `Start-ClaudeDeck.ps1 -Service`, which supervises the server by its exit code: 0 = stopped on
   purpose (stay stopped), 3 = another copy is running (wait and take over), anything else = crash
-  (restart after 10 seconds, give up after 5 crashes in 10 minutes).
+  (restart after 10 seconds, give up after 5 crashes in 10 minutes). *Restart server* starts a
+  replacement (`--replace <pid>`, same port) that waits for the old server to exit, and the old one
+  exits with 3, so the supervisor keeps watching the replacement and takes over if it fails.
 - **No native dialogs.** Windows won't let the hidden background server bring a window to the front,
   so a native dialog would open behind the dashboard. The folder picker is built in-app
   (`src/folders.js` and `pickFolder()` in `app.js`); build any new picker the same way.

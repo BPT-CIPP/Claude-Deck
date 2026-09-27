@@ -21,6 +21,14 @@ test('every theme is styled in app.css and offered in Preferences', () => {
   }
 });
 
+test('tool-call icons are off unless turned on', () => {
+  assert.strictEqual(prefs.load().showToolIcons, false);
+  assert.strictEqual(prefs.save({ showToolIcons: true }).showToolIcons, true);
+  assert.throws(() => prefs.save({ showToolIcons: 'yes' }), /wrong type/);
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.css'), 'utf8');
+  assert.ok(css.includes(':root:not([data-tool-icons="on"]) details.msg-tool .ticon { display: none; }'), 'hidden unless the page turns them on');
+});
+
 test('theme preference accepts known themes only', () => {
   assert.strictEqual(prefs.save({ theme: 'nord' }).theme, 'nord');
   assert.throws(() => prefs.save({ theme: 'neon' }), /must be one of/);

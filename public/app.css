@@ -563,6 +563,8 @@ select { padding-right: 24px; }
 
 .rail-bottom-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; padding: 2px 2px 0; }
 .conn { display: flex; gap: 7px; align-items: center; font-size: 11.5px; color: var(--faint); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.conn-version { font-variant-numeric: tabular-nums; opacity: 0.8; }
+.conn-version:not(:empty)::before { content: "·"; margin-right: 7px; }
 .conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ended); flex: none; }
 .conn.ok .conn-dot { background: var(--idle); box-shadow: 0 0 6px rgba(16, 185, 129, 0.45); }
 .conn.down .conn-dot { background: var(--danger); box-shadow: 0 0 6px rgba(244, 63, 94, 0.45); }
@@ -595,7 +597,7 @@ select { padding-right: 24px; }
 }
 .app.rail-collapsed .search-hint { justify-content: center; padding: 8px 0; }
 .app.rail-collapsed .search-text, .app.rail-collapsed .search-hint kbd { display: none; }
-.app.rail-collapsed #conn-text { display: none; }
+.app.rail-collapsed #conn-text, .app.rail-collapsed .conn-version { display: none; }
 .app.rail-collapsed .rail-bottom-row { justify-content: center; flex-direction: column; align-items: center; gap: 8px; }
 .app.rail-collapsed .rail-toggle .toggle-icon { transform: rotate(180deg); }
 
@@ -1075,6 +1077,8 @@ details.msg-tool summary {
 details.msg-tool summary::-webkit-details-marker { display: none; }
 /* Per-tool icon (app.js toolIcon), then a small chevron that turns when the call is expanded. */
 details.msg-tool .ticon { flex: none; width: 1.35em; text-align: center; font-size: 12.5px; line-height: 1; font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif; }
+/* Off unless turned on in Claude Deck Preferences > Appearance > Tool calls. */
+:root:not([data-tool-icons="on"]) details.msg-tool .ticon { display: none; }
 details.msg-tool summary::after { content: "›"; order: 99; flex: none; margin-left: auto; color: var(--faint); font-size: 14px; line-height: 1; transition: transform var(--dur-fast) var(--ease-smooth); }
 details.msg-tool[open] summary::after { transform: rotate(90deg); }
 details.msg-tool .tname { color: var(--text); font-weight: 600; font-family: var(--mono); font-size: 12px; }
@@ -1201,6 +1205,86 @@ pre.code.small { font-size: 11px; max-height: 280px; overflow: auto; white-space
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
 }
 .upop-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
+/* context meter (chat header) */
+.ctx-meter { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.ctx-fact dt { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ctx-compact { padding: 0 6px; font-size: 10.5px; line-height: 1.5; text-transform: none; letter-spacing: 0; font-weight: 600; }
+
+/* session header: status and where it is, the title with its menu, then one row of controls */
+.head-meta { flex-wrap: wrap; row-gap: 4px; column-gap: 8px; }
+.head-meta > .head-id { margin-left: 8px; }
+.head-id { font-size: 12px; color: var(--muted); min-width: 0; white-space: nowrap; }
+.head-id .mono, .head-id .path-text { font-family: var(--mono); font-size: 11.5px; }
+.head-folder { flex: 0 1 auto; }
+.head-folder .path-text { max-width: none; }
+.head-id button.icon { padding: 1px 5px; font-size: 11px; border-radius: 4px; }
+.head-badge { padding: 1px 8px; font-size: 11.5px; font-weight: 600; color: var(--working); background: var(--working-wash); border: 1px solid color-mix(in srgb, var(--working) 35%, transparent); border-radius: 999px; }
+.head-title { display: flex; align-items: center; gap: 4px; margin: 4px 0 6px; min-width: 0; }
+.head-title h2 { margin: 0; }
+.head-menu-btn { padding: 2px 7px; font-size: 13px; color: var(--muted); }
+.head-menu-btn[aria-expanded="true"] { color: var(--text); background: var(--panel-2); }
+.head-extra { display: inline-flex; gap: 12px; margin-left: 10px; }
+.head-extra:empty { display: none; }
+/* Tighter cards than elsewhere, so the controls and meters fit on one line. */
+.head-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; }
+.head-controls .facts { margin: 0; flex: 0 1 auto; gap: 6px; }
+.head-controls .facts > div { padding: 3px 8px; }
+.head-controls .model-picker select { min-width: 0; }
+.head-controls .facts select { padding-right: 20px; }
+.head-controls .ctx-meter .ubar { width: 36px; }
+.head-cta { display: flex; gap: 8px; margin-left: auto; }
+.hm-menu {
+  position: fixed;
+  z-index: 30;
+  min-width: 200px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--line-soft);
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  animation: modal-in 0.16s var(--ease-spring);
+}
+.hm-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 10px; border: 0; border-radius: 6px; background: none; color: var(--text); font-size: 13px; text-align: left; }
+.hm-item:hover, .hm-item:focus-visible { background: var(--panel-2); outline: none; }
+.hm-flyout { position: relative; }
+.hm-arrow, .hm-check { margin-left: auto; color: var(--muted); }
+/* Touching the item, so the pointer never crosses a gap that would close it. */
+.hm-sub { position: absolute; left: 100%; top: -5px; min-width: 160px; }
+.hm-swatch { width: 12px; height: 12px; border-radius: 3px; background: var(--tag); flex: none; }
+
+/* tokens by conversation this week (board) */
+.week-usage .lane-head { flex-wrap: wrap; }
+.week-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.week-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) minmax(80px, 180px) 64px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: none;
+  border: 1px solid transparent;
+  color: inherit;
+  text-align: left;
+}
+.week-row:hover { background: var(--panel); }
+.week-rank { font-variant-numeric: tabular-nums; text-align: right; font-size: 12px; }
+.week-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.week-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.week-sub { display: flex; gap: 10px; font-size: 12px; min-width: 0; }
+.week-sub .path { font-family: var(--mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.week-sub .live { color: var(--working); white-space: nowrap; }
+.week-bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.week-fill { display: block; height: 100%; border-radius: 3px; background: var(--muted); }
+.week-tokens { font-variant-numeric: tabular-nums; text-align: right; font-weight: 500; }
+dialog.week-dialog { width: min(760px, calc(100vw - 32px)); }
+.week-dialog h2 { margin-bottom: 6px; }
+.week-dialog input[type="search"] { width: 100%; margin: 10px 0; }
+.week-all { max-height: 58vh; overflow-y: auto; }
+
 .urow { margin-bottom: 10px; }
 .urow-top { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
 .upop-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }

@@ -30,8 +30,10 @@
     drafts: {},
     attachments: {}, // chat id -> images waiting to be sent
     showTasks: {}, // chat id -> subagents panel open
+    tasksSeen: {}, // chat id -> how many subagents it had when last shown, to open the panel for new ones
     showChanges: {}, // session key -> changes shown instead of the conversation
     agentView: null, // { chatId, taskId }: a subagent's detail shown instead of the conversation
+    week: null, // { data, loading, fetchedAt }: tokens by conversation this week, for the board
   };
 
   const LANES = [
@@ -353,6 +355,7 @@
     clear(board);
     if (!allItems().length) {
       board.appendChild(emptyState());
+      board.appendChild(weekPanel());
       return;
     }
     const groups = visibleItems();
@@ -369,11 +372,108 @@
           h('span', { class: 'lane-count' }, String(items.length))),
         h('div', { class: 'cards' }, items.map(card))));
     }
+    board.appendChild(weekPanel());
     board.scrollTop = scroll;
     if (activeKey) {
       const el = board.querySelector(`[data-key="${CSS.escape(activeKey)}"]`);
       if (el) el.focus({ preventScroll: true });
     }
+  }
+
+  // ---- usage by session (board) --------------------------------------------------------------
+  // Which conversations used the most tokens this week, from their transcripts (src/history.js).
+  // Refreshed at most once a minute while the board is shown.
+  const WEEK_TOP = 10;
+  const WEEK_REFRESH_MS = 60000;
+
+  function loadWeekUsage() {
+    if (S.week && (S.week.loading || Date.now() - S.week.fetchedAt < WEEK_REFRESH_MS)) return;
+    S.week = { ...(S.week || { data: null }), loading: true, fetchedAt: Date.now() };
+    api('GET', '/api/usage/sessions')
+      .then((data) => { S.week = { data, loading: false, fetchedAt: Date.now() }; })
+      .catch(() => { S.week = { ...S.week, loading: false }; })
+      .finally(() => { if (S.view === 'sessions' && S.layout === 'board') renderBoard(); });
+  }
+
+  function weekSinceText(d) {
+    return d.basis === 'plan' ? `Since your plan's weekly limit reset, ${when(d.since)}` : 'The last 7 days';
+  }
+
+  // A conversation from the list: the live session if it's on the board, otherwise History.
+  function openUsageSession(r) {
+    const it = allItems().find((x) => x.sessionId === r.sessionId);
+    if (it) {
+      if (isChat(it)) openChat(it.id);
+      else { select(it.key); showDetails(it.key); }
+      return;
+    }
+    S.historySel = r.sessionId;
+    $('#history-search').value = '';
+    $('#history-folder').value = '';
+    setView('history');
+  }
+
+  function weekRow(r, i, max) {
+    const it = allItems().find((x) => x.sessionId === r.sessionId);
+    return h('li', null, h('button', { type: 'button', class: 'week-row', onclick: () => openUsageSession(r), title: `${r.tokens.toLocaleString()} tokens. ${it || r.open ? 'Open the session' : 'Show it in History'}` },
+      h('span', { class: 'week-rank faint' }, String(i + 1)),
+      h('span', { class: 'week-text' },
+        h('span', { class: 'week-title' }, (it && heading(it)) || r.title || 'Untitled conversation'),
+        h('span', { class: 'week-sub faint' },
+          it || r.open ? h('span', { class: 'live' }, 'Open now') : null,
+          h('span', { class: 'path', title: r.cwd || '' }, shortPath(r.cwd)),
+          r.updatedAt ? h('span', null, ago(r.updatedAt)) : null)),
+      h('span', { class: 'week-bar', 'aria-hidden': 'true' }, h('span', { class: 'week-fill', style: { width: `${Math.max(2, Math.round((r.tokens / max) * 100))}%` } })),
+      h('span', { class: 'week-tokens' }, tokenText(r.tokens))));
+  }
+
+  function weekList(rows) {
+    const max = rows.length ? rows[0].tokens : 1;
+    return h('ol', { class: 'week-list' }, rows.map((r, i) => weekRow(r, i, max)));
+  }
+
+  function weekPanel() {
+    loadWeekUsage();
+    const d = S.week && S.week.data;
+    const rows = d ? d.sessions : [];
+    const total = rows.reduce((n, r) => n + r.tokens, 0);
+    return h('section', { class: 'lane week-usage', 'aria-label': 'Most tokens this week' },
+      h('div', { class: 'lane-head' },
+        h('h2', null, 'Most tokens this week'),
+        d ? h('span', { class: 'faint small', title: 'Tokens from every conversation\'s transcript, subagents included' }, `${weekSinceText(d)} · ${tokenText(total)} tokens across ${rows.length} conversation${rows.length === 1 ? '' : 's'}`) : null,
+        h('span', { class: 'spacer' }),
+        rows.length > WEEK_TOP ? h('button', { type: 'button', class: 'ghost small', onclick: showWeekDialog }, `Show all ${rows.length}`) : null),
+      !d ? h('p', { class: 'faint small' }, S.week && S.week.loading ? 'Adding up this week\'s usage…' : 'Usage by session isn\'t available right now.')
+        : !rows.length ? h('p', { class: 'faint small' }, 'No Claude Code usage this week yet.')
+          : weekList(rows.slice(0, WEEK_TOP)));
+  }
+
+  function showWeekDialog() {
+    const d = S.week && S.week.data;
+    if (!d) return;
+    const search = h('input', { type: 'search', placeholder: 'Filter by title or folder', 'aria-label': 'Filter conversations' });
+    const body = h('div', { class: 'week-all' });
+    const fill = () => {
+      clear(body);
+      const q = search.value.trim();
+      const max = d.sessions.length ? d.sessions[0].tokens : 1;
+      const rows = d.sessions.map((r, i) => ({ r, i })).filter(({ r }) => matches([r.title, r.cwd, r.sessionId], q));
+      if (!rows.length) body.appendChild(h('p', { class: 'faint small' }, 'Nothing matches.'));
+      else body.appendChild(h('ol', { class: 'week-list' }, rows.map(({ r, i }) => weekRow(r, i, max))));
+    };
+    search.addEventListener('input', fill);
+    const dlg = h('dialog', { class: 'dialog week-dialog', 'aria-label': 'Tokens by conversation this week' },
+      h('h2', null, 'Tokens by conversation this week'),
+      h('p', { class: 'faint small' }, `${weekSinceText(d)}. Tokens from each conversation's transcript, subagents included.`),
+      search,
+      body,
+      h('div', { class: 'dialog-actions' }, h('button', { type: 'button', class: 'primary', onclick: () => dlg.close() }, 'Close')));
+    // Opening a conversation from the list closes the list.
+    body.addEventListener('click', (e) => { if (e.target.closest('.week-row')) dlg.close(); });
+    dlg.addEventListener('close', () => dlg.remove());
+    document.body.appendChild(dlg);
+    fill();
+    dlg.showModal();
   }
 
   // ---- focus layout --------------------------------------------------------------------------
@@ -412,49 +512,110 @@
     return h('div', null, h('dt', null, label), h('dd', { class: mono ? 'mono' : null }, value instanceof Node ? value : String(value)));
   }
 
-  function colorSelect(it) {
-    return h('select', { class: 'small', 'aria-label': 'Card color', onchange: (e) => recolor(it, e.target.value) },
-      Object.entries(COLOR_NAMES).map(([k, v]) => h('option', { value: k, selected: k === (it.color || 'slate') }, `${v} tag`)));
+  // What's in the ▾ menu beside a session's title, top to bottom. Tag color opens a fly-out.
+  function sessionMenuItems(it) {
+    const items = [];
+    const cmd = resumeCommand(it);
+    const changes = it.sessionId ? { label: S.showChanges[it.key] ? 'Back to the conversation' : 'Changes', title: 'Files Claude changed in each turn, with diffs and restore', run: () => toggleChanges(it) } : null;
+    if (it.deck && !(isTerminal(it) && it.state === 'failed')) {
+      items.push({ label: 'Rename', run: () => rename(it) });
+      items.push({ label: 'Tag color', colors: true });
+    }
+    if (changes && !(isTerminal(it) && it.state === 'failed')) items.push(changes);
+    if (isChat(it)) {
+      if (it.sessionId) items.push({ label: 'Continue in terminal', title: 'Continue this conversation in a Windows Terminal tab', run: () => continueInTerminal(it) });
+      items.push({ label: S.showTasks[it.id] ? 'Hide subagents' : it.taskCount ? `Subagents (${it.taskCount})` : 'Subagents', title: 'Subagents Claude started in this chat', run: () => setTasksPanel(it.id, !S.showTasks[it.id]) });
+    } else {
+      if (isTerminal(it) && it.state !== 'failed' && it.sessionId) items.push({ label: 'Continue here', title: 'Close the tab and continue this conversation here', run: () => continueHere(it) });
+      if (cmd) items.push({ label: 'Copy resume command', run: () => copy(cmd, 'Resume command copied') });
+    }
+    return items;
   }
 
-  function changesButton(it) {
-    if (!it.sessionId) return null;
-    const on = Boolean(S.showChanges[it.key]);
-    return h('button', { class: 'ghost small', 'aria-pressed': String(on), title: 'Files Claude changed in each turn, with diffs and restore', onclick: () => toggleChanges(it) }, on ? 'Conversation' : 'Changes');
+  // The menu lives on <body>, like the plugins menu, because the header is rebuilt whenever the
+  // session's status changes.
+  const headMenu = { el: null, btn: null, key: null };
+
+  function closeHeadMenu() {
+    if (!headMenu.el) return;
+    headMenu.el.remove();
+    if (headMenu.btn) headMenu.btn.setAttribute('aria-expanded', 'false');
+    headMenu.el = null;
+    headMenu.key = null;
+  }
+
+  function toggleHeadMenu(it, btn) {
+    if (headMenu.key === it.key) { closeHeadMenu(); return; }
+    closeHeadMenu();
+    const menuItem = (label, onclick, extra = {}) => h('button', { type: 'button', role: 'menuitem', class: 'hm-item', onclick, ...extra }, label);
+    const colors = () => h('div', { class: 'hm-menu hm-sub', role: 'menu', 'aria-label': 'Tag color' },
+      Object.entries(COLOR_NAMES).map(([k, v]) => menuItem([h('span', { class: 'hm-swatch', style: { '--tag': `var(--c-${k})` } }), v, k === (it.color || 'slate') ? h('span', { class: 'hm-check', 'aria-hidden': 'true' }, '✓') : null],
+        () => { closeHeadMenu(); recolor(it, k); }, { role: 'menuitemradio', 'aria-checked': String(k === (it.color || 'slate')) })));
+    const el = h('div', { class: 'hm-menu', role: 'menu', 'aria-label': 'Session actions' },
+      sessionMenuItems(it).map((m) => {
+        if (!m.colors) return menuItem(m.label, () => { closeHeadMenu(); m.run(); }, { title: m.title || null });
+        const wrap = h('div', { class: 'hm-flyout' });
+        const open = () => { if (!wrap.querySelector('.hm-sub')) wrap.appendChild(colors()); };
+        const trigger = menuItem([m.label, h('span', { class: 'hm-arrow', 'aria-hidden': 'true' }, '▸')], (e) => { e.stopPropagation(); open(); const first = wrap.querySelector('.hm-sub .hm-item'); if (first) first.focus(); }, { 'aria-haspopup': 'menu' });
+        wrap.appendChild(trigger);
+        wrap.addEventListener('mouseenter', open);
+        wrap.addEventListener('mouseleave', () => { const sub = wrap.querySelector('.hm-sub'); if (sub && !sub.contains(document.activeElement)) sub.remove(); });
+        wrap.addEventListener('keydown', (e) => {
+          if (e.key === 'ArrowRight' && e.target === trigger) { e.preventDefault(); trigger.click(); }
+          if (e.key === 'ArrowLeft' && e.target !== trigger) { e.preventDefault(); e.stopPropagation(); const sub = wrap.querySelector('.hm-sub'); if (sub) sub.remove(); trigger.focus(); }
+        });
+        return wrap;
+      }));
+    el.addEventListener('click', (e) => e.stopPropagation());
+    // Up and down move between the items of the (sub)menu that has focus.
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      e.preventDefault();
+      const menu = document.activeElement && document.activeElement.closest('.hm-menu');
+      if (!menu) return;
+      const list = [...menu.querySelectorAll(':scope > .hm-item, :scope > .hm-flyout > .hm-item')];
+      const i = list.indexOf(document.activeElement);
+      list[(i + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length].focus();
+    });
+    document.body.appendChild(el);
+    Object.assign(headMenu, { el, btn, key: it.key });
+    btn.setAttribute('aria-expanded', 'true');
+    const r = btn.getBoundingClientRect();
+    el.style.top = `${Math.round(r.bottom + 4)}px`;
+    el.style.left = `${Math.round(Math.max(8, Math.min(r.left, window.innerWidth - el.offsetWidth - 8)))}px`;
+    const first = el.querySelector('.hm-item');
+    if (first) first.focus();
+  }
+
+  document.addEventListener('click', closeHeadMenu);
+  window.addEventListener('resize', closeHeadMenu);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !headMenu.el) return;
+    e.stopPropagation();
+    const b = headMenu.btn;
+    closeHeadMenu();
+    if (b && b.isConnected) b.focus();
+  }, true);
+
+  function setTasksPanel(chatId, open) {
+    S.showTasks[chatId] = open;
+    S.headSig = null;
+    renderFocusDetail();
+    renderTasksPanel();
   }
 
   function detailHead(it) {
+    // The one or two buttons that stay out of the menu, with End on the right of the controls.
     const acts = [];
-    const cmd = resumeCommand(it);
     if (isChat(it)) {
       if (it.state === 'exited') acts.push(h('button', { class: 'primary small', onclick: () => resumeChat(it) }, 'Resume'));
-      acts.push(h('button', {
-        class: `${it.runningTasks ? '' : 'ghost '}small`,
-        'aria-pressed': String(Boolean(S.showTasks[it.id])),
-        title: 'Subagents Claude started in this chat',
-        onclick: () => { S.showTasks[it.id] = !S.showTasks[it.id]; S.headSig = null; renderFocusDetail(); renderTasksPanel(); },
-      }, it.runningTasks ? `Subagents (${it.runningTasks} running)` : it.taskCount ? `Subagents (${it.taskCount})` : 'Subagents'));
-      acts.push(changesButton(it));
-      acts.push(h('button', { class: 'ghost small', onclick: () => rename(it) }, 'Rename'), colorSelect(it));
-      acts.push(h('button', { class: 'ghost small', onclick: () => openFolder(it.cwd) }, 'Open folder'));
-      if (it.sessionId) acts.push(h('button', { class: 'ghost small', onclick: () => continueInTerminal(it), title: 'Continue this conversation in a Windows Terminal tab' }, 'Continue in terminal'));
       acts.push(h('button', { class: 'danger small', onclick: () => endSession(it) }, it.state === 'exited' ? 'Remove' : 'End session'));
     } else if (isTerminal(it)) {
-      if (it.state !== 'failed') {
-        acts.push(h('button', { class: 'primary small', onclick: () => openSession(it) }, it.state === 'exited' ? 'Resume' : 'Open terminal'));
-        if (it.sessionId) acts.push(h('button', { class: 'ghost small', onclick: () => continueHere(it), title: 'Close the tab and continue this conversation here' }, 'Continue here'));
-        acts.push(changesButton(it));
-        acts.push(h('button', { class: 'ghost small', onclick: () => rename(it) }, 'Rename'), colorSelect(it));
-      }
-      acts.push(h('button', { class: 'ghost small', onclick: () => openFolder(it.cwd), disabled: !it.cwd }, 'Open folder'));
-      if (cmd) acts.push(h('button', { class: 'ghost small', onclick: () => copy(cmd, 'Resume command copied') }, 'Copy resume command'));
+      if (it.state !== 'failed') acts.push(h('button', { class: 'primary small', onclick: () => openSession(it) }, it.state === 'exited' ? 'Resume' : 'Open terminal'));
       if (it.state === 'failed') acts.push(h('button', { class: 'ghost small', onclick: () => dismiss(it) }, 'Dismiss'));
       else acts.push(h('button', { class: 'danger small', onclick: () => endSession(it) }, it.state === 'exited' ? 'Close tab' : 'End session'));
     } else {
       if (it.sessionId && it.cwd) acts.push(h('button', { class: 'primary small', onclick: () => continueHere(it) }, 'Continue here'));
-      acts.push(changesButton(it));
-      acts.push(h('button', { class: 'ghost small', onclick: () => openFolder(it.cwd), disabled: !it.cwd }, 'Open folder'));
-      if (cmd) acts.push(h('button', { class: 'ghost small', onclick: () => copy(cmd, 'Resume command copied') }, 'Copy resume command'));
       acts.push(h('button', { class: 'danger small', onclick: () => endSession(it) }, 'End session'));
     }
 
@@ -463,7 +624,8 @@
     let effortFact = isChat(it) ? it.requestedEffort || null : null;
     let modeFact = isChat(it) ? it.permissionMode || null : null;
     if (isChat(it) && it.state !== 'exited') {
-      modelFact = Deck.modelPicker(S.boot.enums.models, it.requestedModel || '',(m) => run("Couldn't change the model", () => api('POST', `/api/chats/${it.id}/model`, { model: m })), `Default (${it.model || 'from settings'})`);
+      // "claude-" left off the default's name, to keep the control row on one line.
+      modelFact = Deck.modelPicker(S.boot.enums.models, it.requestedModel || '',(m) => run("Couldn't change the model", () => api('POST', `/api/chats/${it.id}/model`, { model: m })), `Default (${it.model ? it.model.replace(/^claude-/, '') : 'from settings'})`);
       effortFact = h('select', { class: 'small', 'aria-label': 'Effort', onchange: (e) => run("Couldn't change the effort", () => api('POST', `/api/chats/${it.id}/effort`, { effort: e.target.value })) },
         h('option', { value: '' }, 'Default'),
         S.boot.enums.efforts.map((v) => h('option', { value: v, selected: v === it.requestedEffort }, v)));
@@ -471,34 +633,98 @@
       modeFact = h('select', { class: 'small', 'aria-label': 'Permission mode', onchange: (e) => run("Couldn't change the permission mode", () => api('POST', `/api/chats/${it.id}/mode`, { mode: e.target.value })) },
         modes.map((m) => h('option', { value: m, selected: m === (it.permissionMode || 'default') }, m)));
     }
-    const settingFacts = [fact('Model', modelFact), fact('Effort', effortFact), fact('Permissions', modeFact), isChat(it) ? fact('Plugins', pluginsButton(it)) : null].filter(Boolean);
+    // One row of controls and meters under the title.
+    const controls = [fact('Model', modelFact), fact('Effort', effortFact), fact('Permissions', modeFact), isChat(it) ? fact('Plugins', pluginsButton(it)) : null,
+      contextFact(it), fact('Est. total cost', estCostFact(it)), it.deck ? fact('Current cost', money(it.costUSD)) : null, fact('Total tokens', tokensFact(it.spend))].filter(Boolean);
+    const menuItems = sessionMenuItems(it);
+    const menuBtn = menuItems.length ? h('button', {
+      type: 'button',
+      class: 'ghost icon head-menu-btn',
+      title: 'Session actions',
+      'aria-label': 'Session actions',
+      'aria-haspopup': 'menu',
+      'aria-expanded': String(headMenu.key === it.key),
+      onclick: (e) => { e.stopPropagation(); toggleHeadMenu(it, menuBtn); },
+    }, '▾') : null;
+    if (menuBtn && headMenu.key === it.key) headMenu.btn = menuBtn;
+    const extra = [
+      it.gitBranch && it.gitBranch !== 'HEAD' ? h('span', { class: 'head-id', title: `Git branch: ${it.gitBranch}` }, `⎇ ${it.gitBranch}`) : null,
+      it.userTurns ? h('span', { class: 'head-id' }, `${it.userTurns} prompt${it.userTurns === 1 ? '' : 's'}`) : null,
+      isTerminal(it) && it.windowName ? h('span', { class: 'head-id' }, `Window ${it.windowName}`) : null,
+      it.kind === 'external' && it.pid ? h('span', { class: 'head-id' }, `Process ${it.pid}`) : null,
+    ];
 
     return h('div', { class: 'detail-head' },
-      h('div', { class: 'card-status' },
+      // Status, then where the session is: the folder gets the rest of the line.
+      h('div', { class: 'card-status head-meta' },
         h('span', { class: `lamp ${it.lane}` }),
         h('span', { class: `status-text ${it.lane}` }, statusLabel(it)),
         it.statusSince ? h('span', { class: 'faint' }, `for ${ago(it.statusSince).replace('just now', 'a moment')}`) : null,
-        h('span', { class: 'spacer' }),
-        isChat(it) && it.status === 'busy' ? h('button', { class: 'danger small', onclick: () => stopTurn(it) }, 'Stop') : null),
-      h('h2', null, heading(it)),
+        isChat(it) && it.runningTasks ? h('button', { type: 'button', class: 'head-badge', title: 'Show the subagents', onclick: () => setTasksPanel(it.id, true) }, `• ${it.runningTasks} subagent${it.runningTasks === 1 ? '' : 's'} active`) : null,
+        it.cwd ? h('span', { class: 'head-id row-path head-folder' },
+          // Cut from the start if it doesn't fit, so the folder's own name stays visible.
+          h('span', { class: 'path-text', title: it.cwd }, h('bdi', null, it.cwd)),
+          h('button', { class: 'ghost icon small', title: 'Copy folder path', onclick: () => copy(it.cwd, 'Folder path copied') }, '⎘'),
+          h('button', { class: 'ghost icon small', title: 'Open folder in Explorer', onclick: () => openFolder(it.cwd) }, '↗')) : null,
+        it.sessionId ? h('span', { class: 'head-id row-path' },
+          h('span', { class: 'mono', title: 'Session ID' }, it.sessionId),
+          // No Stop button here: the reply box's Interrupt stops Claude (with nothing typed, it just stops).
+          h('button', { class: 'ghost icon small', title: 'Copy session ID', onclick: () => copy(it.sessionId, 'Session ID copied') }, '⎘')) : null),
+      // Branch, prompt count and the like go beside the title, which has room to spare.
+      h('div', { class: 'head-title' }, h('h2', null, heading(it)), menuBtn, h('span', { class: 'head-extra' }, extra)),
       subtitle(it) ? h('div', { class: 'muted' }, subtitle(it)) : null,
       it.note ? h('p', { class: 'faint', style: { margin: '6px 0 0' } }, it.note) : null,
       it.kind === 'external' ? h('p', { class: 'faint', style: { margin: '6px 0 0' } }, 'Started outside Claude Deck. Choose Continue here to reply to it from the dashboard.') : null,
       it.state === 'failed' && it.launchError ? h('p', { class: 'error' }, it.launchError) : null,
-      h('dl', { class: 'facts' },
-        // Cut from the start, so the folder's own name stays visible.
-        fact('Folder', it.cwd ? h('span', { class: 'row-path' },
-          h('span', { class: 'path-text', title: it.cwd }, h('bdi', null, it.cwd)),
-          h('button', { class: 'ghost icon small', title: 'Copy folder path', onclick: () => copy(it.cwd, 'Folder path copied') }, '⎘'),
-          h('button', { class: 'ghost icon small', title: 'Open folder in Explorer', onclick: () => openFolder(it.cwd) }, '↗')
-        ) : null, true),
-        fact('Branch', it.gitBranch && it.gitBranch !== 'HEAD' ? it.gitBranch : null),
-        fact('Session ID', it.sessionId, true),
-        fact('Prompts', it.userTurns || null),
-        fact('Est. cost', money(it.costUSD)),
-        isTerminal(it) ? fact('Window', it.windowName) : it.kind === 'external' ? fact('Process', it.pid) : null),
-      settingFacts.length ? h('dl', { class: 'facts' }, settingFacts) : null,
-      h('div', { class: 'actions' }, acts));
+      h('div', { class: 'head-controls' },
+        controls.length ? h('dl', { class: 'facts' }, controls) : null,
+        h('div', { class: 'head-cta' }, acts)));
+  }
+
+  // ---- cost, tokens and context (chat header) ------------------------------------------------
+  // Est. cost and Total tokens cover the whole session in Claude Deck, across /clear (which starts
+  // a new conversation); Current cost is the current conversation's, as Claude Code reports it.
+  function estCostFact(it) {
+    const v = it.deck ? it.totalCostUSD : it.costUSD;
+    if (typeof v !== 'number') return null;
+    return h('span', { title: isChat(it) ? 'Everything this chat has used, including conversations before a /clear' : "Claude Code's saved cost for every conversation in this session. It's updated when a conversation ends or is cleared." }, money(v));
+  }
+
+  function tokenBreakdown(t) {
+    return `Input ${t.input.toLocaleString()} · Output ${t.output.toLocaleString()} · Cache read ${t.cacheRead.toLocaleString()} · Cache write ${t.cacheWrite.toLocaleString()}`;
+  }
+
+  const tokenSum = (t) => (t ? t.input + t.output + t.cacheRead + t.cacheWrite : 0);
+
+  function tokensFact(t) {
+    if (!tokenSum(t)) return null;
+    return h('span', { title: `${tokenBreakdown(t)}. Subagents included.` }, tokenText(tokenSum(t)));
+  }
+
+  // The whole Context fact: Compact sits in its label line, above the meter.
+  function contextFact(it) {
+    const c = it.context;
+    if (!c) return null;
+    const pct = c.max ? (typeof c.percent === 'number' ? c.percent : Math.round((c.tokens / c.max) * 100)) : null;
+    const level = pct === null ? 'ok' : pct >= 90 ? 'over' : pct >= 75 ? 'warn' : 'ok';
+    const label = c.max ? `${tokenText(c.tokens)} / ${tokenText(c.max)} (${pct}%)` : tokenText(c.tokens);
+    const canCompact = isChat(it) && it.state !== 'exited' && it.sessionId;
+    return h('div', { class: 'ctx-fact' },
+      h('dt', null, 'Context',
+        canCompact ? h('button', { type: 'button', class: 'ghost small ctx-compact', disabled: it.status === 'busy', title: it.status === 'busy' ? 'Wait for Claude to finish, then compact' : 'Summarize the conversation so far to free up context (/compact)', onclick: () => compactChat(it) }, 'Compact') : null),
+      h('dd', { class: 'ctx-meter', title: c.max ? `${c.tokens.toLocaleString()} of ${c.max.toLocaleString()} tokens in Claude's context window` : `${c.tokens.toLocaleString()} tokens in the context window as of the latest reply` },
+        c.max ? h('span', { class: `ubar ${level}`, role: 'meter', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pct), 'aria-label': `Context ${pct}% full` },
+          h('span', { class: 'ufill', style: { width: `${Math.min(100, Math.max(0, pct))}%` } })) : null,
+        h('span', null, label)));
+  }
+
+  async function compactChat(it) {
+    const ok = await Deck.confirm({
+      title: 'Compact this conversation?',
+      body: 'Claude replaces the conversation so far with a summary, which frees up context. Details from earlier turns may be left out of the summary. Est. cost and Total tokens keep counting.',
+      ok: 'Compact',
+    });
+    if (ok) await run("Couldn't compact the conversation", () => api('POST', `/api/chats/${it.id}/compact`));
   }
 
   // ---- plugins menu (chat header) ------------------------------------------------------------
@@ -760,7 +986,7 @@
   // Only rebuild the header when something it shows changed, so dropdowns aren't reset mid-use.
   function headSignature(it) {
     return JSON.stringify([it.key, it.state, it.status, it.waitingFor, heading(it), it.title, it.name, it.model, it.requestedModel, it.requestedEffort, it.permissionMode,
-      it.costUSD, it.sessionId, it.color, it.gitBranch, it.cwd, it.exitCode, it.note, it.userTurns, ago(it.statusSince),
+      it.costUSD, it.totalCostUSD, it.spend, it.context, it.sessionId, it.color, it.gitBranch, it.cwd, it.exitCode, it.note, it.userTurns, ago(it.statusSince),
       it.runningTasks, it.taskCount, Boolean(S.showTasks[it.id]), Boolean(S.showChanges[it.key])]);
   }
 
@@ -785,10 +1011,18 @@
       return;
     }
     if (S.opening && S.opening.key === it.key) S.opening = null;
+    // The subagents panel opens by itself when Claude starts one (or when a chat is opened with some
+    // running); once closed it stays closed until another starts.
+    if (isChat(it)) {
+      const seen = S.tasksSeen[it.id];
+      if (seen === undefined ? it.runningTasks > 0 : it.taskCount > seen) S.showTasks[it.id] = true;
+      S.tasksSeen[it.id] = it.taskCount;
+    }
 
     const fresh = S.detailKey !== it.key || !pane.querySelector('.convo');
     if (fresh) {
       if (plugins.pop && plugins.pop.chatId !== it.id) closePluginsMenu();
+      if (headMenu.key !== it.key) closeHeadMenu();
       clear(pane);
       S.detailKey = it.key;
       S.headSig = headSignature(it);
@@ -915,7 +1149,7 @@
   // ---- subagents panel -----------------------------------------------------------------------
   const TASK_LANE = { running: 'working', completed: 'idle' };
 
-  const tokenText = (n) => (n >= 10000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : n.toLocaleString());
+  const tokenText = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 1 : 2).replace(/\.?0+$/, '')}M` : n >= 10000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : n.toLocaleString());
 
   function taskStatusText(t) {
     const took = duration((t.endedAt || Date.now()) - t.startedAt);
@@ -965,7 +1199,8 @@
       h('h3', null, 'Subagents'),
       h('span', { class: 'faint small' }, running ? `${running} running` : 'None running'),
       h('span', { class: 'spacer' }),
-      h('button', { type: 'button', class: 'ghost small', onclick: () => { S.showTasks[S.chat.id] = false; renderTasksPanel(); } }, 'Hide')));
+      // Closed until another subagent starts, or reopened from the session menu.
+      h('button', { type: 'button', class: 'ghost icon small', title: 'Close (reopen it from the ▾ menu beside the title)', 'aria-label': 'Close the subagents panel', onclick: () => setTasksPanel(S.chat.id, false) }, '✕')));
     if (!tasks.length) panel.appendChild(h('p', { class: 'faint small' }, 'No subagents since this chat last started. Subagents appear here when Claude hands off work to one.'));
     tasks.forEach((t) => panel.appendChild(taskNode(t, S.chat.id)));
     if (focused >= 0 && $$('.task', panel)[focused]) $$('.task', panel)[focused].focus();
@@ -1353,7 +1588,9 @@
       case 'error':
         return h('div', { class: 'msg-error', dataset: { n }, role: 'alert' }, it.text);
       case 'result':
-        return it.aborted || it.isError ? h('span', { dataset: { n }, hidden: true }) : h('div', { class: 'msg-result', dataset: { n } }, it.durationMs ? `Done in ${duration(it.durationMs)}` : 'Done');
+        return it.aborted || it.isError ? h('span', { dataset: { n }, hidden: true }) : h('div', { class: 'msg-result', dataset: { n } },
+          it.durationMs ? `Done in ${duration(it.durationMs)}` : 'Done',
+          tokenSum(it.tokens) ? h('span', { title: `Tokens this reply used, subagents included. ${tokenBreakdown(it.tokens)}` }, ` · ${tokenText(tokenSum(it.tokens))} tokens`) : null);
       default:
         return h('span', { dataset: { n }, hidden: true });
     }
@@ -1726,7 +1963,7 @@
     picker.addEventListener('change', () => { addFiles([...picker.files]); picker.value = ''; });
     const attachBtn = h('button', { type: 'button', class: 'ghost attach-btn', title: 'Attach images (or paste with Ctrl+V or Alt+V, or drop them here)', onclick: () => picker.click() }, 'Image');
     const sendBtn = h('button', { type: 'button', class: 'primary send-btn', onclick: () => submit(false) }, 'Send');
-    const interruptBtn = h('button', { type: 'button', class: 'danger interrupt-btn', hidden: true, onclick: () => submit(true), title: 'Stop what Claude is doing and send your message now' }, 'Interrupt');
+    const interruptBtn = h('button', { type: 'button', class: 'danger interrupt-btn', hidden: true, onclick: () => submit(true), title: 'Stop what Claude is doing, and send your message now if you typed one' }, 'Interrupt');
     const ended = h('div', { class: 'composer-ended', hidden: true },
       h('span', null, 'This chat has ended.'),
       h('button', { type: 'button', class: 'primary small', onclick: () => resumeChat(it) }, 'Resume'));
@@ -2799,15 +3036,38 @@
       h('h2', null, 'Appearance'),
       prefRow('Theme', null, h('select', { 'aria-label': 'Theme', onchange: (e) => savePrefs({ theme: e.target.value }) },
         THEME_GROUPS.map(([group, themes]) => h('optgroup', { label: group },
-          themes.map(([v, t]) => h('option', { value: v, selected: p.theme === v }, t))))))));
+          themes.map(([v, t]) => h('option', { value: v, selected: p.theme === v }, t)))))),
+      prefRow('Tool calls', null, toggle('showToolIcons', 'Show an icon beside each tool call in a chat'))));
 
     root.appendChild(h('section', { class: 'pref-section' },
       h('h2', null, 'Dashboard'),
       prefRow('Other terminals', null, toggle('showExternal', 'Show Claude sessions started outside Claude Deck')),
       prefRow('Background server', 'Chats run inside the server; terminal sessions keep running either way', toggle('stopWhenClosed', 'Stop the local server 90 seconds after this window closes, unless a chat is still running'),
-        h('div', { class: 'row' }, h('button', { class: 'danger', onclick: async () => { if (await Deck.confirm({ title: 'Stop the Claude Deck server?', body: 'Chats end (resume them from History later). Terminal sessions keep running. Start Claude Deck again to reconnect.', ok: 'Stop server', danger: true })) api('POST', '/api/shutdown').catch(() => {}); } }, 'Stop server now'))),
+        h('div', { class: 'row' },
+          h('button', { class: 'ghost', title: 'Stop the server and start it again, then reload this window: picks up changes to Claude Deck', onclick: restartServer }, 'Restart server'),
+          h('button', { class: 'danger', onclick: async () => { if (await Deck.confirm({ title: 'Stop the Claude Deck server?', body: 'Chats end (resume them from History later). Terminal sessions keep running. Start Claude Deck again to reconnect.', ok: 'Stop server', danger: true })) api('POST', '/api/shutdown').catch(() => {}); } }, 'Stop server now'))),
       prefRow('Data folder', 'Preferences, settings backups and the history cache', h('div', { class: 'row' }, h('code', { style: { overflowWrap: 'anywhere', flex: '1' } }, S.boot.dataDir), h('button', { class: 'ghost', onclick: () => openFolder(S.boot.dataDir) }, 'Open'))),
       prefRow('Version', 'The version the server was started from', h('div', { class: 'row' }, h('span', null, `Claude Deck ${S.boot.version}`), h('a', { href: 'https://github.com/BPT-CIPP/Claude-Deck/releases', target: '_blank', rel: 'noopener', class: 'small' }, 'Release notes')))));
+  }
+
+  // Restart the server (a new copy takes over on the same port), then reload this window once the
+  // new server answers, so changes to both the server and the page take effect.
+  async function restartServer() {
+    const ok = await Deck.confirm({
+      title: 'Restart the Claude Deck server?',
+      body: 'It stops and starts again right away, and this window reloads. Chats end, including one working on Claude Deck itself; resume them afterwards. Terminal sessions keep running.',
+      ok: 'Restart server',
+    });
+    if (!ok) return;
+    const res = await run("Couldn't restart the server", () => api('POST', '/api/restart'));
+    if (!res) return;
+    toast('Restarting the server…');
+    for (let i = 0; i < 120; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const now = await api('GET', '/api/ping').catch(() => null);
+      if (now && now.pid !== res.pid) { location.reload(); return; }
+    }
+    toast("The server didn't come back. Start Claude Deck again from its shortcut.", 'error');
   }
 
   // ---- views + wiring ------------------------------------------------------------------------
@@ -2826,6 +3086,8 @@
 
   function applyTheme() {
     document.documentElement.dataset.theme = S.prefs.theme;
+    // Tool-call emoji are drawn either way and shown by CSS, so the toggle applies to open chats at once.
+    document.documentElement.dataset.toolIcons = S.prefs.showToolIcons ? 'on' : 'off';
   }
 
   function setConn(ok) {
@@ -2992,6 +3254,9 @@
     S.live = S.boot.state;
     S.usage = S.boot.usage || null;
     applyTheme();
+    // The version the server was started from, beside the connection light.
+    $('#conn-version').textContent = `v${S.boot.version}`;
+    $('#conn').title = `Connection to the local Claude Deck server (Claude Deck ${S.boot.version})`;
 
     $$('.nav-item').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
     $$('.seg [data-layout]').forEach((b) => b.addEventListener('click', () => setLayout(b.dataset.layout)));

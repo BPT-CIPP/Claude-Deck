@@ -128,10 +128,10 @@ git checkout main
 git pull --rebase origin main
 ```
 
-Then choose **Claude Deck Preferences → Stop server now**, and start it again with the **Start Claude
-Deck** shortcut (the stopped server stays stopped until you do, or until you next sign in). Changes
-only to files in `public\` need just a reload of the window (Ctrl+R). Stopping the server ends open
-chats, which come back as *Ended* with *Resume*.
+Then choose **Claude Deck Preferences → Restart server**, which stops the server, starts it again and
+reloads the window. Changes only to files in `public\` need just a reload of the window (Ctrl+R).
+Restarting ends open chats (including one working on Claude Deck), which come back as *Ended* with
+*Resume*.
 
 ---
 

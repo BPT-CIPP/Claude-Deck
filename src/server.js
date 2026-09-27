@@ -35,6 +35,13 @@ const VERSION = require('../package.json').version;
 const DEFAULT_PORT = 47821;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const IDLE_EXIT_MS = 90 * 1000;
+const WEEK_MS = 7 * 24 * 3600 * 1000;
+// How long a restart's replacement waits for the old server to end its chats and exit.
+const RESTART_WAIT_MS = 30 * 1000;
+// Exit codes Start-ClaudeDeck.ps1's supervisor acts on: 0 = stopped on purpose (stay stopped),
+// 3 = another copy is serving (wait, and take over if it stops). A restart exits with 3.
+const EXIT_STOPPED = 0;
+const EXIT_ANOTHER_COPY = 3;
 // Room for a message with several images (up to 5 MB each, base64-encoded).
 const MAX_BODY = 60 * 1024 * 1024;
 const EDGE_PATHS = [
@@ -68,11 +75,13 @@ function loadToken() {
 }
 
 function parseArgs(argv) {
-  const out = { open: false, resident: false, port: DEFAULT_PORT };
+  const out = { open: false, resident: false, port: DEFAULT_PORT, replace: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--open') out.open = true;
     else if (a === '--resident') out.resident = true;
+    // Started by Restart: wait for this server (a pid) to exit, then take over.
+    else if (a === '--replace') out.replace = Number(argv[++i]) || null;
     else if (a === '--port') out.port = Number(argv[++i]);
     else if (a.startsWith('--port=')) out.port = Number(a.slice(7));
   }
@@ -177,13 +186,20 @@ async function main() {
   fs.mkdirSync(paths.tabsDir(), { recursive: true });
   const token = loadToken();
 
+  // A restart's replacement: the old server is still ending its chats. Once it's gone, carry on
+  // as a normal start (on the same port, so open windows reconnect).
+  if (opts.replace) {
+    const until = Date.now() + RESTART_WAIT_MS;
+    while (isPidAlive(opts.replace) && Date.now() < until) await new Promise((r) => setTimeout(r, 200));
+  }
+
   const running = readJson(runtimeFile(), null);
   if (running && running.pid !== process.pid && isPidAlive(running.pid) && (await ping(running.port, token))) {
     if (opts.open) openDashboard(running.port, token);
     console.log(`Claude Deck is already running: ${dashboardUrl(running.port, token)}`);
     // Distinct exit code so the startup task's loop waits for that copy instead of treating
     // this as a crash or a deliberate stop.
-    process.exitCode = 3;
+    process.exitCode = EXIT_ANOTHER_COPY;
     return;
   }
 
@@ -215,7 +231,7 @@ async function main() {
   }
 
   let shuttingDown = false;
-  async function shutdown() {
+  async function shutdown(exitCode = EXIT_STOPPED) {
     if (shuttingDown) return;
     shuttingDown = true;
     live.stop();
@@ -227,7 +243,18 @@ async function main() {
     if (rt && rt.pid === process.pid) {
       try { fs.unlinkSync(runtimeFile()); } catch { /* already gone */ }
     }
-    process.exit(0);
+    process.exit(exitCode);
+  }
+
+  // Restart: start a replacement that takes over once this server has gone, then stop. Exiting
+  // with "another copy is serving" keeps the sign-in task's supervisor watching (it takes over if
+  // the replacement doesn't come up) instead of staying stopped.
+  function restart() {
+    const args = [path.join(__dirname, 'server.js'), '--replace', String(process.pid), '--port', String(port), ...(opts.resident ? ['--resident'] : [])];
+    const child = spawn(process.execPath, args, { cwd: path.join(__dirname, '..'), env: process.env, detached: true, stdio: 'ignore', windowsHide: true });
+    child.on('error', (err) => console.error('starting the replacement server failed:', err));
+    child.unref();
+    shutdown(EXIT_ANOTHER_COPY);
   }
 
   // Stop a while after the last dashboard window closes, but never while a chat is running
@@ -297,6 +324,20 @@ async function main() {
 
     'GET /api/state': () => live.state,
     'POST /api/usage/refresh': () => usage.refresh(true),
+    // Which conversations used the most tokens this week, from their transcripts (subagents
+    // included). The week is the plan's weekly limit window when that's known, else the last 7 days.
+    'GET /api/usage/sessions': async () => {
+      await history.refreshIfOlderThan(2500);
+      const now = Date.now();
+      const weekly = usage.state.limits.find((l) => (l.kind === 'weekly_all' || l.kind === 'seven_day') && l.resetsAt && l.resetsAt > now);
+      const since = weekly ? weekly.resetsAt - WEEK_MS : now - WEEK_MS;
+      await history.refreshSubagents(history.list().filter((m) => (m.updatedAt || 0) >= since).map((m) => m.sessionId));
+      const open = new Set(liveSessionIds());
+      const sessions = history.usageSince(since).map(({ sessionId, tokens, meta }) => ({
+        sessionId, tokens, title: meta.title, cwd: meta.cwd, updatedAt: meta.updatedAt, open: open.has(sessionId),
+      }));
+      return { since, basis: weekly ? 'plan' : 'rolling', sessions };
+    },
 
     'POST /api/launch': async (req) => {
       const entry = launcher.launch(await readBody(req));
@@ -324,6 +365,7 @@ async function main() {
       return chats.respond(p.id, b.requestId, b);
     },
     'POST /api/chats/:id/interrupt': (req, p) => chats.interrupt(p.id),
+    'POST /api/chats/:id/compact': (req, p) => chats.compact(p.id),
     // Takes queued messages back out of Claude's queue to edit: { messages: [{ text, images }] }.
     'POST /api/chats/:id/unqueue': (req, p) => chats.unqueue(p.id),
     'POST /api/chats/:id/model': async (req, p) => chats.setModel(p.id, (await readBody(req)).model),
@@ -552,8 +594,14 @@ async function main() {
       return { startup: await appInstall.setStartup(body.enabled === true) };
     },
     'POST /api/shutdown': () => {
-      setTimeout(shutdown, 200);
+      setTimeout(() => shutdown(), 200);
       return { ok: true };
+    },
+    // Stops and starts again, for picking up changes to Claude Deck itself. { pid } is this
+    // server's, so the page can tell when the new one answers.
+    'POST /api/restart': () => {
+      setTimeout(restart, 200);
+      return { ok: true, pid: process.pid };
     },
   };
 
@@ -664,8 +712,8 @@ async function main() {
   console.log(`Claude Deck running at ${dashboardUrl(port, token)}`);
   if (opts.open) openDashboard(port, token);
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => shutdown());
+  process.on('SIGTERM', () => shutdown());
 }
 
 main().catch((err) => {

@@ -9,7 +9,8 @@
 // Prompts containing "write" ask permission for Write, "ask" asks a question, "slow" takes 3s
 // (and can be interrupted), "delegate" / "delegate slow" / "delegate foreground" start subagents,
 // "run slow" runs a shell command reported as a task, "which effort" reports the effort level;
-// anything else is echoed back. Answers reload_plugins from the plugin state below.
+// "/clear" and "/compact" behave like the real local commands; anything else is echoed back.
+// Answers reload_plugins from the plugin state below, and get_context_usage.
 //
 // Plugin mode (plugin ...): Claude Code's plugin and marketplace commands (see pluginMode).
 
@@ -85,10 +86,15 @@ setInterval(() => {}, 1000);
 // Message shapes copied from what claude.exe 2.1.281 emits in stream-json mode.
 function streamMode() {
   const flagValue = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : null);
-  const sessionId = flagValue('--session-id') || flagValue('--resume') || crypto.randomUUID();
+  // /clear starts a new conversation with a new id, as the real CLI does.
+  let sessionId = flagValue('--session-id') || flagValue('--resume') || crypto.randomUUID();
   const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
   const waiting = new Map(); // request_id -> resolve
   let cost = 0;
+  // Running token totals (modelUsage) and the context size, both reset by /clear. Each turn uses
+  // 100 input, 20 output and 1000 cache-read tokens, and adds 1000 tokens of context.
+  let tokens = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
+  let context = 5000;
   let n = 0;
   let turn = Promise.resolve();
   let interrupted = null;
@@ -123,9 +129,17 @@ function streamMode() {
     out({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: t } }, parent_tool_use_id: null, session_id: sessionId });
     out({ type: 'assistant', message: { id: `msg_${++n}`, role: 'assistant', model: 'claude-fake', content: [{ type: 'text', text: t }] }, parent_tool_use_id: null, session_id: sessionId });
   };
-  const result = (extra = {}) => {
-    cost += 0.01;
-    out({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: cost, duration_ms: 5, session_id: sessionId, queued_turn_count: 0, ...extra });
+  // Like the real CLI (2.1.281): total_cost_usd and modelUsage are running totals for the
+  // conversation; usage is this turn's alone.
+  const result = (extra = {}, charge = true) => {
+    if (charge) {
+      cost += 0.01;
+      tokens = { ...tokens, inputTokens: tokens.inputTokens + 100, outputTokens: tokens.outputTokens + 20, cacheReadInputTokens: tokens.cacheReadInputTokens + 1000 };
+      context += 1000;
+    }
+    const usage = charge ? { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0 } : { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+    const modelUsage = cost ? { 'claude-fake': { ...tokens, costUSD: cost, contextWindow: 200000 } } : {};
+    out({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: cost, usage, modelUsage, duration_ms: 5, session_id: sessionId, queued_turn_count: 0, ...extra });
   };
   const ask = (request) => new Promise((resolve) => {
     const id = crypto.randomUUID();
@@ -209,6 +223,28 @@ function streamMode() {
   }
 
   async function handle(prompt, images) {
+    // Local commands, in the message shapes the real CLI uses (2.1.281).
+    if (prompt.trim() === '/clear') {
+      out({ type: 'conversation_reset', new_conversation_id: crypto.randomUUID(), trigger: 'clear', session_id: sessionId });
+      sessionId = crypto.randomUUID();
+      cost = 0;
+      tokens = { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 };
+      context = 5000;
+      init();
+      return result({ num_turns: 0, local_command: 'clear' }, false);
+    }
+    if (prompt.trim() === '/compact') {
+      out({ type: 'system', subtype: 'status', status: 'compacting', session_id: sessionId });
+      const pre = context;
+      context = 1500;
+      out({ type: 'system', subtype: 'status', status: null, compact_result: 'success', session_id: sessionId });
+      init();
+      out({ type: 'system', subtype: 'compact_boundary', session_id: sessionId, compact_metadata: { trigger: 'manual', pre_tokens: pre, post_tokens: context } });
+      // Summarizing is itself an API call, so it costs something too.
+      cost += 0.01;
+      tokens = { ...tokens, inputTokens: tokens.inputTokens + 100, outputTokens: tokens.outputTokens + 20, cacheReadInputTokens: tokens.cacheReadInputTokens + 1000 };
+      return result({ num_turns: 0, local_command: 'compact' }, false);
+    }
     init();
     if (images.length) {
       text(`Saw ${images.length} image${images.length === 1 ? '' : 's'} (${images.join(', ')})${prompt.trim() ? ` with: ${prompt.trim()}` : ''}.`);
@@ -288,6 +324,8 @@ function streamMode() {
         if (sub === 'apply_flag_settings' && m.request.settings && 'effortLevel' in m.request.settings) effort = m.request.settings.effortLevel;
         let response = sub === 'initialize' ? { commands: [{ name: 'compact', description: 'Summarize the conversation', argumentHint: '' }, ...pluginCommands(sessionPlugins)] } : {};
         if (sub === 'reload_plugins') response = reloadPlugins(m.request, cost > 0);
+        // Like the real CLI (2.1.281), with detail "summary": answered locally.
+        if (sub === 'get_context_usage') response = { totalTokens: context, maxTokens: 200000, percentage: Math.round((context / 200000) * 100), categories: [], apiUsage: null };
         // Like the real CLI (2.1.281): rewinding needs checkpointing turned on by env var. The
         // file named by FAKE_REWIND_FILE stands in for a file the turn created; rewinding deletes it.
         if (sub === 'rewind_files') {
