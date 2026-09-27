@@ -21,6 +21,7 @@ const { isScript } = require('./claude-locate');
 const { normalizeOptions, buildClaudeArgs, displayCommand, requireClaude, requireFolder, PERMISSION_MODES, EFFORTS } = require('./launcher');
 const { readTranscript } = require('./history');
 const { SubagentLog } = require('./subagents');
+const { requirePlanBilling } = require('./billing');
 const { readJson, writeJsonAtomic, clip, UserError } = require('./util');
 
 // No --include-partial-messages: replies are shown once Claude has finished each message, not
@@ -36,6 +37,24 @@ const SLEEP_GAP_MS = 15000;
 // How long a plugin reload keeps trying for Claude to notice the settings change, and how often.
 const PLUGIN_RELOAD_WAIT_MS = 8000;
 const PLUGIN_RELOAD_RETRY_MS = 750;
+
+const TOKEN_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
+const zeroTotals = () => ({ costUSD: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+
+// Claude's running totals for the conversation, from a result: total_cost_usd and modelUsage
+// (every model, subagents included). Both start again at zero after /clear, and a resumed
+// conversation carries on from its saved cost-state.
+function runningTotals(m) {
+  const t = zeroTotals();
+  t.costUSD = m.total_cost_usd;
+  for (const u of Object.values(m.modelUsage || {})) {
+    t.input += Number(u && u.inputTokens) || 0;
+    t.output += Number(u && u.outputTokens) || 0;
+    t.cacheRead += Number(u && u.cacheReadInputTokens) || 0;
+    t.cacheWrite += Number(u && u.cacheCreationInputTokens) || 0;
+  }
+  return t;
+}
 
 // Slash commands, as initialize and reload_plugins report them.
 function commandList(commands) {
@@ -168,7 +187,11 @@ class ChatManager extends EventEmitter {
       lastReply: fields.lastReply || null,
       model: fields.model || null,
       permissionMode: fields.permissionMode || null,
-      costUSD: fields.costUSD ?? null,
+      costUSD: fields.costUSD ?? null, // the current conversation's, as Claude reports it
+      // Claude's running totals for the current conversation as last seen ({ sessionId, costUSD,
+      // input, output, cacheRead, cacheWrite }): its tokens, and what each turn added.
+      seen: fields.seen || null,
+      context: null, // { tokens, max, percent } from get_context_usage
       state: fields.state || 'starting',
       note: fields.note || null,
       proc: null,
@@ -200,9 +223,12 @@ class ChatManager extends EventEmitter {
     const o = normalizeOptions(rawOptions);
     const claude = requireClaude(prefsStore.load());
     requireFolder(o.cwd);
+    requirePlanBilling(o.cwd);
     const id = crypto.randomUUID();
     const sessionId = o.mode === 'new' ? crypto.randomUUID() : o.mode === 'resume' && !o.fork ? o.resumeId : null;
     const chat = this._blank({ id, name: o.name, color: o.color, cwd: o.cwd, options: { ...o, prompt: '', mode: 'new', resumeId: '', fork: false, worktree: false }, sessionId });
+    // A fork gets a new session id but carries on the original's running totals.
+    if (o.mode === 'resume' && o.fork) chat.forkedFrom = o.resumeId;
     this.chats.set(id, chat);
     const { args } = buildClaudeArgs({ ...o, prompt: '' }, sessionId);
     this._spawn(chat, claude.path, args);
@@ -218,6 +244,7 @@ class ChatManager extends EventEmitter {
     if (!chat.sessionId) throw new UserError('This chat never started a conversation, so there is nothing to resume.');
     const claude = requireClaude(prefsStore.load());
     requireFolder(chat.cwd);
+    requirePlanBilling(chat.cwd);
     const { args } = buildClaudeArgs(normalizeOptions({ ...chat.options, cwd: chat.cwd, mode: 'resume', resumeId: chat.sessionId, fork: false }), null);
     chat.note = null;
     chat.exitCode = null;
@@ -300,7 +327,57 @@ class ChatManager extends EventEmitter {
       }
       chat.commands = commandList(res.commands);
       this.emit('item', { id: chat.id, meta: true });
+      this._readContext(chat);
     }).catch(() => {});
+  }
+
+  // How full the context window is. "summary" answers from the last reply's usage and local
+  // estimates; the default ("full") would count each category with the token-counting API.
+  // Verified with 2.1.281: no request reaches the API. An older Claude Code without it: no meter.
+  _readContext(chat) {
+    if (!chat.proc) return;
+    this._request(chat, { subtype: 'get_context_usage', detail: 'summary' }, 10000).then((r) => {
+      if (!r || !Number.isFinite(r.totalTokens) || !Number.isFinite(r.maxTokens)) return;
+      chat.context = { tokens: r.totalTokens, max: r.maxTokens, percent: Number.isFinite(r.percentage) ? r.percentage : null };
+      this._changed(chat);
+    }).catch(() => {});
+  }
+
+  // What this turn added to Claude's running totals (for the reply's token count). Claude's totals
+  // start again at zero after /clear (a new session id). For a session this chat hasn't seen, the
+  // starting point is its saved cost-state: a resumed conversation carries on from it, and a brand
+  // new one has none. A fork's first session carries on from the original's.
+  _count(chat, m) {
+    if (typeof m.total_cost_usd !== 'number') return null;
+    const now = runningTotals(m);
+    const sessionId = m.session_id || chat.sessionId;
+    let base = chat.seen && chat.seen.sessionId === sessionId ? chat.seen : null;
+    if (!base) {
+      const saved = (sid) => { const meta = this.history && sid ? this.history.get(sid) : null; return meta && meta.costState; };
+      base = saved(sessionId) || (!chat.seen && chat.forkedFrom ? saved(chat.forkedFrom) : null) || zeroTotals();
+    }
+    const turn = {};
+    for (const k of TOKEN_KEYS) {
+      // Totals only grow within a conversation; if one went down, Claude started counting again.
+      turn[k] = now[k] >= (base[k] || 0) ? now[k] - (base[k] || 0) : now[k];
+    }
+    chat.seen = { sessionId, ...now };
+    return turn;
+  }
+
+  // The current conversation's tokens so far, subagents included, as of Claude's latest result.
+  _currentTokens(chat) {
+    const s = chat.seen;
+    if (!s || s.sessionId !== chat.sessionId) return null;
+    return { input: s.input, output: s.output, cacheRead: s.cacheRead, cacheWrite: s.cacheWrite };
+  }
+
+  // Asks Claude to summarize the conversation so far to free up context, like /compact.
+  compact(id) {
+    const chat = this._get(id);
+    if (!chat.proc) throw new UserError('This chat has ended. Resume it to compact it.');
+    if (chat.busy) throw new UserError('Claude is working in this chat. Wait for it to finish, then compact.', 409);
+    return this.send(id, '/compact');
   }
 
   _onExit(chat, proc, code, errMessage) {
@@ -387,7 +464,21 @@ class ChatManager extends EventEmitter {
           this._changed(chat);
         } else if (/^task_(started|progress|updated|notification)$/.test(m.subtype || '')) {
           this._onTask(chat, m);
+        } else if (m.subtype === 'status' && m.status === 'compacting') {
+          this._push(chat, { kind: 'note', text: 'Compacting the conversation…' });
+        } else if (m.subtype === 'compact_boundary') {
+          const meta = m.compact_metadata || {};
+          const sizes = Number.isFinite(meta.pre_tokens) && Number.isFinite(meta.post_tokens) ? ` (${meta.pre_tokens.toLocaleString('en-US')} → ${meta.post_tokens.toLocaleString('en-US')} tokens)` : '';
+          this._push(chat, { kind: 'note', text: `${meta.trigger === 'auto' ? 'Claude compacted the conversation to make room' : 'Conversation compacted'}${sizes}. Claude now works from a summary of the earlier turns.` });
+          this._readContext(chat);
         }
+        break;
+      case 'conversation_reset':
+        // /clear: Claude starts a new conversation (a new session id arrives with the next init).
+        // The current cost and tokens start again at zero.
+        chat.context = null;
+        this._push(chat, { kind: 'note', text: 'Context cleared. Claude starts a new conversation from here.' });
+        this._changed(chat);
         break;
       case 'assistant': {
         if (m.parent_tool_use_id) {
@@ -430,6 +521,7 @@ class ChatManager extends EventEmitter {
         chat.queued = Number.isInteger(m.queued_turn_count) ? m.queued_turn_count : 0;
         chat.busy = chat.queued > 0;
         if (typeof m.total_cost_usd === 'number') chat.costUSD = m.total_cost_usd;
+        const turn = this._count(chat, m);
         const aborted = m.terminal_reason === 'aborted_streaming' || m.subtype === 'error_during_execution';
         if (m.is_error && !aborted) {
           const detail = m.result || (Array.isArray(m.errors) ? m.errors.join('\n') : '') || m.subtype;
@@ -438,9 +530,21 @@ class ChatManager extends EventEmitter {
         // Claude's duration_ms is clock time, sleep included.
         const durationMs = m.duration_ms ? Math.max(0, m.duration_ms - chat.turnSleptMs) : null;
         chat.turnSleptMs = 0;
-        this._push(chat, { kind: 'result', durationMs, isError: m.is_error === true, aborted });
+        // Tokens this turn used, subagents included (from modelUsage), and how many of them were
+        // subagents': the result's own usage counts only the main conversation's calls, so they're
+        // the rest. A local command (/compact) reports no usage of its own, so it's all main.
+        const tokens = turn ? { input: turn.input, output: turn.output, cacheRead: turn.cacheRead, cacheWrite: turn.cacheWrite } : null;
+        let subagentTokens = null;
+        if (tokens && m.local_command) subagentTokens = 0;
+        else if (tokens && m.usage) {
+          const main = m.usage;
+          subagentTokens = Math.max(0, tokens.input - (Number(main.input_tokens) || 0)) + Math.max(0, tokens.output - (Number(main.output_tokens) || 0))
+            + Math.max(0, tokens.cacheRead - (Number(main.cache_read_input_tokens) || 0)) + Math.max(0, tokens.cacheWrite - (Number(main.cache_creation_input_tokens) || 0));
+        }
+        this._push(chat, { kind: 'result', durationMs, isError: m.is_error === true, aborted, tokens, subagentTokens });
         this._changed(chat);
         this._save();
+        this._readContext(chat);
         break;
       }
       case 'control_request':
@@ -803,6 +907,7 @@ class ChatManager extends EventEmitter {
     this._push(chat, { kind: 'note', text: `Model changed to ${value || 'the default'}.` });
     this._changed(chat);
     this._save();
+    this._readContext(chat); // the new model's context window can be a different size
     return { ok: true };
   }
 
@@ -921,6 +1026,7 @@ class ChatManager extends EventEmitter {
     const rows = [...this.chats.values()].map((c) => ({
       id: c.id, name: c.name, color: c.color, cwd: c.cwd, options: c.options, sessionId: c.sessionId, createdAt: c.createdAt,
       lastPrompt: c.lastPrompt, lastReply: c.lastReply, model: c.model, permissionMode: c.permissionMode, costUSD: c.costUSD, command: c.command,
+      seen: c.seen,
     }));
     try { writeJsonAtomic(this.file, rows); } catch { /* retried on the next change */ }
   }
@@ -964,6 +1070,8 @@ class ChatManager extends EventEmitter {
       requestedEffort: chat.options.effort || '',
       permissionMode: chat.permissionMode,
       chatCost: chat.costUSD,
+      tokens: this._currentTokens(chat),
+      context: chat.proc ? chat.context : null,
       exitCode: chat.exitCode,
       note: chat.note,
       command: chat.command,
@@ -976,6 +1084,15 @@ class ChatManager extends EventEmitter {
 
   detail(id) {
     const chat = this._get(id);
+    // A chat restored after Claude Deck restarts has no messages in memory: show its conversation
+    // from the transcript, as History does (the page reloads it when that arrives).
+    if (!chat.items.length && !chat.past && chat.sessionId && !chat.loadingPast) {
+      chat.loadingPast = true;
+      this._loadPast(chat, chat.sessionId).finally(() => {
+        chat.loadingPast = false;
+        if (!chat.past) chat.past = []; // no transcript to show; don't keep looking
+      });
+    }
     return { ...this.summary(chat), items: chat.items, past: chat.past || [], seq: chat.seq, commands: chat.commands, tasks: this._taskList(chat) };
   }
 

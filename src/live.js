@@ -39,7 +39,7 @@ function removeTabFiles(id) {
 }
 
 function describe(meta) {
-  if (!meta) return { title: null, lastPrompt: null, gitBranch: null, model: null, costUSD: null, userTurns: 0 };
+  if (!meta) return { title: null, lastPrompt: null, gitBranch: null, model: null, costUSD: null, userTurns: 0, context: null };
   return {
     title: meta.title,
     lastPrompt: meta.lastPrompt,
@@ -47,8 +47,11 @@ function describe(meta) {
     model: meta.model,
     costUSD: meta.costUSD,
     userTurns: meta.userTurns,
+    // From the transcript, which doesn't say how big the context window is.
+    context: Number.isFinite(meta.contextTokens) ? { tokens: meta.contextTokens, max: null, percent: null } : null,
   };
 }
+
 
 class Live extends EventEmitter {
   constructor({ registry, history, chats }) {
@@ -97,6 +100,9 @@ class Live extends EventEmitter {
     this.ticking = true;
     try {
       await this.history.refreshIfOlderThan(2500);
+      // Subagents' token usage, for the terminal and outside sessions shown (chats get theirs from Claude).
+      const shown = [...this.state.sessions.filter((s) => s.kind === 'terminal'), ...this.state.external];
+      await this.history.refreshSubagents(shown.map((s) => s.sessionId).filter(Boolean));
       this._compute();
     } catch (err) {
       this.emit('error', err);
@@ -156,6 +162,8 @@ class Live extends EventEmitter {
         launchError: entry.launchError || (state === 'failed' ? 'The tab never reported in. Check that Windows Terminal opened, then dismiss this card.' : null),
         transcriptStamp: sessionId ? this.history.stamp(sessionId) : null,
         ...describe(meta),
+        // The current conversation's tokens, from its transcripts (subagents included).
+        tokens: sessionId ? this.history.tokensFor(sessionId) : null,
       };
       sessions.push(view);
       this._transition(entry, view);
@@ -203,6 +211,7 @@ class Live extends EventEmitter {
           startedAt: rec.startedAt || null,
           transcriptStamp: rec.sessionId ? this.history.stamp(rec.sessionId) : null,
           ...describe(meta),
+          tokens: rec.sessionId ? this.history.tokensFor(rec.sessionId) : null,
         });
       }
       external.sort((a, b) => (b.statusSince || 0) - (a.statusSince || 0));

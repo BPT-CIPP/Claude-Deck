@@ -14,6 +14,8 @@ function sandbox() {
   fs.mkdirSync(path.join(dataDir, 'tabs'), { recursive: true });
   process.env.CLAUDE_CONFIG_DIR = claudeDir;
   process.env.CLAUDE_DECK_DATA = dataDir;
+  // Tests never reach Anthropic; an API key on the developer's PC shouldn't trip the billing guard.
+  for (const name of require('../src/billing').BILLING_VARS) delete process.env[name];
   return {
     root,
     claudeDir,

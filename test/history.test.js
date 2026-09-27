@@ -96,6 +96,50 @@ test('cache survives a new index instance', async () => {
   assert.ok(b.get(SID), 'loaded from cache without a refresh');
 });
 
+test('counts token usage per conversation and per hour, subagents included, with the context size', async () => {
+  const SID2 = '22222222-3333-4444-8555-666666666666';
+  const dir = path.join(box.claudeDir, 'projects', 'C--work-usage');
+  fs.mkdirSync(path.join(dir, SID2, 'subagents'), { recursive: true });
+  const at = (hoursAgo) => new Date(Date.now() - hoursAgo * 3600000).toISOString();
+  const u = (input, output, cacheRead) => ({ input_tokens: input, output_tokens: output, cache_read_input_tokens: cacheRead, cache_creation_input_tokens: 0 });
+  const b2 = { sessionId: SID2, cwd: 'C:\\work\\usage' };
+  fs.writeFileSync(path.join(dir, `${SID2}.jsonl`), [
+    line({ ...b2, type: 'user', message: { role: 'user', content: 'Count my tokens' }, timestamp: at(30 * 24) }),
+    // A month ago: counts toward the total, not toward this week.
+    line({ ...b2, type: 'assistant', message: { id: 'old', model: 'claude-opus-5', usage: u(1000, 0, 0), content: [] }, timestamp: at(30 * 24) }),
+    // One API message split over two records: counted once, the latest record winning.
+    line({ ...b2, type: 'assistant', message: { id: 'm1', model: 'claude-opus-5', usage: u(10, 5, 100), content: [{ type: 'thinking', thinking: '' }] }, timestamp: at(2) }),
+    line({ ...b2, type: 'assistant', message: { id: 'm1', model: 'claude-opus-5', usage: u(10, 50, 100), content: [{ type: 'text', text: 'Done.' }] }, timestamp: at(2) }),
+    // Claude Code's own synthetic messages are not API usage.
+    line({ ...b2, type: 'assistant', message: { id: 's1', model: '<synthetic>', usage: u(0, 0, 0), content: [] }, timestamp: at(1) }),
+    line({ type: 'cost-state', sessionId: SID2, totalCostUSD: 0.5, modelUsage: { 'claude-opus-5': { inputTokens: 1010, outputTokens: 50, cacheReadInputTokens: 100, cacheCreationInputTokens: 0 } } }),
+  ].join(''));
+  fs.writeFileSync(path.join(dir, SID2, 'subagents', 'agent-a1.jsonl'),
+    line({ isSidechain: true, sessionId: SID2, type: 'assistant', message: { id: 'sub1', model: 'claude-haiku', usage: u(200, 20, 0), content: [] }, timestamp: at(1) }));
+
+  const idx = new HistoryIndex();
+  await idx.refresh();
+  const m = idx.get(SID2);
+  assert.deepStrictEqual(m.tokens, { input: 1010, output: 50, cacheRead: 100, cacheWrite: 0 });
+  assert.strictEqual(m.contextTokens, 160, 'the latest reply: input + cache + output');
+  assert.deepStrictEqual(m.costState, { costUSD: 0.5, input: 1010, output: 50, cacheRead: 100, cacheWrite: 0 });
+  assert.ok(!('tokenHours' in m), 'hourly counts stay on the server');
+  assert.deepStrictEqual(idx.tokensFor(SID2), m.tokens, 'subagents are read only when asked for');
+
+  await idx.refreshSubagents([SID2]);
+  assert.deepStrictEqual(idx.tokensFor(SID2), { input: 1210, output: 70, cacheRead: 100, cacheWrite: 0 });
+  const week = idx.usageSince(Date.now() - 7 * 24 * 3600000);
+  assert.deepStrictEqual(week.map((r) => [r.sessionId, r.tokens]), [[SID2, 160 + 220]], 'this week only, subagents included');
+  assert.strictEqual(week[0].meta.title, 'Count my tokens');
+
+  fs.appendFileSync(path.join(dir, `${SID2}.jsonl`), line({ ...b2, type: 'system', subtype: 'compact_boundary', compactMetadata: { trigger: 'manual', preTokens: 160, postTokens: 40 }, timestamp: at(0) }));
+  await idx.refresh();
+  assert.strictEqual(idx.get(SID2).contextTokens, 40, 'the size after compacting');
+
+  idx.saveNow();
+  assert.deepStrictEqual(new HistoryIndex().tokensFor(SID2), idx.tokensFor(SID2), 'subagent counts are cached too');
+});
+
 test('readTranscript returns prompts, assistant text and tool calls', async () => {
   fs.writeFileSync(file, [
     line({ ...base, type: 'user', message: { role: 'user', content: 'Hi' }, timestamp: '2026-09-20T10:00:01.000Z' }),

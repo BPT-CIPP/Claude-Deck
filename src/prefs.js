@@ -18,8 +18,10 @@ const DEFAULTS = Object.freeze({
   notifyOnFinished: true,
   notifySound: false,
   theme: 'system',             // one of THEMES
+  showToolIcons: false,        // an emoji beside each tool call in a chat
   showExternal: true,          // show Claude sessions running outside Claude Deck
   stopWhenClosed: true,        // stop the local server a while after the dashboard window closes
+  allowApiBilling: false,      // start sessions that would bill an API or cloud account (src/billing.js)
 });
 
 // Each theme is a :root[data-theme] block in public/app.css; labels are in public/app.js.

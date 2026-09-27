@@ -60,6 +60,19 @@ subagent records, and `isMeta: true` marks records that aren't real prompts.
 ✅ One API message can be split over several `assistant` records that share `message.id`, one per
 content block (thinking, text, tool_use).
 
+✅ Each `assistant` record carries `message.usage` (`input_tokens`, `output_tokens`,
+`cache_read_input_tokens`, `cache_creation_input_tokens`). Records split from one message repeat it,
+so it's counted once per `message.id`. Local command output (for example `/context`) is an
+`assistant` record with model `<synthetic>` and zero usage. The latest record's input + cache +
+output is how full the context was after that reply. `src/history.js` keeps these per
+conversation, and per hour for the weekly usage view. Checked with 2.1.281.
+
+✅ `cost-state` `{totalCostUSD, modelUsage: {<model>: {inputTokens, outputTokens,
+cacheReadInputTokens, cacheCreationInputTokens, costUSD}}, totalAPIDuration, totalLinesAdded, …}`
+is the conversation's running totals. With 2.1.281 it was written when the conversation was
+cleared and when the process exited, not after each turn, so it lags while a session runs. A
+resumed conversation carries on from it.
+
 ✅ Beside each transcript, a folder of the same name holds `tool-results/` (large tool outputs)
 and `subagents/` (see below).
 
@@ -83,8 +96,8 @@ session_id}`. `content` can include `{type:'image', source:{type:'base64', media
 blocks, and image-only messages work. Control requests are
 `{type:'control_request', request_id, request:{subtype, ...}}` with subtypes `initialize`
 (returns `commands`, the slash commands), `interrupt`, `set_model`, `set_permission_mode`,
-`apply_flag_settings` (effort, below), `stop_task` `{task_id}` and `rewind_files` (see File
-checkpoints).
+`apply_flag_settings` (effort, below), `stop_task` `{task_id}`, `rewind_files` (see File
+checkpoints) and `get_context_usage` (below).
 
 ✅ **Received:** `system` (`init`, `status`, `task_*`), `assistant`, `user` (tool results),
 `result`, `control_request`, `control_cancel_request`, `control_response`, `command_lifecycle`.
@@ -97,8 +110,45 @@ checkpoints).
 ✅ **Turns.** No `system/init` arrives before the first message; the `initialize` response means the
 process is ready. After that, a `system/init` starts every turn, including queued messages Claude
 picks up after an interrupt (it may merge several into one turn), so busy state keys off it.
-`result` ends a turn. Its `total_cost_usd` is cumulative for the process, and an interrupted turn
-ends with `terminal_reason: aborted_streaming`.
+`result` ends a turn, and an interrupted turn ends with `terminal_reason: aborted_streaming`.
+
+✅ **Cost and tokens in `result`.** Checked with 2.1.281 against the mock:
+- `total_cost_usd` and `modelUsage` (`{<model>: {inputTokens, outputTokens,
+  cacheReadInputTokens, cacheCreationInputTokens, costUSD, contextWindow, maxOutputTokens}}`) are
+  running totals for the *conversation*, subagents included.
+- They start again at zero after `/clear`. A resumed conversation carries on from its saved
+  `cost-state`. A fork (`--fork-session`) gets a new session id but carries on the original's
+  totals.
+- `usage` is this turn's alone, summed over its API calls, and leaves out subagents: a turn whose
+  foreground subagent made 2 calls reported only the main thread's 2 in `usage`, while
+  `modelUsage` grew by all 4.
+- Claude Deck works out each turn's tokens from the change in the running totals, and shows the
+  current conversation's running tokens (`_count` in `src/chat.js`). The turn's subagent tokens are
+  that change minus its own `usage`. A local command's result (`/compact`) has zero `usage` though
+  its call counts in the totals, so all of it is counted as the main conversation's. Checked against
+  the mock: a turn with a foreground subagent showed 60 tokens, 30 of them the subagent's two calls.
+
+✅ **`/clear`** sent as a user message: `conversation_reset` `{new_conversation_id, trigger:
+'clear', user_message_uuid}` arrives, then a `system/init` with a **new `session_id`**, then a
+`result` with `local_command: 'clear'`, `num_turns: 0` and `total_cost_usd: 0`. The new transcript
+file is named after the new `session_id`. `new_conversation_id` is a different uuid from it. The
+old transcript gets a `cost-state` record.
+
+✅ **`/compact`** sent as a user message works in stream-json. You get `system/status` `{status:
+'compacting'}`, then `{status: null, compact_result: 'success'}`, then `system/init`, then
+`system/compact_boundary` `{compact_metadata: {trigger: 'manual'|'auto', pre_tokens, post_tokens,
+…}}`, a synthetic user message holding the summary, and a `result` with `local_command:
+'compact'`. That result's `usage` is zero, but its running totals include the summarizing call.
+The transcript gets `system` `compact_boundary` `{compactMetadata: {trigger, preTokens,
+postTokens, …}}`. The summarizing call itself isn't written as an `assistant` record.
+
+✅ **`get_context_usage`** `{detail: 'summary'|'full'}` answers how full the context window is:
+`{totalTokens, maxTokens, rawMaxTokens, percentage, autoCompactThreshold, isAutoCompactEnabled,
+model, categories: [{name, tokens}], apiUsage, …}`. The field description inside `claude.exe` says
+`full` (the default) counts each category with the token-counting API, while `summary` answers
+from the last response's usage plus local estimates. Claude Deck asks for `summary` after each
+turn: with the mock logging every request, it made none. Before the first reply, `apiUsage` is
+`null` and the total is the local estimate of the system prompt, tools and skills.
 
 ✅ **Sleep mid-turn.** If the PC sleeps while Claude works, the turn carries on after waking. The
 transcript shows `system` entries with subtype `api_error` ("Connection error." / "Can't reach the
@@ -227,6 +277,25 @@ NotebookEdit) are tracked, not shell commands.
 ✅ `rewind_files` `{user_message_id, dry_run?}`: a dry run returns `{canRewind, filesChanged,
 insertions, deletions}`, the real run `{canRewind: true, skippedLinks}`. Without checkpointing it
 returns `{canRewind: false, error}`.
+
+## What makes Claude Code bill per use
+
+The billing guard (`src/billing.js`) refuses to start sessions that would bill an Anthropic API or
+cloud account instead of the Claude plan.
+
+✅ Present in `claude.exe` 2.1.281 (found by searching the binary for the names):
+- `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and the `apiKeyHelper` setting.
+- The provider switches `CLAUDE_CODE_USE_BEDROCK`, `_VERTEX`, `_FOUNDRY`, `_ANTHROPIC_AWS`,
+  `_ANTHROPIC_GOOGLE_CLOUD`, `_MANTLE` and `_GATEWAY`.
+- The managed settings folder on Windows, `C:\Program Files\ClaudeCode` (`managed-settings.json`).
+
+⚠️ Inferred, not checked with a live account:
+- Any of the variables above, set in the environment or in a settings file's `env` block (managed,
+  user, or the project's `.claude/settings*.json`), makes Claude Code bill that account rather than
+  the Claude sign-in. That's what Anthropic documents.
+- `CLAUDE_CODE_USE_POWERSHELL_TOOL` and `CLAUDE_CODE_USE_COWORK_PLUGINS` look like feature switches
+  going by their names, so they aren't checked.
+- `CLAUDE_CODE_OAUTH_TOKEN` is a Claude plan sign-in, so it isn't flagged.
 
 ## Plan usage
 

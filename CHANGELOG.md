@@ -6,6 +6,67 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.7.0] - 2026-09-26
+
+### Added
+- A context meter in a chat's header: how full Claude's context
+  window is (for example 120k / 1M, 12%). In-app chats have a **Compact** button beside it,
+  which summarizes the conversation so far to free up room, like `/compact`. Terminal and outside
+  sessions show the context size from their transcript.
+- *Current total tokens* in a chat's header: the tokens the current conversation has used,
+  subagents included. Hover for input, output and cache.
+- Each finished reply shows the tokens it used next to *Done in*, subagents included, and how many
+  were the subagents', for example "Done in 12s · 45.2k tokens, 12.1k from subagents".
+- *Most tokens this week*, pinned at the top of the session list, lists the 10 conversations that used the most tokens since
+  your plan's weekly limit reset (or in the last 7 days), subagents included. **Show all** lists
+  every one, with a filter. Click one to open it, or to find it in History.
+- Notes in the chat when the context is cleared and when the conversation is compacted.
+- **Restart server** in Claude Deck Preferences, next to *Stop server now*: the server stops, starts
+  again on the same address and the window reloads, so changes to Claude Deck take effect without
+  reopening anything. If Claude Deck runs from the sign-in task, the task keeps watching the new
+  server.
+- **Check for updates** in Claude Deck Preferences, to the left of *Restart server*: if GitHub has
+  a newer Claude Deck, it asks, gets it and restarts on it. It signs in through the GitHub CLI
+  (`gh auth login`), and only updates a copy on `main` with no changes or commits of its own;
+  otherwise it leaves the copy alone and gives the PowerShell command to update it by hand, with a
+  button to copy it.
+- A billing guard: Claude Deck won't start a chat or terminal session when Claude Code is set up to
+  bill an Anthropic API account or a cloud provider instead of your Claude plan (an API key or
+  token, an `apiKeyHelper`, or a Bedrock, Vertex or similar switch, in the environment or Claude
+  Code's settings). A red banner says what it found. The only way past it is *Allow API billing*
+  in Claude Deck Preferences → Billing, off by default, which warns again before it turns on.
+- **F2** renames the selected session, even while typing a reply, so it works right after Ctrl+Tab.
+- The running version (for example v1.7.0) next to *Live* at the bottom of the sidebar.
+
+### Changed
+- A redesigned, much shorter session header, so the conversation gets more room:
+  - Above the title: the status, a badge when subagents are running, and the full folder path and
+    session ID with their copy and open buttons.
+  - **▾** beside the title opens a menu with **Rename**, **Tag color** (a fly-out of colors),
+    **Changes**, **Continue in terminal** and **Subagents**. The separate *Open folder* button is
+    gone; the folder's ↗ opens it.
+  - One row of controls under the title: model, effort, permissions, plugins, context (with
+    **Compact**), *Current cost* and *Current total tokens*, with **End session** on the right.
+  - The header's *Stop* button is gone: the reply box's **Interrupt** does the same (with nothing
+    typed, it just stops Claude).
+- *Est. cost* is now *Current cost*, since it's the current conversation's cost: it starts again
+  after `/clear`, which starts a new conversation.
+- The Board is gone: Sessions is the session list and the selected session, always (so the Board
+  / Focus switch and **F** are gone too). Each row in the list has a trash button that ends the
+  session, or removes it once it has ended. **Esc** in an empty reply box goes to the session list.
+- **Ctrl+Shift+N** starts a new chat right away, without the New session window: in your default
+  folder (Claude Deck Preferences → New sessions), with Claude Code's own settings for model,
+  effort and permissions. It works from anywhere in Sessions, even while typing a reply, and
+  replaces the **N** shortcut.
+- The icons beside tool calls in a chat are off by default. Turn them on in Claude Deck
+  Preferences → Appearance → *Tool calls*.
+- The subagents panel opens by itself when Claude starts a subagent. **✕** closes it until another
+  starts, and **Subagents** in the session menu opens it again.
+
+### Fixed
+- A chat that ended when Claude Deck restarted showed an empty conversation until you resumed it.
+  It now shows the conversation so far, as History does.
+
 ## [1.6.1] - 2026-09-26
 
 ### Fixed
@@ -101,6 +162,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.7.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.4.0...v1.5.0

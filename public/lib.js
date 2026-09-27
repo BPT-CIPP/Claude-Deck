@@ -30,6 +30,7 @@
     if (!res.ok) {
       const err = new Error((data && data.error) || `Request failed (${res.status})`);
       err.status = res.status;
+      if (data && typeof data.command === 'string') err.command = data.command;
       throw err;
     }
     return data;
@@ -226,7 +227,8 @@
 
   // Simple modal confirm built on <dialog>.
   // extra: an optional node shown under the text (for example, a list of what will change).
-  Deck.confirm = function confirmDialog({ title, body, extra = null, ok = 'OK', danger = false }) {
+  // safeDefault: Cancel has the focus, so Enter doesn't agree to something risky by accident.
+  Deck.confirm = function confirmDialog({ title, body, extra = null, ok = 'OK', danger = false, safeDefault = false }) {
     return new Promise((resolve) => {
       const dlg = Deck.h('dialog', { class: 'dialog small' },
         Deck.h('form', { method: 'dialog' },
@@ -234,8 +236,8 @@
           body ? Deck.h('p', { class: 'muted' }, body) : null,
           extra,
           Deck.h('div', { class: 'dialog-actions' },
-            Deck.h('button', { value: 'cancel', class: 'ghost' }, 'Cancel'),
-            Deck.h('button', { value: 'ok', class: danger ? 'danger' : 'primary', autofocus: true }, ok))));
+            Deck.h('button', { value: 'cancel', class: 'ghost', autofocus: safeDefault }, 'Cancel'),
+            Deck.h('button', { value: 'ok', class: danger ? 'danger' : 'primary', autofocus: !safeDefault }, ok))));
       dlg.addEventListener('close', () => { resolve(dlg.returnValue === 'ok'); dlg.remove(); });
       document.body.appendChild(dlg);
       dlg.showModal();
