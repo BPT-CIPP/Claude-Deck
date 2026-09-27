@@ -191,7 +191,9 @@ if ($Install) {
     Register-DeckTask
     Start-ScheduledTask -TaskName $taskName
     for ($i = 0; $i -lt 20 -and -not (Get-RunningServer); $i++) { Start-Sleep -Milliseconds 500 }
-    # Opens the dashboard; if the task's server is up this just opens a window.
+    # Opens the dashboard; if the task's server is up this just opens a window. If that server is
+    # still starting, whichever of the two gets the port serves and the other hands over to it
+    # (src/server.js), so waiting longer here isn't needed to avoid a second server.
     Start-Process -FilePath $node -ArgumentList @("`"$server`"", '--open') -WorkingDirectory $root -WindowStyle Hidden
     Write-Output 'Claude Deck is installed. To pin it to the taskbar, see "Pin it to the taskbar" in README.md.'
     return

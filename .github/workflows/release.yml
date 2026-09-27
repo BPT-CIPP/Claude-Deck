@@ -1,43 +1,66 @@
-# Publishes a release for each version that reaches main. When a merge brings a package.json version
-# that has no vX.Y.Z tag yet, this tags the merge commit and creates the GitHub release, with that
-# version's CHANGELOG.md section as the notes and the release manifest (every file with its SHA-256,
+# Publishes a release for each version that reaches main. When a merge brings a new package.json
+# version, this tags the merge commit and creates the GitHub release, with that version's
+# CHANGELOG.md section as the notes and the release manifest (every file with its SHA-256,
 # tools/release-manifest.js) attached. Merges that don't change the version publish nothing.
-# The version and changelog were already checked on the pull request (checks.yml).
+#
+# It runs after the checks workflow has passed on that merge commit, never before: a merge whose
+# checks fail on main isn't released. Each merge commit is handled on its own (nothing is cancelled
+# when merges land close together), and a version bumped in a merge whose tag already exists on
+# another commit fails loudly instead of shipping untagged.
 name: release
 
 on:
-  push:
+  workflow_run:
+    workflows: [checks]
+    types: [completed]
     branches: [main]
 
 permissions:
   contents: write
 
-# Two quick merges can't both try to create the same release.
 concurrency:
-  group: release
+  group: release-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
   release:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          # The merge commit and its first parent, to tell whether this merge changed the version.
+          fetch-depth: 2
+          # The token isn't left in .git/config; gh gets it from GH_TOKEN below.
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
 
-      - name: Publish the release if this version is new
+      - name: Publish the release if this merge brought a new version
         env:
           GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           version=$(node -p "require('./package.json').version")
+          before=$(git show "$SHA^1:package.json" 2>/dev/null | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).version)}catch{console.log('')}})")
           tag="v$version"
-          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
-            echo "$tag already exists; nothing to release."
+          if [ "$version" = "$before" ]; then
+            echo "This merge didn't change the version ($version); nothing to release."
             exit 0
+          fi
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha 2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            if [ "$existing" = "$SHA" ]; then
+              echo "$tag already points at this commit; nothing to do."
+              exit 0
+            fi
+            echo "::error::This merge changed the version to $version, but $tag already exists on another commit ($existing). Two pull requests probably bumped to the same version: bump this one to the next version in a new pull request so its changes get a release."
+            exit 1
           fi
           node tools/changelog.js notes "$version" > "$RUNNER_TEMP/notes.md"
           manifest="$RUNNER_TEMP/claude-deck-$tag-manifest.json"
-          node tools/release-manifest.js build "$GITHUB_SHA" > "$manifest"
-          gh release create "$tag" "$manifest" --target "$GITHUB_SHA" --title "$tag" --notes-file "$RUNNER_TEMP/notes.md"
+          node tools/release-manifest.js build "$SHA" > "$manifest"
+          gh release create "$tag" "$manifest" --repo "$GITHUB_REPOSITORY" --target "$SHA" --title "$tag" --notes-file "$RUNNER_TEMP/notes.md"
           echo "Released $tag."
