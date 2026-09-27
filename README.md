@@ -9,7 +9,7 @@ also edits your Claude Code settings.
   Claude Code already writes, and your sessions run your own `claude` with your sign-in, so they use
   your plan exactly as any Claude Code session does.
 - **Nothing extra to install.** No npm packages, no new executables. It runs on Node.js, Windows
-  Terminal, Microsoft Edge and your existing Claude Code, so it works on managed PCs that block
+  Terminal, Microsoft Edge, Git and your existing Claude Code, so it works on managed PCs that block
   unfamiliar executables.
 - **Private to your PC.** It listens on `127.0.0.1` only, behind a per-install token.
 
@@ -38,6 +38,7 @@ also edits your Claude Code settings.
 | **Windows Terminal** | sessions you run in a terminal tab (in-app chats work without it) | built into Windows 11; otherwise `winget install Microsoft.WindowsTerminal` |
 | **Microsoft Edge** | the app window and taskbar pin (otherwise it opens in your default browser) | built into Windows |
 | **Git** | to download and update Claude Deck | `winget install Git.Git` |
+| **GitHub CLI**, signed in | only for **Check for updates** (Git signs in to GitHub through it) | `winget install GitHub.cli`, then `gh auth login` |
 
 No administrator rights are needed on a standard Windows setup. Tested with Claude Code 2.1.281 and
 Node.js 24 on Windows 11. Newer Claude Code versions usually work; see
@@ -88,7 +89,7 @@ After that, the shortcuts and `Start-ClaudeDeck.ps1` open the installed app too.
 
 ## Update
 
-Choose **Claude Deck Preferences → Check for updates**. If GitHub has a newer version, Claude Deck
+Choose **Claude Deck Preferences → Dashboard → Check for updates**. If GitHub has a newer version, Claude Deck
 asks, gets it and restarts on it. It needs the GitHub CLI signed in (`gh auth login`), and it only
 updates a copy on `main` with no changes of its own; otherwise it leaves the copy alone and gives
 the command to update it by hand (with **Copy command**). To update by hand anyway:
@@ -98,14 +99,15 @@ cd <your Claude-Deck folder>
 git pull
 ```
 
-Then choose **Claude Deck Preferences → Restart server**: the server stops, starts again and the
-window reloads, with no need to reopen anything. (**Stop server now** stops it until you start it
-again with the **Start Claude Deck** shortcut or the taskbar pin, or next sign in.) Open chats end
+Then choose **Claude Deck Preferences → Dashboard → Restart server**: the server stops, starts again
+and the window reloads, with no need to reopen anything. (**Stop server now** stops it until you
+start it again with the **Start Claude Deck** shortcut or `Start-ClaudeDeck.ps1`, or next sign in.
+The taskbar pin opens the app window but can't start the server.) Open chats end
 when the server stops; they come back as *Ended*, and **Resume** (or Enter) continues them. If an update only changed the page itself, reloading the window (Ctrl+R) is enough.
 
 **Checking a copy.** Each [release](https://github.com/BPT-CIPP/Claude-Deck/releases) has a
 `claude-deck-vX.Y.Z-manifest.json` listing every file with its size and SHA-256. To confirm a
-folder holds exactly that release (**Claude Deck Preferences → Version** shows which one you're running),
+folder holds exactly that release (**Claude Deck Preferences → Dashboard → Version** shows which one you're running),
 download the manifest and run, from the folder:
 
 ```powershell
@@ -118,8 +120,10 @@ release exactly, `git checkout vX.Y.Z` first.
 
 ## Uninstall
 
+From your Claude-Deck folder:
+
 ```powershell
-.\Start-ClaudeDeck.ps1 -Uninstall
+powershell -ExecutionPolicy Bypass -File .\Start-ClaudeDeck.ps1 -Uninstall
 ```
 
 This stops the server and removes the sign-in task and the shortcuts. It keeps your Claude Deck data
@@ -191,8 +195,12 @@ them for its own tabs.
   else. **Check for updates** fetches from GitHub with `git`, signed in through the GitHub CLI, only
   when you click it.
 - **Your Claude plan only.** Claude Deck won't start a session if Claude Code is set up to bill an
-  Anthropic API account or a cloud provider instead of your plan (an `ANTHROPIC_API_KEY` or similar in
-  your environment, an `apiKeyHelper`, or a Bedrock or Vertex switch in Claude Code's settings). It
+  Anthropic API account or a cloud provider instead of your plan: an `ANTHROPIC_API_KEY` or similar,
+  an `apiKeyHelper`, or a Bedrock or Vertex switch. It looks in Claude Deck's own environment and
+  Windows' stored user and machine environment (what terminal tabs get), and in Claude Code's
+  settings: managed (`managed-settings.json`, its `managed-settings.d` folder and the `ClaudeCode`
+  registry policy), your user settings, the project's `.claude\settings.json` and
+  `.claude\settings.local.json`, and a `--settings` file or JSON in a session's extra arguments. It
   shows a warning saying what it found. The only way past it is **Claude Deck Preferences → Billing →
   Allow API billing**, which is off by default and warns again before it turns on.
 - **Local only.** The server listens on `127.0.0.1:47821` (or another free port) and requires a
@@ -244,7 +252,7 @@ plan limits to show. If it says the sign-in expired, it renews the next time a C
 
 **Terminal sessions don't open.** Windows Terminal is missing (`wt.exe`). Install it, or use chats.
 
-**Terminal cards stay at "Starting" after a Claude Code update.** Claude Deck reads status files
+**Terminal sessions stay at "Starting" after a Claude Code update.** Claude Deck reads status files
 Claude Code doesn't document, and an update may have changed them. Chats aren't affected. Report it
 ([Contributing](#contributing)).
 

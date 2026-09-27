@@ -6,6 +6,57 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.7.1] - 2026-09-27
+
+### Fixed
+- The server could be stopped by a malformed web address, such as one a web page opens (a lone `%`,
+  a NUL, or an unusual token), ending every open chat. Such requests now just get an error.
+- Setting Claude Code's path to `claude.cmd` (what `where claude` shows for an npm install) stopped
+  the server from starting at all. Claude Deck now uses the program that file starts.
+- Deleting a conversation from History could lose some of its files if Windows had one of them
+  locked partway through. Now everything is either moved to the trash or put back, and what can't
+  be put back stays in the trash. An Undo that stops partway can be tried again.
+- Restoring files to before a turn now puts back the files already restored if one can't be
+  written, refuses to overwrite a file it can't read, and Undo no longer overwrites work done on a
+  file after the restore.
+- The billing guard now also checks a `--settings` file in a session's extra arguments, managed
+  settings from the `managed-settings.d` folder and the Claude Code registry policy, and resuming in
+  a terminal tab with **R**.
+- Moving a session between a chat and a terminal (or **Continue here**) no longer ends it when the
+  new one can't start, for example because the billing guard refuses.
+- **End** on an outside session no longer ends another program if Windows has reused that session's
+  process ID.
+- Two Claude Deck servers could end up running at once (sign-in and the shortcut at the same moment,
+  or Restart pressed twice). The second one now leaves it to the first.
+- Conversations whose prompts start with `<` (HTML, or a `<Component>` name) were missing from
+  History and the change timeline. Pasted text shows without its wrapper.
+- Saving a settings or CLAUDE.md file kept neither its byte-order mark nor its Windows line endings,
+  and replaced a symbolic link with a plain file. It keeps all three now. A file that appears or
+  changes while the editor is open is no longer overwritten without asking, and switching folders
+  while one is loading can't save one folder's settings into the other.
+- Arrow keys in a session's ▾ menu also switched sessions, and Enter on a subagent opened and at once
+  closed it.
+- Pressing Enter twice quickly sent a message twice, and text typed while a message was being sent
+  was wiped. Ctrl+Enter in the New session window could start two sessions.
+- The session header no longer resets a model ID being typed, or an open dropdown, every minute, and
+  keyboard focus in the session list is kept across updates.
+- A chat that failed to load stayed blank; it now says so, with **Try again**. The subagent panels no
+  longer rebuild every second (losing clicks on **Stop** and collapsing what you'd opened), and
+  reloading plugins no longer reloads the whole chat.
+- After the server restarts on a new version, an open window reloads itself instead of running the
+  old page.
+- Any web page could lock the installed app out by opening its address with a made-up token. A token
+  in the address is kept only once the server accepts it.
+- Code blocks with a language like `c++`, or Windows line endings, showed as plain text.
+- The folder picker and recent folders no longer freeze Claude Deck while a disconnected network
+  drive times out. Long conversations load and refresh faster.
+- Wording left from the Board ("card").
+
+### Changed
+- Releases are published only after the checks pass on the merge, and a version that's already
+  tagged fails loudly instead of being skipped. The repo's Claude Code hooks refuse every push to
+  `main` and every force-push, however it's written.
+
 ## [1.7.0] - 2026-09-26
 
 ### Added
@@ -162,6 +213,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.7.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.5.0...v1.6.0

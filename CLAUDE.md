@@ -11,8 +11,9 @@ Guidance for Claude Code working in this repository.
 Claude Deck is a Windows dashboard for Claude Code sessions: in-app chats (Claude Code driven over
 its streaming JSON protocol) plus tracked Windows Terminal sessions, history, a change timeline,
 and a Claude Code settings editor. **No build step, no npm dependencies**: plain Node.js on the
-server (`src/`) and plain browser scripts in the page (`public/`). `package.json` exists only to
-name the checks.
+server (`src/`) and plain browser scripts in the page (`public/`). `package.json` names the checks
+and the `start` / `serve` commands; those start the real server (on the usual port and data
+folder), so never use them to test a change.
 
 ## Where everything is
 
@@ -41,12 +42,16 @@ node tools/make-icons.js   # regenerate public/icons after changing the mascot g
 
 ## Non-negotiables
 
-- **Never commit to `main`.** Feature branch and pull request, always. `.claude/settings.json`
-  refuses force-pushes and pushes to `main`.
+- **Never commit to `main`.** Feature branch and pull request, always. A PreToolUse hook
+  (`.claude/hooks/guard-git-push.js`) refuses any push to `main` and any force-push, however it's
+  written, backed by deny rules in `.claude/settings.json`. Commits on `main` aren't blocked; don't
+  make them.
 - **No npm dependencies and no new executables.** Managed PCs commonly run Defender's attack surface
   reduction rule that blocks executables that aren't prevalent (Electron and node-pty were tried and
-  blocked). Everything runs on `node.exe`, `wt.exe`, Edge, `claude.exe` and Windows built-ins. Don't
-  work around it, for example with runtime-compiled C# or P/Invoke.
+  blocked). Everything runs on `node.exe`, `wt.exe`, Edge, `claude.exe`, `git` (with the GitHub CLI,
+  for *Check for updates*) and Windows built-ins (`powershell.exe`, `reg.exe`, `where.exe`,
+  `schtasks.exe`, `explorer.exe`, `choice.exe`; see docs/ARCHITECTURE.md). Don't work around it, for
+  example with runtime-compiled C# or P/Invoke.
 - **Claude Deck makes no Claude API calls.** It reads files Claude Code writes and relays what the
   user types. Tests and checks never hit the real API: use `test/fixtures/fake-claude.js`, or the
   real `claude.exe` against `test/fixtures/mock-anthropic-api.js` (`npm run sandbox`).

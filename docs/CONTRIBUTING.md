@@ -23,8 +23,8 @@ never commit to it directly.
    `powershell -ExecutionPolicy Bypass -File .\Start-ClaudeDeck.ps1 -Install` (see the README).
    To try changes, use a sandbox instead ([TESTING.md](TESTING.md)).
 6. *(Optional)* Add a `CLAUDE.local.md` in the repo root for anything specific to you or your
-   machine (GitHub account, auth, local notes). It's gitignored, and Claude Code reads it after
-   `CLAUDE.md`.
+   machine (GitHub account, auth, local notes). It's gitignored; `CLAUDE.md` tells Claude Code to
+   read it first, and it takes precedence for you.
 
 ## Standard change cycle
 
@@ -108,28 +108,32 @@ while you work, and resolving that conflict the wrong way lowers the version.
 bottom. `npm run verify` (and so CI) fails without it. A change that doesn't bump the version
 (docs-only, for example) doesn't need a section.
 
-**Releases are automatic.** When a merge brings a new version to `main`,
-`.github/workflows/release.yml` tags the merge commit `vX.Y.Z` and publishes a GitHub release whose
+**Releases are automatic.** When a merge brings a new version to `main` and the checks have passed
+on that merge commit, `.github/workflows/release.yml` tags it `vX.Y.Z` and publishes a GitHub release whose
 notes are that version's changelog section (`node tools/changelog.js notes X.Y.Z` prints them), with
 the release manifest attached: `claude-deck-vX.Y.Z-manifest.json`, every file in that commit with
 its size and SHA-256, from `node tools/release-manifest.js build <commit>`. It's built from git, not
 a working folder, so it describes exactly what was tagged; `verify` checks a copy against it (see
-the README).
+the README). If a merge bumps to a version that's already tagged on another commit (two pull
+requests chose the same number), the release fails with a message saying so: bump again in a new
+pull request, so those changes get a release of their own.
 Don't create tags or releases by hand. Claude Deck Preferences shows the version the server is
 running, with a link to the releases.
 
 ## Getting a change to everyone
 
-There's nothing to build or package. After a pull request merges, teammates update their clone and
-restart the server:
+There's nothing to build or package. After a pull request merges, teammates choose **Claude Deck
+Preferences → Dashboard → Check for updates**: it updates a clean copy on `main` and restarts on
+it (a copy on another branch, or with changes of its own, is left alone, with the command to update
+it by hand). Or update the clone by hand and restart the server:
 
 ```powershell
 git checkout main
 git pull --rebase origin main
 ```
 
-Then choose **Claude Deck Preferences → Restart server**, which stops the server, starts it again and
-reloads the window. Changes only to files in `public\` need just a reload of the window (Ctrl+R).
+Then choose **Claude Deck Preferences → Dashboard → Restart server**, which stops the server, starts
+it again and reloads the window. Changes only to files in `public\` need just a reload of the window (Ctrl+R).
 Restarting ends open chats (including one working on Claude Deck), which come back as *Ended* with
 *Resume*.
 

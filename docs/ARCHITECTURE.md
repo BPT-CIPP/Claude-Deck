@@ -79,8 +79,11 @@ test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes),
 - **No npm dependencies, no new executables.** Managed Windows PCs commonly run Microsoft Defender's
   attack surface reduction rule that blocks executables that aren't prevalent, and a user can't make
   exceptions. Electron and node-pty were tried and blocked. Everything runs on `node.exe`, `wt.exe`,
-  Edge, `claude.exe` and Windows built-ins (`explorer.exe`, `powershell.exe`, `schtasks.exe`,
-  `where.exe`, and `choice.exe` for the tab host's resume prompt). In-app
+  Edge, `claude.exe` and Windows built-ins (`explorer.exe`, `powershell.exe` (also to check a
+  process's start time before ending an outside session), `schtasks.exe`, `where.exe`, `reg.exe`
+  (the billing guard reads Windows' stored environment and the Claude Code policy key), and
+  `choice.exe` for the tab host's resume prompt). *Check for updates* also runs `git`, signed in
+  through the GitHub CLI (`gh auth git-credential`), both of which a contributor already has. In-app
   chats are possible because Claude's streaming JSON mode needs only pipes, not a terminal.
 - **No Claude API calls.** Everything shown is read from files Claude Code writes, and what the user
   types is relayed to their own `claude` process, so Claude Deck adds no cost. The plan usage meter

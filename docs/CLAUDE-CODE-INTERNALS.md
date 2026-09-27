@@ -45,7 +45,13 @@ the native installer's `%USERPROFILE%\.local\bin\claude.exe`. An npm global inst
 
 ✅ Every running Claude Code process writes one: `pid`, `sessionId`, `cwd`, `kind`, `status`
 (`busy` | `idle` | `waiting`), `waitingFor` (why it's waiting), `statusUpdatedAt`, `name` and
-`nameSource`. It's removed when the process exits. Stream-json processes (in-app chats) write one
+`nameSource`. It's removed when the process exits.
+
+✅ Checked with 2.1.281: it also has `startedAt` (ms) and `procStart`, the process's creation time
+as a Windows FILETIME (100 ns steps since 1601; `procStart / 10000 - 11644473600000` matched the
+process's start time in ms exactly). A Claude that's killed rather than ending cleanly leaves its
+file behind, and Windows reuses pids, so before ending an outside session `src/live.js`
+(`isSameProcess`) checks that the pid's creation time still matches `procStart`. Stream-json processes (in-app chats) write one
 too, so `src/live.js` claims chats by pid; otherwise every chat would also show up as an
 outside session.
 
@@ -56,6 +62,15 @@ outside session.
 `custom-title`, `last-prompt`, `cost-state`, `tag`, `pr-link`, `queue-operation`, `attachment`,
 `file-history-snapshot`, `file-history-delta`, `mode`, `permission-mode`. `isSidechain: true` marks
 subagent records, and `isMeta: true` marks records that aren't real prompts.
+
+✅ Checked in real transcripts (2.1.281, tag names counted only): Claude Code's own `user` records
+start with one of these tags, which `promptText` (`src/history.js`) skips: `<command-name>`,
+`<command-message>` (slash commands), `<local-command-caveat>`, `<local-command-stdout>`,
+`<task-notification>` (background tasks), `<bash-input>`, `<bash-stdout>` (`!` commands).
+⚠️ Also skipped by name, not yet seen in a transcript: `<command-args>`, `<local-command-stderr>`,
+`<bash-stderr>`, `<system-reminder>`, `<user-prompt-submit-hook>`. Any other prompt starting with
+`<` is the person's own text. Pasted text arrives wrapped in `<pasted_content ...>` tags, which
+are stripped for display.
 
 ✅ One API message can be split over several `assistant` records that share `message.id`, one per
 content block (thinking, text, tool_use).
@@ -288,6 +303,17 @@ cloud account instead of the Claude plan.
 - The provider switches `CLAUDE_CODE_USE_BEDROCK`, `_VERTEX`, `_FOUNDRY`, `_ANTHROPIC_AWS`,
   `_ANTHROPIC_GOOGLE_CLOUD`, `_MANTLE` and `_GATEWAY`.
 - The managed settings folder on Windows, `C:\Program Files\ClaudeCode` (`managed-settings.json`).
+
+✅ Documented (code.claude.com/docs/en/managed-settings and /settings, read 2026-09-27), so the
+guard reads them too:
+- Managed settings can also come from a `managed-settings.d\` folder next to
+  `managed-settings.json` (every `*.json` in it merged in), and from the registry: a JSON `REG_SZ`
+  or `REG_EXPAND_SZ` value named `Settings` under `HKLM\SOFTWARE\Policies\ClaudeCode` or
+  `HKCU\SOFTWARE\Policies\ClaudeCode`. The guard checks all of them rather than working out which
+  one Claude Code would pick.
+- `claude --settings <file or JSON>` loads another settings layer for that session (ranked just
+  below managed settings), so its `env` and `apiKeyHelper` count. A `--settings` value the guard
+  can't read is treated as a finding.
 
 ⚠️ Inferred, not checked with a live account:
 - Any of the variables above, set in the environment or in a settings file's `env` block (managed,
