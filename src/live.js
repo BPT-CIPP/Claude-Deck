@@ -52,19 +52,6 @@ function describe(meta) {
   };
 }
 
-// Cost and tokens across every conversation a session has had (a /clear starts a new one), from
-// their transcripts. Cost is Claude Code's saved cost-state, which it writes when a conversation
-// ends or is cleared, so the running one's cost can lag.
-function totalsOf(history, sessionIds) {
-  const t = { costUSD: null, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-  for (const id of sessionIds) {
-    const meta = history.get(id);
-    if (meta && typeof meta.costUSD === 'number') t.costUSD = (t.costUSD || 0) + meta.costUSD;
-    const tokens = history.tokensFor(id);
-    if (tokens) for (const k of ['input', 'output', 'cacheRead', 'cacheWrite']) t[k] += tokens[k];
-  }
-  return t;
-}
 
 class Live extends EventEmitter {
   constructor({ registry, history, chats }) {
@@ -115,7 +102,7 @@ class Live extends EventEmitter {
       await this.history.refreshIfOlderThan(2500);
       // Subagents' token usage, for the terminal and outside sessions shown (chats get theirs from Claude).
       const shown = [...this.state.sessions.filter((s) => s.kind === 'terminal'), ...this.state.external];
-      await this.history.refreshSubagents(shown.flatMap((s) => s.sessionIds || (s.sessionId ? [s.sessionId] : [])));
+      await this.history.refreshSubagents(shown.map((s) => s.sessionId).filter(Boolean));
       this._compute();
     } catch (err) {
       this.emit('error', err);
@@ -154,9 +141,6 @@ class Live extends EventEmitter {
       if (rec) claimed.add(rec.pid);
       const sessionId = (rec && rec.sessionId) || (tab && tab.sessionId) || entry.expectedSessionId || null;
       const meta = sessionId ? this.history.get(sessionId) : null;
-      // Every conversation this tab has had, so its totals survive a /clear.
-      if (meta && !(entry.sessionIds || []).includes(sessionId)) this.registry.update(entry.id, { sessionIds: [...(entry.sessionIds || []), sessionId] });
-      const sessionIds = entry.sessionIds || [];
       const status = state === 'running' ? (rec ? rec.status || 'idle' : 'starting') : null;
       const view = {
         id: entry.id,
@@ -177,12 +161,10 @@ class Live extends EventEmitter {
         exitCode: tab ? tab.exitCode : null,
         launchError: entry.launchError || (state === 'failed' ? 'The tab never reported in. Check that Windows Terminal opened, then dismiss this card.' : null),
         transcriptStamp: sessionId ? this.history.stamp(sessionId) : null,
-        sessionIds,
         ...describe(meta),
+        // The current conversation's tokens, from its transcripts (subagents included).
+        tokens: sessionId ? this.history.tokensFor(sessionId) : null,
       };
-      const totals = totalsOf(this.history, sessionIds);
-      view.totalCostUSD = totals.costUSD;
-      view.spend = totals;
       sessions.push(view);
       this._transition(entry, view);
     }
@@ -199,7 +181,6 @@ class Live extends EventEmitter {
           lastPrompt: c.lastPrompt || d.lastPrompt,
           model: c.chatModel || d.model,
           costUSD: c.chatCost ?? d.costUSD,
-          totalCostUSD: c.spend.costUSD,
           userTurns: d.userTurns,
           transcriptStamp: c.sessionId ? this.history.stamp(c.sessionId) : null,
         };
@@ -230,7 +211,7 @@ class Live extends EventEmitter {
           startedAt: rec.startedAt || null,
           transcriptStamp: rec.sessionId ? this.history.stamp(rec.sessionId) : null,
           ...describe(meta),
-          spend: rec.sessionId ? totalsOf(this.history, [rec.sessionId]) : null,
+          tokens: rec.sessionId ? this.history.tokensFor(rec.sessionId) : null,
         });
       }
       external.sort((a, b) => (b.statusSince || 0) - (a.statusSince || 0));

@@ -49,10 +49,6 @@ the native installer's `%USERPROFILE%\.local\bin\claude.exe`. An npm global inst
 too, so `src/live.js` claims chats by pid; otherwise every chat would also show up as an
 outside session.
 
-⚠️ A terminal session's totals (Est. cost, Total tokens) add up every `sessionId` its tab has
-reported, on the assumption that `/clear` in the terminal interface changes `sessionId` here as
-it does in stream-json. Not checked in a real terminal.
-
 ## Transcripts: `~/.claude/projects/<project>/<sessionId>.jsonl`
 
 ✅ One JSON record per line. `<project>` is the session folder with every character outside
@@ -126,8 +122,11 @@ picks up after an interrupt (it may merge several into one turn), so busy state 
 - `usage` is this turn's alone, summed over its API calls, and leaves out subagents: a turn whose
   foreground subagent made 2 calls reported only the main thread's 2 in `usage`, while
   `modelUsage` grew by all 4.
-- Claude Deck works out each turn's cost and tokens from the change in the running totals, and
-  keeps its own per-chat totals across `/clear` (`_count` in `src/chat.js`).
+- Claude Deck works out each turn's tokens from the change in the running totals, and shows the
+  current conversation's running tokens (`_count` in `src/chat.js`). The turn's subagent tokens are
+  that change minus its own `usage`. A local command's result (`/compact`) has zero `usage` though
+  its call counts in the totals, so all of it is counted as the main conversation's. Checked against
+  the mock: a turn with a foreground subagent showed 60 tokens, 30 of them the subagent's two calls.
 
 ✅ **`/clear`** sent as a user message: `conversation_reset` `{new_conversation_id, trigger:
 'clear', user_message_uuid}` arrives, then a `system/init` with a **new `session_id`**, then a
@@ -278,6 +277,25 @@ NotebookEdit) are tracked, not shell commands.
 ✅ `rewind_files` `{user_message_id, dry_run?}`: a dry run returns `{canRewind, filesChanged,
 insertions, deletions}`, the real run `{canRewind: true, skippedLinks}`. Without checkpointing it
 returns `{canRewind: false, error}`.
+
+## What makes Claude Code bill per use
+
+The billing guard (`src/billing.js`) refuses to start sessions that would bill an Anthropic API or
+cloud account instead of the Claude plan.
+
+✅ Present in `claude.exe` 2.1.281 (found by searching the binary for the names):
+- `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and the `apiKeyHelper` setting.
+- The provider switches `CLAUDE_CODE_USE_BEDROCK`, `_VERTEX`, `_FOUNDRY`, `_ANTHROPIC_AWS`,
+  `_ANTHROPIC_GOOGLE_CLOUD`, `_MANTLE` and `_GATEWAY`.
+- The managed settings folder on Windows, `C:\Program Files\ClaudeCode` (`managed-settings.json`).
+
+⚠️ Inferred, not checked with a live account:
+- Any of the variables above, set in the environment or in a settings file's `env` block (managed,
+  user, or the project's `.claude/settings*.json`), makes Claude Code bill that account rather than
+  the Claude sign-in. That's what Anthropic documents.
+- `CLAUDE_CODE_USE_POWERSHELL_TOOL` and `CLAUDE_CODE_USE_COWORK_PLUGINS` look like feature switches
+  going by their names, so they aren't checked.
+- `CLAUDE_CODE_OAUTH_TOKEN` is a Claude plan sign-in, so it isn't flagged.
 
 ## Plan usage
 

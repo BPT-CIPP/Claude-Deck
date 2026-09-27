@@ -36,7 +36,7 @@ Edge app window ──HTTP + server-sent events (per-install token)──► nod
 - **History** (`src/history.js`) indexes every transcript incrementally (only what's new since the
   last pass) and caches the index in `history-cache.json`.
 - **The page** (`public/`) is plain scripts on `window.Deck` with no framework and no build:
-  `lib.js` (helpers), `app.js` (board, focus view, chat, history, palette, preferences),
+  `lib.js` (helpers), `app.js` (session list and detail, chat, history, palette, preferences),
   `settings-ui.js` (the Claude Code Settings editor), `spinner-verbs.js` and `tick-worker.js`.
 
 ## Code layout
@@ -58,7 +58,9 @@ src/folders.js          directory listing and new-folder for the in-app folder p
 src/timeline.js         change timeline: files per turn from Claude's file checkpoints, diffs, restore, undo
 src/trash.js            deleting a conversation: moves its files to the trash, Undo, 30-day purge
 src/subagents.js        reads a subagent's own transcript as it grows: steps, model, token usage
-src/usage.js            plan usage limits (the one outbound request; the sign-in token is read-only)
+src/usage.js            plan usage limits (the one automatic outbound request; the sign-in token is read-only)
+src/billing.js          billing guard: refuses sessions that would bill an API or cloud account
+src/update.js           Check for updates: git fetch through `gh auth git-credential`, fast-forward a clean main
 src/app-install.js      finds the installed Edge app; sign-in task status and toggle
 src/prefs.js, registry.js, paths.js, util.js, claude-locate.js
 public/                 index.html, app.css, lib.js, app.js, settings-ui.js, spinner-verbs.js,
@@ -82,7 +84,8 @@ test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes),
   chats are possible because Claude's streaming JSON mode needs only pipes, not a terminal.
 - **No Claude API calls.** Everything shown is read from files Claude Code writes, and what the user
   types is relayed to their own `claude` process, so Claude Deck adds no cost. The plan usage meter
-  is the one outbound request: account metadata, no model runs.
+  is the one outbound request it makes on its own: account metadata, no model runs. *Check for
+  updates* fetches from GitHub only when clicked.
 - **A scheduled task, not a Windows service.** The server has to run as the signed-in user in their
   desktop session, to use their Claude sign-in and open Windows Terminal tabs and Edge windows. A
   service runs elsewhere, as another account, and would need a wrapper executable. The task runs

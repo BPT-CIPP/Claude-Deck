@@ -88,6 +88,11 @@ After that, the shortcuts and `Start-ClaudeDeck.ps1` open the installed app too.
 
 ## Update
 
+Choose **Claude Deck Preferences → Check for updates**. If GitHub has a newer version, Claude Deck
+asks, gets it and restarts on it. It needs the GitHub CLI signed in (`gh auth login`), and it only
+updates a copy on `main` with no changes of its own; otherwise it leaves the copy alone and gives
+the command to update it by hand (with **Copy command**). To update by hand anyway:
+
 ```powershell
 cd <your Claude-Deck folder>
 git pull
@@ -128,7 +133,7 @@ Each session runs one of two ways, your choice when you start it:
 
 - **Chat in Claude Deck** (the default). Claude runs inside Claude Deck. You read and reply in the
   dashboard, answer permission prompts and questions, stop a turn, or switch model or permission
-  mode, then go back to the board.
+  mode, then pick another session from the list.
 - **Windows Terminal tab.** The full terminal interface, one tab per session in a shared window.
   The dashboard tracks it, and **Open terminal** brings its tab forward.
 
@@ -138,9 +143,8 @@ over.
 
 | Area | What you get |
 | --- | --- |
-| **Board** | Every session as a card, grouped by what it needs: *Needs you* (a permission prompt or question), *Working*, *Idle*, *Ended*. Each card shows the title, Claude's last reply or your last prompt, folder, branch and how long it has been in that state. Answer permission prompts right on the card (**Allow** / **Deny**); **End** stops a session. Below the lanes, *Most tokens this week* lists the conversations that used the most (subagents included) since your plan's weekly limit reset, or in the last 7 days; **Show all** lists every one. |
-| **Focus view** | The session list on the left, one session in full on the right. **F** switches between board and focus. |
-| **Chat** | Each reply appears whole once Claude has finished it, while a spinner (with Claude Code's playful verbs and the elapsed time) shows it's working. Tool calls expand to show their input and result. **Enter** sends, **Shift+Enter** adds a line, **/** lists the session's slash commands. While Claude works, **Enter** queues your message (marked *Queued* until Claude picks it up) and **Interrupt** stops Claude and sends it now. As in Claude Code's terminal, **↑** in an empty reply box takes queued messages back out of the queue to edit (images included), or otherwise brings back your previous messages, for example the one you just interrupted; **↓** steps forward again. Above the title: the status, how many subagents are running, the folder (copy it, or open it in Explorer) and the session ID. **▾** beside the title opens the session menu: **Rename**, **Tag color**, **Changes**, **Continue in terminal** and **Subagents**. One row below changes the model, effort, permission mode and plugins (taking effect from Claude's next step), and shows *Context* (how full Claude's context window is, with **Compact** to summarize the conversation so far), *Est. total cost* (everything the chat has used, across `/clear`), *Current cost* (the current conversation's) and *Total tokens*, with **End session** at the end. Each finished reply shows how long it took and the tokens it used. |
+| **Sessions** | The session list on the left, grouped by what each needs: *Needs you* (a permission prompt or question), *Working*, *Idle*, *Ended*. The selected session is in full on the right; an ended chat shows its conversation so far, even after Claude Deck restarts. The trash button on a row ends the session, or removes it once it has ended. *Most tokens this week*, pinned at the top of the list, lists the conversations that used the most (subagents included) since your plan's weekly limit reset, or in the last 7 days; **Show all** lists every one. |
+| **Chat** | Each reply appears whole once Claude has finished it, while a spinner (with Claude Code's playful verbs and the elapsed time) shows it's working. Tool calls expand to show their input and result. **Enter** sends, **Shift+Enter** adds a line, **/** lists the session's slash commands. While Claude works, **Enter** queues your message (marked *Queued* until Claude picks it up) and **Interrupt** stops Claude and sends it now. As in Claude Code's terminal, **↑** in an empty reply box takes queued messages back out of the queue to edit (images included), or otherwise brings back your previous messages, for example the one you just interrupted; **↓** steps forward again. Above the title: the status, how many subagents are running, the folder (copy it, or open it in Explorer) and the session ID. **▾** beside the title opens the session menu: **Rename**, **Tag color**, **Changes**, **Continue in terminal** and **Subagents**. One row below changes the model, effort, permission mode and plugins (taking effect from Claude's next step), and shows *Context* (how full Claude's context window is, with **Compact** to summarize the conversation so far), *Current cost* and *Current total tokens* (both for the current conversation, which `/clear` starts afresh), with **End session** at the end. Each finished reply shows how long it took and the tokens it used, including how many were its subagents'. |
 | **Plugins** | **Plugins** in a chat's header lists Claude Code's plugins. *Installed* has a checkbox to turn each one on or off; *Marketplace* lists what your marketplaces offer, grouped by the categories the marketplace gives them (Database, Development, Productivity and so on), with search and **Install**. Changes apply to all your Claude Code sessions, as `/plugin` does, and the chat you're in picks them up right away. If a change would reset Claude's prompt cache mid-conversation (a plugin that adds tools), you're asked first. A plugin that installs by running a command shows you the command before anything runs. |
 | **Images** | Paste with **Ctrl+V** or **Alt+V** (as in Claude Code), drop image files on the reply box, or use **Image**. Large images are scaled down to fit the API's limits. |
 | **Permission prompts** | *Allow once*, Claude's own suggestion (for example *Always allow Bash(npm test:\*) in this project*), or *Deny*, optionally telling Claude what to do instead. |
@@ -161,11 +165,11 @@ Press **?** in Claude Deck for this list.
 
 | Keys | Does |
 |---|---|
-| **N** | New session |
-| **F** | Switch between Board and Focus |
+| **Ctrl+Shift+N** | Start a new chat right away in your default folder (Claude Deck Preferences → New sessions), with Claude Code's own settings for model, effort and permissions. Works from anywhere in Sessions, even while typing a reply |
+| **F2** | Rename the selected session, even while typing a reply |
 | **↑ ↓ ← →** | Move between sessions |
 | **Enter** | Open the selected session; resume it if it's an ended chat |
-| **Esc** | Back to the board |
+| **Esc** in an empty reply box | To the session list |
 | **↑** / **↓** in an empty reply box | Take queued messages back to edit; otherwise step through your earlier messages |
 | **Ctrl+Tab** / **Ctrl+Shift+Tab** | Next / previous session, even while typing a reply |
 | **Ctrl+W** | End the selected chat (with Undo). On an ended chat, remove it. Asks first if Claude is mid-task. |
@@ -181,9 +185,16 @@ them for its own tabs.
 ## Cost, privacy and your files
 
 - **No API calls, no extra cost.** Claude Deck reads what Claude Code writes and relays what you
-  type to your own `claude`. The one network request it makes is the plan-usage check (account
-  metadata from `api.anthropic.com`, the same request Claude Code's `/usage` makes; no model runs).
-  It reads your Claude sign-in token for that, never changes it, and sends it nowhere else.
+  type to your own `claude`. The one network request it makes on its own is the plan-usage check
+  (account metadata from `api.anthropic.com`, the same request Claude Code's `/usage` makes; no
+  model runs). It reads your Claude sign-in token for that, never changes it, and sends it nowhere
+  else. **Check for updates** fetches from GitHub with `git`, signed in through the GitHub CLI, only
+  when you click it.
+- **Your Claude plan only.** Claude Deck won't start a session if Claude Code is set up to bill an
+  Anthropic API account or a cloud provider instead of your plan (an `ANTHROPIC_API_KEY` or similar in
+  your environment, an `apiKeyHelper`, or a Bedrock or Vertex switch in Claude Code's settings). It
+  shows a warning saying what it found. The only way past it is **Claude Deck Preferences → Billing →
+  Allow API billing**, which is off by default and warns again before it turns on.
 - **Local only.** The server listens on `127.0.0.1:47821` (or another free port) and requires a
   per-install token, so other web pages and other PCs can't use it.
 - **Claude Deck's data** is in `%LOCALAPPDATA%\ClaudeDeck`: preferences, open chats, settings

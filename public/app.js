@@ -1,5 +1,5 @@
 'use strict';
-// Claude Deck dashboard: sessions board / focus view with in-app chat, history, launcher,
+// Claude Deck dashboard: the session list and detail view with in-app chat, history, launcher,
 // palette, preferences.
 
 (function () {
@@ -15,7 +15,6 @@
     prefs: null,
     live: { sessions: [], external: [] },
     view: store.get('view', 'sessions'),
-    layout: store.get('layout', 'board'),
     selected: null,
     opening: null, // { key, until } while a just-created session waits for its first state update
     filter: '',
@@ -33,7 +32,7 @@
     tasksSeen: {}, // chat id -> how many subagents it had when last shown, to open the panel for new ones
     showChanges: {}, // session key -> changes shown instead of the conversation
     agentView: null, // { chatId, taskId }: a subagent's detail shown instead of the conversation
-    week: null, // { data, loading, fetchedAt }: tokens by conversation this week, for the board
+    week: null, // { data, loading, fetchedAt }: tokens by conversation this week (the pinned usage view)
   };
 
   const LANES = [
@@ -143,13 +142,13 @@
     S.agentView = null; // opening a chat shows its conversation
     S.opening = { key: S.selected, until: Date.now() + 8000 };
     if (S.view !== 'sessions') setView('sessions');
-    setLayout('focus');
+    else renderSessions();
     if (focusComposer) setTimeout(() => { const ta = $('#focus-detail .composer-input'); if (ta && !ta.disabled) ta.focus(); }, 60);
   }
 
-  function backToBoard() {
-    setLayout('board');
-    const el = S.selected && document.querySelector(`#board [data-key="${CSS.escape(S.selected)}"]`);
+  // Esc from a reply box: to the selected session in the list, where the arrow keys move between sessions.
+  function focusSessionList() {
+    const el = S.selected && document.querySelector(`#focus-list [data-key="${CSS.escape(S.selected)}"]`);
     if (el) el.focus({ preventScroll: false });
   }
 
@@ -166,7 +165,7 @@
       body = 'This stops Claude in the terminal where it was started. The conversation stays in History, so you can resume it here later.';
       ok = 'End session';
     } else if (ended) {
-      title = isChat(it) ? 'Remove this chat from the board?' : 'Close this tab?';
+      title = isChat(it) ? 'Remove this chat from the list?' : 'Close this tab?';
       body = 'The conversation stays in History.';
       ok = isChat(it) ? 'Remove' : 'Close tab';
     } else {
@@ -186,7 +185,7 @@
       return true;
     }
     toast(ended ? 'Removed' : 'Session ended');
-    if (S.selected === it.key && S.layout === 'focus') S.selected = null;
+    if (S.selected === it.key) S.selected = null;
     return true;
   }
 
@@ -261,83 +260,10 @@
     return run("Couldn't send the answer", () => api('POST', `/api/chats/${chatId}/respond`, { requestId, ...decision }));
   }
 
-  // ---- board ---------------------------------------------------------------------------------
-  const stop = (fn) => (e) => { e.stopPropagation(); fn(e); };
-
-  function cardActions(it) {
-    const b = [];
-    if (isTerminal(it) && it.state === 'failed') {
-      b.push(h('button', { class: 'small', onclick: stop(() => dismiss(it)) }, 'Dismiss'));
-      return b;
-    }
-    if (isChat(it)) {
-      if (it.state === 'exited') b.push(h('button', { class: 'primary small', onclick: stop(() => resumeChat(it)) }, 'Resume'));
-      b.push(h('button', { class: `${it.state === 'exited' ? 'ghost' : 'primary'} small`, onclick: stop(() => openChat(it.id)) }, 'Open chat'));
-    } else if (isTerminal(it)) {
-      b.push(h('button', { class: 'primary small', onclick: stop(() => openSession(it)) }, it.state === 'exited' ? 'Resume' : 'Open terminal'));
-      b.push(h('button', { class: 'ghost small', onclick: stop(() => showDetails(it.key)) }, 'Details'));
-    } else {
-      b.push(h('button', { class: 'ghost small', onclick: stop(() => showDetails(it.key)) }, 'Details'));
-    }
-    b.push(h('span', { class: 'grow' }));
-    const ended = it.state === 'exited';
-    b.push(h('button', { class: 'ghost danger small', title: ended ? 'Remove from the board' : 'End this session', onclick: stop(() => endSession(it)) }, ended ? (isChat(it) ? 'Remove' : 'Close tab') : 'End'));
-    return b;
-  }
-
-  // Permission prompts can be answered right on the card; questions open the chat.
-  function cardRequest(it) {
-    const p = it.pending;
-    if (!isChat(it) || !p) return null;
-    if (p.kind === 'question') {
-      return h('div', { class: 'card-req' },
-        h('div', null, h('strong', null, 'Claude has a question for you')),
-        h('div', { class: 'req-actions' }, h('button', { class: 'primary small', onclick: stop(() => openChat(it.id)) }, 'Answer')));
-    }
-    return h('div', { class: 'card-req' },
-      h('div', null, h('strong', null, `Wants to use ${p.displayName}`), p.detail ? h('code', { class: 'req-detail', title: p.detail }, p.detail) : null),
-      h('div', { class: 'req-actions' },
-        h('button', { class: 'primary small', onclick: stop(() => answer(it.id, p.requestId, { action: 'allow' })) }, 'Allow'),
-        h('button', { class: 'danger small', onclick: stop(() => answer(it.id, p.requestId, { action: 'deny' })) }, 'Deny'),
-        h('button', { class: 'ghost small', onclick: stop(() => openChat(it.id)) }, 'More options')));
-  }
-
+  // ---- session list --------------------------------------------------------------------------
   // Claude's own title for the conversation, when it adds something beyond the name.
   function subtitle(it) {
     return it.name && it.title && it.title.trim().toLowerCase() !== it.name.trim().toLowerCase() ? it.title : null;
-  }
-
-  function card(it) {
-    const title = heading(it);
-    const sub = subtitle(it);
-    const since = it.statusSince ? ago(it.statusSince) : '';
-    const snippet = isChat(it) && it.lastReply
-      ? h('div', { class: 'card-prompt' }, h('span', { class: 'who' }, 'Claude: '), it.lastReply)
-      : it.lastPrompt ? h('div', { class: 'card-prompt' }, isChat(it) ? h('span', { class: 'who' }, 'You: ') : null, it.lastPrompt) : null;
-    return h('article', {
-      class: `card${it.deck ? '' : ' external'}${S.selected === it.key ? ' selected' : ''}`,
-      tabindex: 0,
-      dataset: { key: it.key },
-      style: it.deck ? { '--tag': `var(--c-${it.color || 'slate'})` } : null,
-      'aria-label': `${title}, ${statusLabel(it)}`,
-      onclick: () => select(it.key),
-      ondblclick: () => openSession(it),
-    },
-    h('div', { class: 'card-status' },
-      h('span', { class: `lamp ${it.lane}` }),
-      h('span', { class: `status-text ${it.lane}` }, statusLabel(it)),
-      h('span', { class: 'since', title: it.statusSince ? `Since ${when(it.statusSince)}` : null }, since)),
-    h('div', { class: `card-title${it.title || it.name ? '' : ' untitled'}` }, title),
-    sub ? h('div', { class: 'muted' }, sub) : null,
-    cardRequest(it) || snippet,
-    // Subagents can keep working after Claude's reply ends, so show them even when the chat is idle.
-    isChat(it) && it.runningTasks ? h('div', { class: 'card-tasks' }, h('span', { class: 'lamp working' }), `${it.runningTasks} subagent${it.runningTasks === 1 ? '' : 's'} running`) : null,
-    it.state === 'failed' && it.launchError ? h('div', { class: 'error' }, it.launchError) : null,
-    h('div', { class: 'card-meta' },
-      h('span', { class: 'path', title: it.cwd || '' }, shortPath(it.cwd)),
-      h('span', { class: 'where' }, isChat(it) ? 'Chat' : isTerminal(it) ? 'Terminal' : 'External'),
-      it.gitBranch && it.gitBranch !== 'HEAD' ? h('span', { class: 'branch', title: `Git branch: ${it.gitBranch}` }, `⎇ ${it.gitBranch}`) : null),
-    h('div', { class: 'card-actions' }, cardActions(it)));
   }
 
   function emptyState() {
@@ -348,41 +274,11 @@
       h('p', { class: 'faint', style: { marginTop: '14px' } }, 'Or pick up an old conversation from History.'));
   }
 
-  function renderBoard() {
-    const board = $('#board');
-    const activeKey = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.key : null;
-    const scroll = board.scrollTop;
-    clear(board);
-    if (!allItems().length) {
-      board.appendChild(emptyState());
-      board.appendChild(weekPanel());
-      return;
-    }
-    const groups = visibleItems();
-    if (!groups.some((g) => g.items.length)) {
-      board.appendChild(h('div', { class: 'empty' }, h('p', null, 'No sessions match that filter.')));
-      return;
-    }
-    for (const { lane, items } of groups) {
-      if (!items.length) continue;
-      board.appendChild(h('section', { class: `lane ${lane.key}`, 'aria-label': lane.label },
-        h('div', { class: 'lane-head' },
-          h('span', { class: `lamp ${lane.key}` }),
-          h('h2', null, lane.label),
-          h('span', { class: 'lane-count' }, String(items.length))),
-        h('div', { class: 'cards' }, items.map(card))));
-    }
-    board.appendChild(weekPanel());
-    board.scrollTop = scroll;
-    if (activeKey) {
-      const el = board.querySelector(`[data-key="${CSS.escape(activeKey)}"]`);
-      if (el) el.focus({ preventScroll: true });
-    }
-  }
-
-  // ---- usage by session (board) --------------------------------------------------------------
+  // ---- usage by session ----------------------------------------------------------------------
   // Which conversations used the most tokens this week, from their transcripts (src/history.js).
-  // Refreshed at most once a minute while the board is shown.
+  // Pinned at the top of the session list; shown in the detail pane. Refreshed at most once a
+  // minute while it's shown.
+  const USAGE_KEY = 'usage';
   const WEEK_TOP = 10;
   const WEEK_REFRESH_MS = 60000;
 
@@ -392,19 +288,19 @@
     api('GET', '/api/usage/sessions')
       .then((data) => { S.week = { data, loading: false, fetchedAt: Date.now() }; })
       .catch(() => { S.week = { ...S.week, loading: false }; })
-      .finally(() => { if (S.view === 'sessions' && S.layout === 'board') renderBoard(); });
+      .finally(() => { if (S.view === 'sessions' && S.selected === USAGE_KEY) renderFocusDetail(); });
   }
 
   function weekSinceText(d) {
     return d.basis === 'plan' ? `Since your plan's weekly limit reset, ${when(d.since)}` : 'The last 7 days';
   }
 
-  // A conversation from the list: the live session if it's on the board, otherwise History.
+  // A conversation from the list: the live session if it's in the session list, otherwise History.
   function openUsageSession(r) {
     const it = allItems().find((x) => x.sessionId === r.sessionId);
     if (it) {
       if (isChat(it)) openChat(it.id);
-      else { select(it.key); showDetails(it.key); }
+      else showDetails(it.key);
       return;
     }
     S.historySel = r.sessionId;
@@ -415,12 +311,13 @@
 
   function weekRow(r, i, max) {
     const it = allItems().find((x) => x.sessionId === r.sessionId);
-    return h('li', null, h('button', { type: 'button', class: 'week-row', onclick: () => openUsageSession(r), title: `${r.tokens.toLocaleString()} tokens. ${it || r.open ? 'Open the session' : 'Show it in History'}` },
+    const running = r.open || Boolean(it && it.state !== 'exited' && it.state !== 'failed');
+    return h('li', null, h('button', { type: 'button', class: 'week-row', onclick: () => openUsageSession(r), title: `${r.tokens.toLocaleString()} tokens. ${it ? 'Show the session' : 'Show it in History'}` },
       h('span', { class: 'week-rank faint' }, String(i + 1)),
       h('span', { class: 'week-text' },
         h('span', { class: 'week-title' }, (it && heading(it)) || r.title || 'Untitled conversation'),
         h('span', { class: 'week-sub faint' },
-          it || r.open ? h('span', { class: 'live' }, 'Open now') : null,
+          running ? h('span', { class: 'live' }, 'Open now') : null,
           h('span', { class: 'path', title: r.cwd || '' }, shortPath(r.cwd)),
           r.updatedAt ? h('span', null, ago(r.updatedAt)) : null)),
       h('span', { class: 'week-bar', 'aria-hidden': 'true' }, h('span', { class: 'week-fill', style: { width: `${Math.max(2, Math.round((r.tokens / max) * 100))}%` } })),
@@ -433,7 +330,6 @@
   }
 
   function weekPanel() {
-    loadWeekUsage();
     const d = S.week && S.week.data;
     const rows = d ? d.sessions : [];
     const total = rows.reduce((n, r) => n + r.tokens, 0);
@@ -477,10 +373,28 @@
   }
 
   // ---- focus layout --------------------------------------------------------------------------
+  // The trash button on a session's row: what it does depends on the session.
+  function rowRemoval(it) {
+    const ended = it.state === 'exited' || it.state === 'failed';
+    if (isTerminal(it) && it.state === 'failed') return { title: 'Dismiss this session', run: () => dismiss(it) };
+    if (ended) return { title: isChat(it) ? 'Remove this chat from the list (the conversation stays in History)' : 'Close this tab', run: () => endSession(it) };
+    return { title: 'End this session (asks first while Claude is working)', run: () => endSession(it) };
+  }
+
   function renderFocusList() {
     const list = $('#focus-list');
+    const scroll = list.scrollTop;
     clear(list);
-    list.appendChild(h('button', { class: 'ghost small back', onclick: backToBoard, title: 'Esc' }, '← Board'));
+    // Pinned first: tokens by conversation this week, shown in the detail pane.
+    list.appendChild(h('button', {
+      class: 'focus-row usage-row',
+      role: 'option',
+      'aria-selected': String(S.selected === USAGE_KEY),
+      dataset: { key: USAGE_KEY },
+      onclick: () => select(USAGE_KEY),
+    },
+    h('span', { class: 'usage-icon', 'aria-hidden': 'true' }, '▤'),
+    h('span', { class: 'fr-text' }, h('div', { class: 'fr-title' }, 'Most tokens this week'), h('div', { class: 'fr-sub' }, h('span', null, 'Usage by conversation')))));
     const groups = visibleItems();
     if (!groups.some((g) => g.items.length)) {
       list.appendChild(h('p', { class: 'faint', style: { padding: '12px' } }, allItems().length ? 'No sessions match that filter.' : 'No sessions running.'));
@@ -490,21 +404,25 @@
       if (!items.length) continue;
       list.appendChild(h('div', { class: 'focus-group' }, h('span', { class: `lamp ${lane.key}` }), `${lane.label} (${items.length})`));
       for (const it of items) {
-        list.appendChild(h('button', {
-          class: 'focus-row',
-          role: 'option',
-          'aria-selected': String(S.selected === it.key),
-          dataset: { key: it.key },
-          style: it.deck ? { '--tag': `var(--c-${it.color || 'slate'})` } : null,
-          onclick: () => select(it.key),
-          ondblclick: () => openSession(it),
-        },
-        h('span', { class: `lamp ${it.lane}` }),
-        h('span', { class: 'fr-text' },
-          h('div', { class: 'fr-title' }, heading(it)),
-          h('div', { class: 'fr-sub' }, h('span', null, isChat(it) ? 'Chat' : isTerminal(it) ? 'Terminal' : 'Outside'), h('span', null, shortPath(it.cwd, 1)), it.statusSince ? h('span', null, ago(it.statusSince)) : null))));
+        const removal = rowRemoval(it);
+        list.appendChild(h('div', { class: 'focus-item' },
+          h('button', {
+            class: 'focus-row',
+            role: 'option',
+            'aria-selected': String(S.selected === it.key),
+            dataset: { key: it.key },
+            style: it.deck ? { '--tag': `var(--c-${it.color || 'slate'})` } : null,
+            onclick: () => select(it.key),
+            ondblclick: () => openSession(it),
+          },
+          h('span', { class: `lamp ${it.lane}` }),
+          h('span', { class: 'fr-text' },
+            h('div', { class: 'fr-title' }, heading(it)),
+            h('div', { class: 'fr-sub' }, h('span', null, isChat(it) ? 'Chat' : isTerminal(it) ? 'Terminal' : 'Outside'), h('span', null, shortPath(it.cwd, 1)), it.statusSince ? h('span', null, ago(it.statusSince)) : null))),
+          h('button', { type: 'button', class: 'ghost icon fr-del', title: removal.title, 'aria-label': `${removal.title}: ${heading(it)}`, onclick: removal.run }, trashIcon())));
       }
     }
+    list.scrollTop = scroll;
   }
 
   function fact(label, value, mono) {
@@ -635,7 +553,7 @@
     }
     // One row of controls and meters under the title.
     const controls = [fact('Model', modelFact), fact('Effort', effortFact), fact('Permissions', modeFact), isChat(it) ? fact('Plugins', pluginsButton(it)) : null,
-      contextFact(it), fact('Est. total cost', estCostFact(it)), it.deck ? fact('Current cost', money(it.costUSD)) : null, fact('Total tokens', tokensFact(it.spend))].filter(Boolean);
+      contextFact(it), fact('Current cost', money(it.costUSD)), fact('Current total tokens', tokensFact(it.tokens))].filter(Boolean);
     const menuItems = sessionMenuItems(it);
     const menuBtn = menuItems.length ? h('button', {
       type: 'button',
@@ -682,14 +600,8 @@
   }
 
   // ---- cost, tokens and context (chat header) ------------------------------------------------
-  // Est. cost and Total tokens cover the whole session in Claude Deck, across /clear (which starts
-  // a new conversation); Current cost is the current conversation's, as Claude Code reports it.
-  function estCostFact(it) {
-    const v = it.deck ? it.totalCostUSD : it.costUSD;
-    if (typeof v !== 'number') return null;
-    return h('span', { title: isChat(it) ? 'Everything this chat has used, including conversations before a /clear' : "Claude Code's saved cost for every conversation in this session. It's updated when a conversation ends or is cleared." }, money(v));
-  }
-
+  // Current cost and Current total tokens are the current conversation's; both start again after
+  // /clear, which starts a new conversation.
   function tokenBreakdown(t) {
     return `Input ${t.input.toLocaleString()} · Output ${t.output.toLocaleString()} · Cache read ${t.cacheRead.toLocaleString()} · Cache write ${t.cacheWrite.toLocaleString()}`;
   }
@@ -698,7 +610,7 @@
 
   function tokensFact(t) {
     if (!tokenSum(t)) return null;
-    return h('span', { title: `${tokenBreakdown(t)}. Subagents included.` }, tokenText(tokenSum(t)));
+    return h('span', { title: `The current conversation's tokens. ${tokenBreakdown(t)}. Subagents included.` }, tokenText(tokenSum(t)));
   }
 
   // The whole Context fact: Compact sits in its label line, above the meter.
@@ -721,7 +633,7 @@
   async function compactChat(it) {
     const ok = await Deck.confirm({
       title: 'Compact this conversation?',
-      body: 'Claude replaces the conversation so far with a summary, which frees up context. Details from earlier turns may be left out of the summary. Est. cost and Total tokens keep counting.',
+      body: 'Claude replaces the conversation so far with a summary, which frees up context. Details from earlier turns may be left out of the summary.',
       ok: 'Compact',
     });
     if (ok) await run("Couldn't compact the conversation", () => api('POST', `/api/chats/${it.id}/compact`));
@@ -986,12 +898,30 @@
   // Only rebuild the header when something it shows changed, so dropdowns aren't reset mid-use.
   function headSignature(it) {
     return JSON.stringify([it.key, it.state, it.status, it.waitingFor, heading(it), it.title, it.name, it.model, it.requestedModel, it.requestedEffort, it.permissionMode,
-      it.costUSD, it.totalCostUSD, it.spend, it.context, it.sessionId, it.color, it.gitBranch, it.cwd, it.exitCode, it.note, it.userTurns, ago(it.statusSince),
+      it.costUSD, it.tokens, it.context, it.sessionId, it.color, it.gitBranch, it.cwd, it.exitCode, it.note, it.userTurns, ago(it.statusSince),
       it.runningTasks, it.taskCount, Boolean(S.showTasks[it.id]), Boolean(S.showChanges[it.key])]);
   }
 
   function renderFocusDetail() {
     const pane = $('#focus-detail');
+    // The usage view, rebuilt only when its numbers change, so its scroll position is kept.
+    if (S.selected === USAGE_KEY) {
+      loadWeekUsage(); // refreshes once the numbers are a minute old
+      const sig = `${S.week ? S.week.fetchedAt : ''}|${S.week && S.week.loading}`;
+      if (S.detailKey !== USAGE_KEY || pane.dataset.usageSig !== sig) {
+        closePluginsMenu();
+        closeHeadMenu();
+        S.chat = null;
+        S.detailKey = USAGE_KEY;
+        const old = pane.querySelector('.usage-view');
+        const top = old ? old.scrollTop : 0;
+        const view = h('div', { class: 'usage-view' }, weekPanel());
+        clear(pane).appendChild(view);
+        view.scrollTop = top;
+        pane.dataset.usageSig = sig;
+      }
+      return;
+    }
     const flat = visibleItems().flatMap((g) => g.items);
     let it = S.selected ? flat.find((x) => x.key === S.selected) : null;
     if (!it && S.opening && S.opening.key === S.selected && Date.now() < S.opening.until) {
@@ -1590,7 +1520,8 @@
       case 'result':
         return it.aborted || it.isError ? h('span', { dataset: { n }, hidden: true }) : h('div', { class: 'msg-result', dataset: { n } },
           it.durationMs ? `Done in ${duration(it.durationMs)}` : 'Done',
-          tokenSum(it.tokens) ? h('span', { title: `Tokens this reply used, subagents included. ${tokenBreakdown(it.tokens)}` }, ` · ${tokenText(tokenSum(it.tokens))} tokens`) : null);
+          tokenSum(it.tokens) ? h('span', { title: `Tokens this reply used, subagents included. ${tokenBreakdown(it.tokens)}` },
+            ` · ${tokenText(tokenSum(it.tokens))} tokens${it.subagentTokens ? `, ${tokenText(it.subagentTokens)} from subagents` : ''}`) : null);
       default:
         return h('span', { dataset: { n }, hidden: true });
     }
@@ -1954,7 +1885,7 @@
       } else if (e.key === 'Escape' && !ta.value) {
         e.preventDefault();
         e.stopPropagation();
-        backToBoard();
+        focusSessionList();
       }
     });
     setTimeout(autosize, 0);
@@ -1972,7 +1903,7 @@
       ended,
       tray,
       h('div', { class: 'composer-row' }, ta, h('div', { class: 'composer-buttons' }, attachBtn, sendBtn, interruptBtn), picker),
-      h('div', { class: 'composer-hint' }, 'Enter sends. Shift+Enter adds a line. Type / for commands. Ctrl+V or Alt+V pastes an image. Esc goes back to the board.'));
+      h('div', { class: 'composer-hint' }, 'Enter sends. Shift+Enter adds a line. Type / for commands. Ctrl+V or Alt+V pastes an image. Esc goes to the session list.'));
     // Drop images anywhere on the reply box.
     box.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); box.classList.add('dropping'); } });
     box.addEventListener('dragleave', () => box.classList.remove('dropping'));
@@ -2003,7 +1934,7 @@
   function composerHint(busy) {
     if (hasQueued()) return 'Claude is working. Your queued messages go when it finishes this step. Press ↑ to take them back and edit them.';
     if (busy) return 'Claude is working. Enter queues your message for when it finishes this step. Interrupt stops it and sends your message now.';
-    return 'Enter sends. Shift+Enter adds a line. ↑ recalls your last message. / for commands. Ctrl+V or Alt+V pastes an image. Esc goes back.';
+    return 'Enter sends. Shift+Enter adds a line. ↑ recalls your last message. / for commands. Ctrl+V or Alt+V pastes an image. Esc goes to the session list.';
   }
 
   // ---- images --------------------------------------------------------------------------------
@@ -2153,42 +2084,29 @@
 
   function renderSessions() {
     renderSummary();
-    $$('.seg [data-layout]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.layout === S.layout)));
-    $('#board').hidden = S.layout !== 'board';
-    $('#focus').hidden = S.layout !== 'focus';
-    if (S.layout === 'board') renderBoard();
-    else renderFocus();
+    renderFocus();
   }
 
   function select(key) {
     S.selected = key;
-    if (S.layout === 'board') {
-      $$('#board .card').forEach((c) => c.classList.toggle('selected', c.dataset.key === key));
-    } else {
-      renderFocus();
-    }
+    renderFocus();
   }
 
   function showDetails(key) {
     S.selected = key;
-    setLayout('focus');
-  }
-
-  function setLayout(layout) {
-    S.layout = layout;
-    store.set('layout', layout);
-    renderSessions();
+    if (S.view !== 'sessions') setView('sessions');
+    else renderSessions();
   }
 
   // ---- Chrome-style tab keys -----------------------------------------------------------------
   // Ctrl+Tab / Ctrl+Shift+Tab step through the sessions in list order, wrapping at the ends;
   // Ctrl+W ends the selected chat, and removes it once it has ended (then selects its neighbor).
   function focusSelected(it) {
-    if (S.layout === 'focus' && isChat(it)) {
+    if (isChat(it)) {
       const ta = $('#focus-detail .composer-input');
       if (ta && !ta.disabled) { ta.focus(); return; }
     }
-    const el = document.querySelector(`${S.layout === 'board' ? '#board' : '#focus-list'} [data-key="${CSS.escape(it.key)}"]`);
+    const el = document.querySelector(`#focus-list [data-key="${CSS.escape(it.key)}"]`);
     if (el) el.focus();
   }
 
@@ -2226,7 +2144,7 @@
     let i = flat.findIndex((x) => x.key === S.selected);
     i = i === -1 ? 0 : Math.min(flat.length - 1, Math.max(0, i + delta));
     select(flat[i].key);
-    const el = document.querySelector(`${S.layout === 'board' ? '#board' : '#focus-list'} [data-key="${CSS.escape(flat[i].key)}"]`);
+    const el = document.querySelector(`#focus-list [data-key="${CSS.escape(flat[i].key)}"]`);
     if (el) el.focus();
   }
 
@@ -2324,7 +2242,7 @@
       ? `${n.label} needs you${n.detail ? `: ${n.detail}` : ''}`
       : n.kind === 'finished' ? `${n.label} is done and waiting for your next prompt` : `${n.label} ended`;
     const it = findItem(`d:${n.id}`) || { deck: true, id: n.id, kind: 'terminal' };
-    const showing = S.view === 'sessions' && S.layout === 'focus' && S.selected === `d:${n.id}` && document.hasFocus();
+    const showing = S.view === 'sessions' && S.selected === `d:${n.id}` && document.hasFocus();
     if (!showing) toast(text, n.kind === 'waiting' ? 'waiting' : 'info', { label: isChat(it) ? 'Open chat' : 'Open terminal', run: () => openSession(it) });
     const wanted = n.kind === 'waiting' ? S.prefs.notifyOnWaiting : S.prefs.notifyOnFinished;
     if (!wanted) return;
@@ -2333,6 +2251,55 @@
       const note = new Notification(text, { body: isChat(it) ? 'Click to open the chat.' : 'Click to open its terminal.', tag: `${n.id}:${n.kind}`, silent: true });
       note.onclick = () => { window.focus(); openSession(it); note.close(); };
     }
+  }
+
+  // ---- billing guard -------------------------------------------------------------------------
+  // Claude Deck won't start sessions that would bill an Anthropic API or cloud account instead of
+  // the Claude plan (src/billing.js), unless Allow API billing is on in Preferences. The banner
+  // shows whenever something like that is set up, either way.
+  async function loadBilling() {
+    try { S.billing = await api('GET', '/api/billing'); } catch { return; }
+    renderBillingBanner();
+    if (S.view === 'prefs') renderPrefs();
+  }
+
+  function renderBillingBanner() {
+    const el = clear($('#billing-banner'));
+    const b = S.billing;
+    el.hidden = !b || !b.findings.length;
+    if (el.hidden) return;
+    el.appendChild(h('span', null,
+      h('strong', null, b.allowed ? 'API billing is allowed. ' : "Sessions won't start. "),
+      b.allowed
+        ? 'Sessions started here may be charged to an Anthropic API or cloud account, on top of your Claude plan, because of: '
+        : 'Claude Code would bill an Anthropic API or cloud account instead of your Claude plan, because of: ',
+      b.findings.join('; '), '.'));
+    el.appendChild(h('button', { class: 'ghost small', onclick: () => setView('prefs') }, 'Claude Deck Preferences'));
+  }
+
+  function billingRow(p) {
+    const b = S.billing;
+    const status = !b ? 'Checking…' : b.findings.length ? `Found: ${b.findings.join('; ')}.` : 'Nothing found: sessions use your Claude plan.';
+    const box = h('input', {
+      type: 'checkbox',
+      checked: p.allowApiBilling,
+      onchange: async () => {
+        if (box.checked) {
+          const ok = await Deck.confirm({
+            title: 'Allow sessions that bill an API account?',
+            body: "With this on, Claude Deck starts sessions even when Claude Code is set up to bill an Anthropic API account or a cloud provider (an API key, a key helper, or Bedrock, Vertex and the like). Those sessions are charged per use, on top of your Claude plan. Only turn this on if you're authorized to incur those charges.",
+            extra: b && b.findings.length ? h('p', { class: 'small' }, h('strong', null, 'Set up on this PC right now: '), b.findings.join('; ')) : null,
+            ok: 'Allow API billing',
+            danger: true,
+            safeDefault: true,
+          });
+          if (!ok) { box.checked = false; return; }
+        }
+        await savePrefs({ allowApiBilling: box.checked });
+        loadBilling();
+      },
+    });
+    return prefRow('API billing', status, h('label', { class: 'check' }, box, 'Allow sessions that bill an Anthropic API or cloud account instead of my Claude plan'));
   }
 
   function updateNotifBanner() {
@@ -2571,6 +2538,20 @@
     dlg.showModal();
     $('#l-cwd').focus();
     $('#l-cwd').select();
+  }
+
+  // Ctrl+Shift+N: a new chat straight away, with the defaults from Claude Deck Preferences (its
+  // Default folder) and Claude Code's own settings for model, effort and permissions.
+  let quickStarting = false;
+  async function quickStart() {
+    if (quickStarting) return; // held down, or pressed twice: one chat
+    quickStarting = true;
+    try {
+      const res = await run("Couldn't start a session", () => api('POST', '/api/chats', { mode: 'new', cwd: S.prefs.defaultFolder, color: 'slate' }));
+      if (res) openChat(res.id);
+    } finally {
+      quickStarting = false;
+    }
   }
 
   async function submitLaunch(e) {
@@ -2861,8 +2842,7 @@
   function paletteCommands() {
     return [
       { kind: 'Command', text: 'New session', run: () => openLaunch() },
-      { kind: 'Command', text: 'Show sessions as a board', run: () => { setView('sessions'); setLayout('board'); } },
-      { kind: 'Command', text: 'Focus on one session', run: () => { setView('sessions'); setLayout('focus'); } },
+      { kind: 'Command', text: 'Most tokens this week', run: () => showDetails(USAGE_KEY) },
       { kind: 'Command', text: 'Open history', run: () => setView('history') },
       { kind: 'Command', text: 'Edit Claude Code settings', run: () => setView('settings') },
       { kind: 'Command', text: 'Open preferences', run: () => setView('prefs') },
@@ -3014,7 +2994,7 @@
     const presetList = h('div', { class: 'pc' }, p.presets.length ? p.presets.map((pr) => h('div', { class: 'fav' }, h('span', null, pr.name), h('button', { class: 'ghost small', onclick: async () => { await savePrefs({ presets: S.prefs.presets.filter((x) => x.name !== pr.name) }, true); renderPrefs(); } }, 'Delete'))) : h('small', { class: 'faint' }, 'Save a preset from the New session window.'));
     root.appendChild(h('section', { class: 'pref-section' },
       h('h2', null, 'New sessions'),
-      prefRow('Default folder', 'Used until you start a session somewhere else',
+      prefRow('Default folder', 'Where Ctrl+Shift+N starts a chat. New session starts here too, until you start a session somewhere else',
         h('div', { class: 'row' }, folderInput,
           h('button', { class: 'ghost', onclick: async () => { const picked = await pickFolder(folderInput.value); if (picked) folderInput.value = picked; } }, 'Browse…'),
           h('button', { class: 'ghost', onclick: () => savePrefs({ defaultFolder: folderInput.value.trim() }) }, 'Save'))),
@@ -3040,10 +3020,16 @@
       prefRow('Tool calls', null, toggle('showToolIcons', 'Show an icon beside each tool call in a chat'))));
 
     root.appendChild(h('section', { class: 'pref-section' },
+      h('h2', null, 'Billing'),
+      h('p', null, 'Claude Deck only starts sessions that use your Claude plan. It checks for anything that would make Claude Code bill an Anthropic API account or a cloud provider instead, and refuses to start sessions if it finds one.'),
+      billingRow(p)));
+
+    root.appendChild(h('section', { class: 'pref-section' },
       h('h2', null, 'Dashboard'),
       prefRow('Other terminals', null, toggle('showExternal', 'Show Claude sessions started outside Claude Deck')),
       prefRow('Background server', 'Chats run inside the server; terminal sessions keep running either way', toggle('stopWhenClosed', 'Stop the local server 90 seconds after this window closes, unless a chat is still running'),
         h('div', { class: 'row' },
+          h('button', { class: 'ghost', title: 'Get the latest Claude Deck from GitHub, then restart on it', onclick: (e) => checkForUpdates(e.currentTarget) }, 'Check for updates'),
           h('button', { class: 'ghost', title: 'Stop the server and start it again, then reload this window: picks up changes to Claude Deck', onclick: restartServer }, 'Restart server'),
           h('button', { class: 'danger', onclick: async () => { if (await Deck.confirm({ title: 'Stop the Claude Deck server?', body: 'Chats end (resume them from History later). Terminal sessions keep running. Start Claude Deck again to reconnect.', ok: 'Stop server', danger: true })) api('POST', '/api/shutdown').catch(() => {}); } }, 'Stop server now'))),
       prefRow('Data folder', 'Preferences, settings backups and the history cache', h('div', { class: 'row' }, h('code', { style: { overflowWrap: 'anywhere', flex: '1' } }, S.boot.dataDir), h('button', { class: 'ghost', onclick: () => openFolder(S.boot.dataDir) }, 'Open'))),
@@ -3062,12 +3048,47 @@
     const res = await run("Couldn't restart the server", () => api('POST', '/api/restart'));
     if (!res) return;
     toast('Restarting the server…');
+    reloadWhenRestarted(res.pid);
+  }
+
+  // Once a server other than `oldPid` answers, reload the window onto it.
+  async function reloadWhenRestarted(oldPid) {
     for (let i = 0; i < 120; i++) {
       await new Promise((r) => setTimeout(r, 500));
       const now = await api('GET', '/api/ping').catch(() => null);
-      if (now && now.pid !== res.pid) { location.reload(); return; }
+      if (now && now.pid !== oldPid) { location.reload(); return; }
     }
     toast("The server didn't come back. Start Claude Deck again from its shortcut.", 'error');
+  }
+
+  // Checks GitHub for a newer Claude Deck (src/update.js); if there is one, asks, then updates this
+  // copy and restarts on it.
+  async function checkForUpdates(btn) {
+    // When this copy can't be updated from here, the message includes the command to do it by
+    // hand, and the toast stays up with a button to copy it.
+    const ask = (apply) => api('POST', '/api/update', { apply }).catch((err) => {
+      toast(`Couldn't ${apply ? 'update Claude Deck' : 'check for updates'}: ${err.message}`, 'error',
+        err.command ? { label: 'Copy command', ms: 30000, run: () => copy(err.command, 'Command copied') } : undefined);
+      return null;
+    });
+    btn.disabled = true;
+    btn.textContent = 'Checking…';
+    const check = await ask(false);
+    btn.disabled = false;
+    btn.textContent = 'Check for updates';
+    if (!check) return;
+    if (!check.available) { toast(`Claude Deck is up to date (${check.from ? `v${check.from}` : 'latest version'}).`); return; }
+    const ok = await Deck.confirm({
+      title: check.to && check.to !== check.from ? `Update to v${check.to}?` : 'Update Claude Deck?',
+      body: `${check.from ? `This is v${check.from}. ` : ''}Claude Deck gets the latest version from GitHub, then restarts and this window reloads. Chats end, including one working on Claude Deck itself; resume them afterwards. Terminal sessions keep running.`,
+      ok: 'Update and restart',
+    });
+    if (!ok) return;
+    const res = await ask(true);
+    if (!res) return;
+    if (!res.updated) { toast('Claude Deck is already up to date.'); return; }
+    toast(`Updated to v${res.to}. Restarting…`);
+    reloadWhenRestarted(res.pid);
   }
 
   // ---- views + wiring ------------------------------------------------------------------------
@@ -3135,7 +3156,25 @@
       else closeSelectedChat();
       return;
     }
-    // Enter on an ended chat resumes it: from its list row or board card, or with nothing focused
+    // Ctrl+Shift+N: start a new chat with the default settings, from anywhere in the Sessions
+    // view, even while typing a reply.
+    if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && key === 'n' && S.view === 'sessions') {
+      e.preventDefault();
+      if (!e.repeat && !document.querySelector('dialog[open]')) quickStart();
+      return;
+    }
+    // F2: rename the selected session, as in Explorer; works while typing (F2 does nothing in a
+    // text box), so it follows Ctrl+Tab. The cursor goes back where it was afterwards.
+    if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && S.view === 'sessions' && !document.querySelector('dialog[open]')) {
+      e.preventDefault();
+      const it = S.selected ? findItem(S.selected) : null;
+      if (!it) return;
+      if (!it.deck) { toast('Sessions started outside Claude Deck can\'t be renamed here.'); return; }
+      const back = document.activeElement;
+      rename(it).then(() => { if (back && back.isConnected && !back.disabled) back.focus(); });
+      return;
+    }
+    // Enter on an ended chat resumes it: from its list row, or with nothing focused
     // (its reply box is greyed out, so focus falls back to the page). Other buttons keep their Enter.
     if (key === 'enter' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && S.view === 'sessions' && S.selected && !document.querySelector('dialog[open]')) {
       const it = findItem(S.selected);
@@ -3143,10 +3182,7 @@
       if (it && isChat(it) && it.state === 'exited' && onIt) { e.preventDefault(); resumeAndFocus(it); return; }
     }
     if (typing || e.ctrlKey || e.altKey || e.metaKey || document.querySelector('dialog[open]')) return;
-    if (key === 'escape' && S.view === 'sessions' && S.layout === 'focus') { e.preventDefault(); backToBoard(); }
-    else if (key === 'n') { e.preventDefault(); openLaunch(); }
-    else if (key === 'f' && S.view === 'sessions') { e.preventDefault(); setLayout(S.layout === 'board' ? 'focus' : 'board'); }
-    else if (e.key === '/') {
+    if (e.key === '/') {
       const f = S.view === 'history' ? $('#history-search') : S.view === 'sessions' ? $('#session-filter') : null;
       if (f) { e.preventDefault(); f.focus(); }
     } else if (e.key === '?') { e.preventDefault(); $('#dlg-keys').showModal(); }
@@ -3257,9 +3293,10 @@
     // The version the server was started from, beside the connection light.
     $('#conn-version').textContent = `v${S.boot.version}`;
     $('#conn').title = `Connection to the local Claude Deck server (Claude Deck ${S.boot.version})`;
+    loadBilling();
+    window.addEventListener('focus', loadBilling);
 
     $$('.nav-item').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
-    $$('.seg [data-layout]').forEach((b) => b.addEventListener('click', () => setLayout(b.dataset.layout)));
     $('#btn-new').addEventListener('click', () => openLaunch());
     $('#session-filter').addEventListener('input', (e) => { S.filter = e.target.value.trim(); renderSessions(); });
     $('#history-search').addEventListener('input', () => { S.historyLimit = 150; renderHistory(); });

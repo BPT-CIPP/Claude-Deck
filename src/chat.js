@@ -21,6 +21,7 @@ const { isScript } = require('./claude-locate');
 const { normalizeOptions, buildClaudeArgs, displayCommand, requireClaude, requireFolder, PERMISSION_MODES, EFFORTS } = require('./launcher');
 const { readTranscript } = require('./history');
 const { SubagentLog } = require('./subagents');
+const { requirePlanBilling } = require('./billing');
 const { readJson, writeJsonAtomic, clip, UserError } = require('./util');
 
 // No --include-partial-messages: replies are shown once Claude has finished each message, not
@@ -187,10 +188,8 @@ class ChatManager extends EventEmitter {
       model: fields.model || null,
       permissionMode: fields.permissionMode || null,
       costUSD: fields.costUSD ?? null, // the current conversation's, as Claude reports it
-      // Everything this chat used, across /clear and resumes: { costUSD, input, output, cacheRead,
-      // cacheWrite }. A chat saved before these were kept starts from its last cost.
-      spend: fields.spend || { ...zeroTotals(), costUSD: fields.costUSD || 0 },
-      // Claude's running totals as last seen, for working out what each turn added.
+      // Claude's running totals for the current conversation as last seen ({ sessionId, costUSD,
+      // input, output, cacheRead, cacheWrite }): its tokens, and what each turn added.
       seen: fields.seen || null,
       context: null, // { tokens, max, percent } from get_context_usage
       state: fields.state || 'starting',
@@ -224,6 +223,7 @@ class ChatManager extends EventEmitter {
     const o = normalizeOptions(rawOptions);
     const claude = requireClaude(prefsStore.load());
     requireFolder(o.cwd);
+    requirePlanBilling(o.cwd);
     const id = crypto.randomUUID();
     const sessionId = o.mode === 'new' ? crypto.randomUUID() : o.mode === 'resume' && !o.fork ? o.resumeId : null;
     const chat = this._blank({ id, name: o.name, color: o.color, cwd: o.cwd, options: { ...o, prompt: '', mode: 'new', resumeId: '', fork: false, worktree: false }, sessionId });
@@ -244,6 +244,7 @@ class ChatManager extends EventEmitter {
     if (!chat.sessionId) throw new UserError('This chat never started a conversation, so there is nothing to resume.');
     const claude = requireClaude(prefsStore.load());
     requireFolder(chat.cwd);
+    requirePlanBilling(chat.cwd);
     const { args } = buildClaudeArgs(normalizeOptions({ ...chat.options, cwd: chat.cwd, mode: 'resume', resumeId: chat.sessionId, fork: false }), null);
     chat.note = null;
     chat.exitCode = null;
@@ -342,10 +343,10 @@ class ChatManager extends EventEmitter {
     }).catch(() => {});
   }
 
-  // What this turn added to Claude's running totals, which goes into the chat's own totals.
-  // Claude's totals start again at zero after /clear (a new session id). For a session this chat
-  // hasn't seen, the starting point is its saved cost-state: a resumed conversation carries on
-  // from it, and a brand new one has none. A fork's first session carries on from the original's.
+  // What this turn added to Claude's running totals (for the reply's token count). Claude's totals
+  // start again at zero after /clear (a new session id). For a session this chat hasn't seen, the
+  // starting point is its saved cost-state: a resumed conversation carries on from it, and a brand
+  // new one has none. A fork's first session carries on from the original's.
   _count(chat, m) {
     if (typeof m.total_cost_usd !== 'number') return null;
     const now = runningTotals(m);
@@ -356,13 +357,19 @@ class ChatManager extends EventEmitter {
       base = saved(sessionId) || (!chat.seen && chat.forkedFrom ? saved(chat.forkedFrom) : null) || zeroTotals();
     }
     const turn = {};
-    for (const k of ['costUSD', ...TOKEN_KEYS]) {
+    for (const k of TOKEN_KEYS) {
       // Totals only grow within a conversation; if one went down, Claude started counting again.
       turn[k] = now[k] >= (base[k] || 0) ? now[k] - (base[k] || 0) : now[k];
-      chat.spend[k] = (chat.spend[k] || 0) + turn[k];
     }
     chat.seen = { sessionId, ...now };
     return turn;
+  }
+
+  // The current conversation's tokens so far, subagents included, as of Claude's latest result.
+  _currentTokens(chat) {
+    const s = chat.seen;
+    if (!s || s.sessionId !== chat.sessionId) return null;
+    return { input: s.input, output: s.output, cacheRead: s.cacheRead, cacheWrite: s.cacheWrite };
   }
 
   // Asks Claude to summarize the conversation so far to free up context, like /compact.
@@ -468,7 +475,7 @@ class ChatManager extends EventEmitter {
         break;
       case 'conversation_reset':
         // /clear: Claude starts a new conversation (a new session id arrives with the next init).
-        // This chat's own totals carry on; the current cost starts again at zero.
+        // The current cost and tokens start again at zero.
         chat.context = null;
         this._push(chat, { kind: 'note', text: 'Context cleared. Claude starts a new conversation from here.' });
         this._changed(chat);
@@ -523,10 +530,18 @@ class ChatManager extends EventEmitter {
         // Claude's duration_ms is clock time, sleep included.
         const durationMs = m.duration_ms ? Math.max(0, m.duration_ms - chat.turnSleptMs) : null;
         chat.turnSleptMs = 0;
-        // Tokens this turn used, subagents included (from modelUsage; the result's own usage
-        // leaves subagents out).
+        // Tokens this turn used, subagents included (from modelUsage), and how many of them were
+        // subagents': the result's own usage counts only the main conversation's calls, so they're
+        // the rest. A local command (/compact) reports no usage of its own, so it's all main.
         const tokens = turn ? { input: turn.input, output: turn.output, cacheRead: turn.cacheRead, cacheWrite: turn.cacheWrite } : null;
-        this._push(chat, { kind: 'result', durationMs, isError: m.is_error === true, aborted, tokens });
+        let subagentTokens = null;
+        if (tokens && m.local_command) subagentTokens = 0;
+        else if (tokens && m.usage) {
+          const main = m.usage;
+          subagentTokens = Math.max(0, tokens.input - (Number(main.input_tokens) || 0)) + Math.max(0, tokens.output - (Number(main.output_tokens) || 0))
+            + Math.max(0, tokens.cacheRead - (Number(main.cache_read_input_tokens) || 0)) + Math.max(0, tokens.cacheWrite - (Number(main.cache_creation_input_tokens) || 0));
+        }
+        this._push(chat, { kind: 'result', durationMs, isError: m.is_error === true, aborted, tokens, subagentTokens });
         this._changed(chat);
         this._save();
         this._readContext(chat);
@@ -1011,7 +1026,7 @@ class ChatManager extends EventEmitter {
     const rows = [...this.chats.values()].map((c) => ({
       id: c.id, name: c.name, color: c.color, cwd: c.cwd, options: c.options, sessionId: c.sessionId, createdAt: c.createdAt,
       lastPrompt: c.lastPrompt, lastReply: c.lastReply, model: c.model, permissionMode: c.permissionMode, costUSD: c.costUSD, command: c.command,
-      spend: c.spend, seen: c.seen,
+      seen: c.seen,
     }));
     try { writeJsonAtomic(this.file, rows); } catch { /* retried on the next change */ }
   }
@@ -1055,7 +1070,7 @@ class ChatManager extends EventEmitter {
       requestedEffort: chat.options.effort || '',
       permissionMode: chat.permissionMode,
       chatCost: chat.costUSD,
-      spend: { ...chat.spend },
+      tokens: this._currentTokens(chat),
       context: chat.proc ? chat.context : null,
       exitCode: chat.exitCode,
       note: chat.note,
@@ -1069,6 +1084,15 @@ class ChatManager extends EventEmitter {
 
   detail(id) {
     const chat = this._get(id);
+    // A chat restored after Claude Deck restarts has no messages in memory: show its conversation
+    // from the transcript, as History does (the page reloads it when that arrives).
+    if (!chat.items.length && !chat.past && chat.sessionId && !chat.loadingPast) {
+      chat.loadingPast = true;
+      this._loadPast(chat, chat.sessionId).finally(() => {
+        chat.loadingPast = false;
+        if (!chat.past) chat.past = []; // no transcript to show; don't keep looking
+      });
+    }
     return { ...this.summary(chat), items: chat.items, past: chat.past || [], seq: chat.seq, commands: chat.commands, tasks: this._taskList(chat) };
   }
 

@@ -50,10 +50,18 @@ node tools/make-icons.js   # regenerate public/icons after changing the mascot g
 - **Claude Deck makes no Claude API calls.** It reads files Claude Code writes and relays what the
   user types. Tests and checks never hit the real API: use `test/fixtures/fake-claude.js`, or the
   real `claude.exe` against `test/fixtures/mock-anthropic-api.js` (`npm run sandbox`).
-- **The plan-usage call is the only outbound request.** `src/usage.js` reads the sign-in token from
-  `.credentials.json` and never refreshes or rewrites it (Claude Code owns it), and sends it only to
-  that endpoint. Tests stub the fetcher. (Installing a plugin or updating a marketplace downloads,
-  but that's Claude Code's own `claude plugin` command, run only when the user asks.)
+- **The plan-usage call is the only outbound request Claude Deck makes on its own.** `src/usage.js`
+  reads the sign-in token from `.credentials.json` and never refreshes or rewrites it (Claude Code
+  owns it), and sends it only to that endpoint. Tests stub the fetcher. *Check for updates*
+  (`src/update.js`) runs `git fetch` from GitHub, signed in through `gh auth git-credential`, only
+  when the user clicks it, and only fast-forwards a clean copy on `main`; tests use local
+  repositories. (Installing a plugin or updating a marketplace downloads, but that's Claude Code's
+  own `claude plugin` command, run only when the user asks.)
+- **Sessions use the Claude plan, never per-use billing.** `src/billing.js` refuses to start a chat or
+  terminal session when Claude Code would bill an Anthropic API or cloud account (an API key, a key
+  helper, or a cloud-provider switch, from the environment or Claude Code's settings). The only way
+  past it is *Allow API billing* in Claude Deck Preferences, off by default. Every new way of
+  starting Claude Code must call `requirePlanBilling`.
 - **Never write to Claude Code's files** except through `src/settings-files.js` (backup first,
   refused if the file changed since it was read) and `src/trash.js` (deleting a conversation the user
   chose: moved to the trash, never deleted outright, refused while the conversation is open).

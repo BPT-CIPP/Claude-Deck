@@ -14,6 +14,7 @@ const prefsStore = require('./prefs');
 const { locateClaude } = require('./claude-locate');
 const { UUID_RE } = require('./history');
 const { writeJsonAtomic, parseArgString, isPidAlive, readJson, UserError } = require('./util');
+const { requirePlanBilling } = require('./billing');
 
 // Values accepted by the installed CLI (from `claude --help`, v2.1.280).
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
@@ -122,6 +123,7 @@ class Launcher {
     const prefs = prefsStore.load();
     const claude = requireClaude(prefs);
     requireFolder(o.cwd);
+    requirePlanBilling(o.cwd);
 
     const id = crypto.randomUUID();
     const sessionId = o.mode === 'new' ? crypto.randomUUID() : null;
@@ -198,6 +200,7 @@ class Launcher {
   resume(id) {
     const entry = this.registry.get(id);
     if (!entry) throw new UserError('That session is no longer tracked.', 404);
+    requirePlanBilling(entry.cwd);
     const status = readJson(path.join(paths.tabsDir(), `${id}.json`), null);
     if (status && status.state === 'exited' && isPidAlive(status.hostPid) && status.sessionId) {
       fs.writeFileSync(path.join(paths.tabsDir(), `${id}.resume`), String(Date.now()));

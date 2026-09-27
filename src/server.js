@@ -27,6 +27,8 @@ const { Live } = require('./live');
 const { ChatManager } = require('./chat');
 const { Timeline } = require('./timeline');
 const trash = require('./trash');
+const update = require('./update');
+const billing = require('./billing');
 const { locateClaude, claudeVersion } = require('./claude-locate');
 const { readJson, writeJsonAtomic, isPidAlive, UserError } = require('./util');
 
@@ -230,6 +232,7 @@ async function main() {
     for (const res of clients) res.write(msg);
   }
 
+  let updating = false;
   let shuttingDown = false;
   async function shutdown(exitCode = EXIT_STOPPED) {
     if (shuttingDown) return;
@@ -323,6 +326,9 @@ async function main() {
     }),
 
     'GET /api/state': () => live.state,
+    // What would make Claude Code bill an API or cloud account instead of the Claude plan
+    // (src/billing.js), for the warning banner. Names and places only, never values.
+    'GET /api/billing': () => ({ findings: billing.findApiBilling(), allowed: prefsStore.load().allowApiBilling }),
     'POST /api/usage/refresh': () => usage.refresh(true),
     // Which conversations used the most tokens this week, from their transcripts (subagents
     // included). The week is the plan's weekly limit window when that's known, else the last 7 days.
@@ -603,6 +609,20 @@ async function main() {
       setTimeout(restart, 200);
       return { ok: true, pid: process.pid };
     },
+    // { apply? }: checks GitHub for a newer Claude Deck (src/update.js); with apply, updates this
+    // copy and then restarts on the new files. { pid } is this server's, as for restart.
+    'POST /api/update': async (req) => {
+      const apply = (await readBody(req)).apply === true;
+      if (updating) throw new UserError('Already checking for updates.', 409);
+      updating = true;
+      try {
+        const result = await update.checkForUpdates({ apply });
+        if (result.updated) setTimeout(restart, 200);
+        return { ...result, pid: process.pid };
+      } finally {
+        updating = false;
+      }
+    },
   };
 
   const compiled = Object.entries(routes).map(([key, handler]) => {
@@ -684,7 +704,8 @@ async function main() {
       } catch (err) {
         const status = err instanceof UserError ? err.status : 500;
         if (status === 500) console.error(err);
-        return sendJson(res, status, { error: err.message || String(err) });
+        // command: a command for the person to run themselves (see src/update.js).
+        return sendJson(res, status, { error: err.message || String(err), ...(status !== 500 && err.command ? { command: err.command } : {}) });
       }
     }
     return sendJson(res, 404, { error: 'Unknown endpoint.' });

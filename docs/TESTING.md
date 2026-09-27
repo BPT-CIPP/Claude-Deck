@@ -50,7 +50,8 @@ node tools/sandbox.js --keep         # keep the previous sandbox's chats and dat
 node tools/sandbox.js --port 47880   # if the default sandbox port (47874) is busy
 ```
 
-It starts `test/fixtures/mock-anthropic-api.js` and a separate Claude Deck server with its own data
+It starts `test/fixtures/mock-anthropic-api.js` and a separate Claude Deck server (with *Allow API
+billing* on, since it gives Claude a fake key for the mock; see `src/billing.js`) with its own data
 folder, Claude config folder and port (all under `%TEMP%\claude-deck-sandbox`), prints the address
 to open, and stops everything on Ctrl+C. Your real Claude Deck, sign-in and conversations are
 untouched.

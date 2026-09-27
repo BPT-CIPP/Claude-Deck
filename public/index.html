@@ -24,10 +24,9 @@
         </svg>
         <span class="brand-text">Claude Deck</span>
       </div>
-      <button class="primary new-session" id="btn-new" title="New session (N)">
+      <button class="primary new-session" id="btn-new" title="New session">
         <svg class="btn-icon" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2z"/></svg>
         <span class="btn-label">New session</span>
-        <kbd class="btn-kbd">N</kbd>
       </button>
       <div class="nav-items">
         <button class="nav-item" data-view="sessions" title="Sessions (Alt+1)">
@@ -74,18 +73,14 @@
           <div class="summary" id="summary"></div>
           <div class="spacer"></div>
           <input type="search" id="session-filter" placeholder="Filter by title, folder or prompt" aria-label="Filter sessions">
-          <div class="seg" role="group" aria-label="Layout">
-            <button data-layout="board" title="See everything (F toggles)">Board</button>
-            <button data-layout="focus" title="One session in detail (F toggles)">Focus</button>
-          </div>
         </header>
         <div class="banner" id="notif-banner" hidden>
           <span>Turn on desktop notifications to hear when a session needs you or finishes.</span>
           <button class="primary small" id="btn-enable-notif">Turn on</button>
           <button class="ghost small" id="btn-dismiss-notif">Not now</button>
         </div>
-        <div class="board" id="board"></div>
-        <div class="focus" id="focus" hidden>
+        <div class="banner banner-danger" id="billing-banner" role="alert" hidden></div>
+        <div class="focus" id="focus">
           <div class="focus-list" id="focus-list" role="listbox" aria-label="Sessions"></div>
           <div class="focus-splitter" id="focus-splitter" role="separator" aria-label="Resize session list" tabindex="0"></div>
           <div class="focus-detail" id="focus-detail"></div>
@@ -222,13 +217,13 @@
       <dl class="keys">
         <dt><kbd>Ctrl K</kbd></dt><dd>Search sessions, history and commands</dd>
         <dt><kbd>Ctrl B</kbd></dt><dd>Toggle sidebar expanded / collapsed</dd>
-        <dt><kbd>N</kbd></dt><dd>New session</dd>
-        <dt><kbd>F</kbd></dt><dd>Switch between Board and Focus</dd>
+        <dt><kbd>Ctrl Shift N</kbd></dt><dd>Start a new chat right away in your default folder (Claude Deck Preferences), from anywhere in Sessions, even while typing</dd>
+        <dt><kbd>F2</kbd></dt><dd>Rename the selected session, even while typing</dd>
         <dt><kbd>↑ ↓ ← →</kbd></dt><dd>Move between sessions</dd>
         <dt><kbd>Ctrl Tab</kbd> / <kbd>Ctrl Shift Tab</kbd></dt><dd>Next / previous session, even while typing</dd>
         <dt><kbd>Ctrl W</kbd></dt><dd>End the selected chat; on an ended chat, remove it</dd>
         <dt><kbd>Enter</kbd></dt><dd>Open the selected session (chat or terminal); resume it if it's an ended chat</dd>
-        <dt><kbd>Esc</kbd></dt><dd>Back to the board from a chat</dd>
+        <dt><kbd>Esc</kbd> in an empty reply</dt><dd>To the session list, where <kbd>↑</kbd> <kbd>↓</kbd> move between sessions</dd>
         <dt><kbd>Enter</kbd> in a reply</dt><dd>Send. <kbd>Shift Enter</kbd> adds a line, <kbd>/</kbd> lists commands</dd>
         <dt><kbd>↑</kbd> <kbd>↓</kbd> in an empty reply</dt><dd>Take queued messages back to edit; otherwise step through your earlier messages</dd>
         <dt><kbd>/</kbd></dt><dd>Filter</dd>

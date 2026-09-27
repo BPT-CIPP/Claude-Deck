@@ -97,7 +97,7 @@ test('effort changes for the running session, and back to the default', async ()
 
 const near = (a, b) => Math.abs(a - b) < 1e-9;
 
-test("a chat's cost and tokens carry on across /clear, while the current cost starts again", async () => {
+test('the current cost and tokens start again after /clear', async () => {
   const c = mgr.create({ cwd, prompt: 'hello' });
   const its = () => mgr.detail(c.id).items;
   const replies = () => its().filter((i) => i.kind === 'result').length;
@@ -105,9 +105,9 @@ test("a chat's cost and tokens carry on across /clear, while the current cost st
   try {
     await waitFor(() => replies() === 1, 'first reply');
     assert.ok(near(sum().chatCost, 0.01));
-    assert.ok(near(sum().spend.costUSD, 0.01));
-    assert.deepStrictEqual([sum().spend.input, sum().spend.output, sum().spend.cacheRead], [100, 20, 1000]);
+    assert.deepStrictEqual(sum().tokens, { input: 100, output: 20, cacheRead: 1000, cacheWrite: 0 }, "the conversation's tokens");
     assert.deepStrictEqual(its().find((i) => i.kind === 'result').tokens, { input: 100, output: 20, cacheRead: 1000, cacheWrite: 0 }, "the reply's own tokens");
+    assert.strictEqual(its().find((i) => i.kind === 'result').subagentTokens, 0, 'no subagents in this reply');
     await waitFor(() => sum().context && sum().context.tokens === 6000, 'context after the first reply');
     assert.deepStrictEqual(sum().context, { tokens: 6000, max: 200000, percent: 3 });
 
@@ -117,15 +117,14 @@ test("a chat's cost and tokens carry on across /clear, while the current cost st
     assert.ok(its().some((i) => i.kind === 'note' && /^Context cleared/.test(i.text)));
     assert.notStrictEqual(sum().sessionId, firstSession, 'a new conversation');
     assert.strictEqual(sum().chatCost, 0, 'the current cost starts again');
-    assert.ok(near(sum().spend.costUSD, 0.01), "the chat's cost is kept");
+    assert.deepStrictEqual(sum().tokens, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, 'the current tokens start again');
     assert.strictEqual(its().filter((i) => i.kind === 'result')[1].tokens.input, 0, '/clear itself used nothing');
     await waitFor(() => sum().context && sum().context.tokens === 5000, 'context after /clear');
 
     mgr.send(c.id, 'after the clear');
     await waitFor(() => replies() === 3, 'reply after /clear');
     assert.ok(near(sum().chatCost, 0.01));
-    assert.ok(near(sum().spend.costUSD, 0.02), 'both conversations counted');
-    assert.strictEqual(sum().spend.input, 200);
+    assert.strictEqual(sum().tokens.input, 100, 'only the new conversation');
   } finally {
     await mgr.end(c.id);
   }
@@ -149,37 +148,35 @@ test('compact summarizes the conversation, and waits until Claude is done', asyn
     assert.ok(notes.includes('Conversation compacted (7,000 → 1,500 tokens). Claude now works from a summary of the earlier turns.'), notes.join(' | '));
     assert.ok(its().some((i) => i.kind === 'user' && i.text === '/compact'), 'sent as /compact');
     await waitFor(() => sum().context && sum().context.tokens === 1500, 'smaller context');
-    assert.ok(near(sum().spend.costUSD, 0.03), 'summarizing costs something too');
+    assert.strictEqual(sum().tokens.input, 300, 'summarizing uses tokens too');
+    assert.strictEqual(its().filter((i) => i.kind === 'result')[2].subagentTokens, 0, "compacting's own call isn't a subagent's");
     assert.strictEqual(its().filter((i) => i.kind === 'result')[2].tokens.input, 100);
   } finally {
     await mgr.end(c.id);
   }
 });
 
-test("a resumed conversation's earlier cost isn't counted again", () => {
-  // Claude carries on from the conversation's saved cost-state; only what this chat adds counts.
+test("a reply's tokens leave out a resumed conversation's earlier ones", () => {
+  // Claude carries on from the conversation's saved cost-state; a reply counts only what it added.
   const RESUMED = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   const history = { get: (sid) => (sid === RESUMED ? { costState: { costUSD: 5, input: 1000, output: 100, cacheRead: 0, cacheWrite: 0 } } : null) };
   const m = new ChatManager({ history, file: path.join(box.root, 'resumed-chats.json') });
   const chat = m._blank({ id: 'resumed', cwd, sessionId: RESUMED });
   const usage = (input, output) => ({ 'claude-x': { inputTokens: input, outputTokens: output, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 } });
   const result = (sessionId, cost, input, output) => m._onMessage(chat, { type: 'result', subtype: 'success', session_id: sessionId, total_cost_usd: cost, modelUsage: usage(input, output) });
+  const replyTokens = (c) => { const t = [...c.items].reverse().find((i) => i.kind === 'result').tokens; return [t.input, t.output]; };
   result(RESUMED, 5.25, 1100, 120);
-  assert.ok(near(chat.spend.costUSD, 0.25));
-  assert.deepStrictEqual([chat.spend.input, chat.spend.output], [100, 20]);
+  assert.deepStrictEqual(replyTokens(chat), [100, 20]);
   result(RESUMED, 5.5, 1200, 140);
-  assert.ok(near(chat.spend.costUSD, 0.5));
+  assert.deepStrictEqual(replyTokens(chat), [100, 20]);
   // After /clear: a new session, counted from zero.
   result('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 0.1, 50, 5);
-  assert.ok(near(chat.spend.costUSD, 0.6));
-  assert.deepStrictEqual([chat.spend.input, chat.spend.output], [250, 45]);
-  assert.strictEqual([...chat.items].reverse().find((i) => i.kind === 'result').tokens.input, 50);
+  assert.deepStrictEqual(replyTokens(chat), [50, 5]);
   // A fork has a new session id but carries on the original's totals (checked with 2.1.281).
   const fork = m._blank({ id: 'fork', cwd });
   fork.forkedFrom = RESUMED;
   m._onMessage(fork, { type: 'result', subtype: 'success', session_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', total_cost_usd: 5.1, modelUsage: usage(1010, 101) });
-  assert.ok(near(fork.spend.costUSD, 0.1));
-  assert.deepStrictEqual([fork.spend.input, fork.spend.output], [10, 1]);
+  assert.deepStrictEqual(replyTokens(fork), [10, 1]);
   clearInterval(m.sleepTimer);
 });
 
@@ -403,6 +400,10 @@ test('a foreground subagent shows while it runs, with live steps and token usage
   assert.deepStrictEqual(d.usage, { input: 250, output: 50, cacheRead: 2000, cacheWrite: 0, total: 2300, calls: 2 });
   assert.strictEqual(d.tokens, 2300);
   assert.throws(() => mgr.taskDetail(id, 'nope'), (e) => e.status === 404);
+  // The reply's tokens include the subagent's, and say how many were its.
+  const reply = await waitFor(() => { const r = lastOf('result'); return r && r.subagentTokens > 0 ? r : null; }, 'the reply after the subagent');
+  assert.deepStrictEqual(reply.tokens, { input: 350, output: 70, cacheRead: 3000, cacheWrite: 0 });
+  assert.strictEqual(reply.subagentTokens, 2300);
 });
 
 test('chats turn on file checkpoints, so a turn\'s files can be rewound through Claude', async () => {
@@ -454,12 +455,33 @@ test('chats survive a restart as ended conversations, and end removes them', asy
   assert.ok(restored, 'restored from chats.json');
   assert.strictEqual(restored.state, 'exited');
   assert.strictEqual(restored.sessionId, sessionId);
-  assert.deepStrictEqual(restored.spend, mgr.summary(mgr.chats.get(id)).spend, "the chat's totals are kept");
-  assert.ok(restored.spend.costUSD > 0);
+  assert.ok(restored.tokens && restored.tokens.input > 0, "the conversation's tokens are kept");
+  assert.deepStrictEqual(restored.tokens, mgr.summary(mgr.chats.get(id)).tokens);
 
   await mgr.end(id);
   assert.ok(!mgr.list().some((c) => c.id === id), 'ended chat is gone');
   assert.throws(() => mgr.send(id, 'hi'), (e) => e.status === 404);
+});
+
+test('a chat restored after a restart shows its conversation so far, from the transcript', async () => {
+  const { HistoryIndex } = require('../src/history');
+  const SID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const proj = path.join(box.claudeDir, 'projects', 'restored-project');
+  fs.mkdirSync(proj, { recursive: true });
+  const rec = (o) => `${JSON.stringify({ sessionId: SID, cwd, timestamp: new Date().toISOString(), ...o })}\n`;
+  fs.writeFileSync(path.join(proj, `${SID}.jsonl`), rec({ type: 'user', message: { role: 'user', content: 'Fix the lockout script' } })
+    + rec({ type: 'assistant', message: { id: 'm1', model: 'claude-x', content: [{ type: 'text', text: 'Done: logging added.' }] } }));
+  const file = path.join(box.root, 'restored-chats.json');
+  fs.writeFileSync(file, JSON.stringify([{ id: 'restored', name: 'Lockout', cwd, sessionId: SID }]));
+  const m = new ChatManager({ history: new HistoryIndex({ cacheFile: path.join(box.root, 'restored-history.json') }), file });
+  try {
+    assert.strictEqual(m.summary(m.chats.get('restored')).state, 'exited', 'back as ended');
+    assert.deepStrictEqual(m.detail('restored').past, [], 'nothing in memory at first');
+    await waitFor(() => m.detail('restored').past.length === 2, 'the conversation read from its transcript');
+    assert.deepStrictEqual(m.detail('restored').past.map((x) => [x.kind, x.text]), [['user', 'Fix the lockout script'], ['assistant', 'Done: logging added.']]);
+  } finally {
+    clearInterval(m.sleepTimer);
+  }
 });
 
 test('suggestion labels read like choices', () => {

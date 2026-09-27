@@ -41,7 +41,9 @@ if (flag('--fake')) {
   }
   claudePath = found.path;
 }
-fs.writeFileSync(path.join(dirs.data, 'prefs.json'), JSON.stringify({ stopWhenClosed: false, claudePath, defaultFolder: dirs.project }));
+// allowApiBilling: the sandbox gives Claude a fake API key for the mock on this PC (below), which
+// the billing guard would otherwise refuse; that key can't reach or bill anything.
+fs.writeFileSync(path.join(dirs.data, 'prefs.json'), JSON.stringify({ stopWhenClosed: false, claudePath, defaultFolder: dirs.project, allowApiBilling: true }));
 
 const env = {
   ...process.env,

@@ -219,6 +219,9 @@ function streamMode() {
     sys({ subtype: 'task_notification', task_id: taskId, tool_use_id: id, status: 'completed', summary: 'Found 3 TODOs.', usage: { total_tokens: 2300, tool_uses: 1, duration_ms: 1200 } });
     toolResult(id, 'Found 3 TODOs.');
     text('The review found 3 TODOs.');
+    // Like the real CLI (2.1.281): the subagent's calls count in the running totals (modelUsage)
+    // but not in the turn's own usage. The same 250 / 50 / 2000 as its transcript above.
+    tokens = { ...tokens, inputTokens: tokens.inputTokens + 250, outputTokens: tokens.outputTokens + 50, cacheReadInputTokens: tokens.cacheReadInputTokens + 2000 };
     return result();
   }
 
