@@ -6,6 +6,13 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.8.1] - 2026-09-28
+
+### Fixed
+- The release workflow took a missing tag for an existing one, so the merges for 1.7.1 and 1.8.0
+  failed with "already exists on another commit" and published no release. It now checks the tag
+  in a way that tells the two apart, and fails only on a real conflict or a GitHub API error.
+
 ## [1.8.0] - 2026-09-28
 
 ### Changed
@@ -219,6 +226,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.8.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.6.1...v1.7.0
