@@ -50,7 +50,10 @@ jobs:
             echo "This merge didn't change the version ($version); nothing to release."
             exit 0
           fi
-          existing=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object.sha 2>/dev/null || true)
+          # matching-refs answers 200 with a list, empty when the tag doesn't exist. (git/ref/tags/<tag>
+          # answers 404 instead, and gh prints that error body as output, which read as an existing tag.)
+          # Any other API error fails the step.
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$tag" --jq ".[] | select(.ref == \"refs/tags/$tag\") | .object.sha")
           if [ -n "$existing" ]; then
             if [ "$existing" = "$SHA" ]; then
               echo "$tag already points at this commit; nothing to do."
