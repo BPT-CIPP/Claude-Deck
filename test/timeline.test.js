@@ -107,6 +107,47 @@ test('restoring to before a turn undoes it and everything after, and can be undo
   assert.throws(() => tl.undo(r.undoId), /no longer be undone/);
 });
 
+test('a restore that fails partway puts back the files it already restored', (t) => {
+  const app = path.join(proj, 'app.js');
+  const notes = path.join(proj, 'notes.txt');
+  const before = [fs.readFileSync(app, 'utf8'), fs.readFileSync(notes, 'utf8')];
+  // app.js is restored first (sorted by path); deleting notes.txt then fails, as a locked file would.
+  const realRm = fs.rmSync;
+  t.mock.method(fs, 'rmSync', (p, o) => {
+    if (p === notes) throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+    return realRm(p, o);
+  });
+  assert.throws(() => tl.restore(SID, A), (e) => e.status === 409 && /nothing was restored/.test(e.message));
+  t.mock.restoreAll();
+  assert.deepStrictEqual([fs.readFileSync(app, 'utf8'), fs.readFileSync(notes, 'utf8')], before, 'both files as they were');
+});
+
+test('Undo refuses to overwrite a file that changed after the restore', () => {
+  const app = path.join(proj, 'app.js');
+  const r = tl.restore(SID, B);
+  fs.writeFileSync(app, 'kept working on this\n');
+  assert.throws(() => tl.undo(r.undoId), (e) => e.status === 409 && /changed since the restore/.test(e.message));
+  assert.strictEqual(fs.readFileSync(app, 'utf8'), 'kept working on this\n', 'the newer work is untouched');
+  // Once it's back to what the restore left, Undo works.
+  fs.writeFileSync(app, 'line1\nline2 changed\n');
+  tl.undo(r.undoId);
+  assert.strictEqual(fs.readFileSync(app, 'utf8'), 'line1\nline2 changed\nline3\n');
+});
+
+test('a file that cannot be read stops the restore before anything changes', () => {
+  // A folder where the file should be: reading it fails with something other than "not found".
+  const notes = path.join(proj, 'notes.txt');
+  fs.renameSync(notes, `${notes}.bak`);
+  fs.mkdirSync(notes);
+  try {
+    assert.throws(() => tl.plan(SID, A), (e) => e.status === 409 && /can't read/.test(e.message));
+    assert.strictEqual(fs.readFileSync(path.join(proj, 'app.js'), 'utf8'), 'line1\nline2 changed\nline3\n', 'nothing was written');
+  } finally {
+    fs.rmdirSync(notes);
+    fs.renameSync(`${notes}.bak`, notes);
+  }
+});
+
 test('changes made outside Claude are marked, and never blamed on the latest turn', () => {
   const t = tl.list(SID2);
   const byPrompt = Object.fromEntries(t.turns.map((x) => [x.prompt, x.files.map((f) => [f.rel, f.change, f.outside])]));

@@ -18,11 +18,11 @@ const { EventEmitter } = require('events');
 const paths = require('./paths');
 const prefsStore = require('./prefs');
 const { isScript } = require('./claude-locate');
-const { normalizeOptions, buildClaudeArgs, displayCommand, requireClaude, requireFolder, PERMISSION_MODES, EFFORTS } = require('./launcher');
+const { normalizeOptions, buildClaudeArgs, displayCommand, requireClaude, requireFolder, preflight, PERMISSION_MODES, EFFORTS } = require('./launcher');
 const { readTranscript } = require('./history');
 const { SubagentLog } = require('./subagents');
 const { requirePlanBilling } = require('./billing');
-const { readJson, writeJsonAtomic, clip, UserError } = require('./util');
+const { readJson, writeJsonAtomic, parseArgString, clip, UserError } = require('./util');
 
 // No --include-partial-messages: replies are shown once Claude has finished each message, not
 // as they're written (text arriving a chunk at a time read as choppy); the spinner covers the wait.
@@ -220,10 +220,7 @@ class ChatManager extends EventEmitter {
 
   // ---- lifecycle -----------------------------------------------------------------------------
   create(rawOptions) {
-    const o = normalizeOptions(rawOptions);
-    const claude = requireClaude(prefsStore.load());
-    requireFolder(o.cwd);
-    requirePlanBilling(o.cwd);
+    const { o, claude } = preflight(rawOptions);
     const id = crypto.randomUUID();
     const sessionId = o.mode === 'new' ? crypto.randomUUID() : o.mode === 'resume' && !o.fork ? o.resumeId : null;
     const chat = this._blank({ id, name: o.name, color: o.color, cwd: o.cwd, options: { ...o, prompt: '', mode: 'new', resumeId: '', fork: false, worktree: false }, sessionId });
@@ -231,7 +228,13 @@ class ChatManager extends EventEmitter {
     if (o.mode === 'resume' && o.fork) chat.forkedFrom = o.resumeId;
     this.chats.set(id, chat);
     const { args } = buildClaudeArgs({ ...o, prompt: '' }, sessionId);
-    this._spawn(chat, claude.path, args);
+    try {
+      this._spawn(chat, claude.path, args);
+    } catch (err) {
+      // Nothing started, so there's no chat to list (spawn throws for a .cmd, for example).
+      this.chats.delete(id);
+      throw new UserError(`Claude Code could not start: ${err.message}`, 500);
+    }
     if (o.mode !== 'new' && sessionId) this._loadPast(chat, sessionId);
     if (o.prompt) this.send(id, o.prompt);
     this._save();
@@ -244,7 +247,7 @@ class ChatManager extends EventEmitter {
     if (!chat.sessionId) throw new UserError('This chat never started a conversation, so there is nothing to resume.');
     const claude = requireClaude(prefsStore.load());
     requireFolder(chat.cwd);
-    requirePlanBilling(chat.cwd);
+    requirePlanBilling(chat.cwd, { args: parseArgString(chat.options && chat.options.extraArgs) });
     const { args } = buildClaudeArgs(normalizeOptions({ ...chat.options, cwd: chat.cwd, mode: 'resume', resumeId: chat.sessionId, fork: false }), null);
     chat.note = null;
     chat.exitCode = null;
@@ -257,7 +260,7 @@ class ChatManager extends EventEmitter {
 
   // Close stdin so Claude exits cleanly; kill it if it hasn't after a few seconds.
   // Resolves once the process is gone. The conversation stays in History. The chat is removed
-  // from the board, unless keep: then it stays listed as ended, ready to resume or remove.
+  // from the session list, unless keep: then it stays listed as ended, ready to resume or remove.
   end(id, { keep = false } = {}) {
     const chat = this._get(id);
     chat.ending = !keep;
@@ -302,14 +305,20 @@ class ChatManager extends EventEmitter {
     let buf = '';
     proc.stdout.setEncoding('utf8');
     proc.stdout.on('data', (d) => {
+      // Only the new data can hold the next newline; a long line isn't searched again each chunk.
+      let from = buf.length;
       buf += d;
       let i;
-      while ((i = buf.indexOf('\n')) !== -1) {
+      while ((i = buf.indexOf('\n', from)) !== -1) {
         const line = buf.slice(0, i).trim();
         buf = buf.slice(i + 1);
+        from = 0;
         if (!line) continue;
         let m;
         try { m = JSON.parse(line); } catch { continue; }
+        // Output can still arrive after 'exit'. A reply is kept, but a question or a subagent
+        // starting can't be answered or run by a process that's gone, and would hang around.
+        if (chat.proc !== proc && (m.type === 'control_request' || (m.type === 'system' && m.subtype === 'task_started'))) continue;
         try { this._onMessage(chat, m); } catch (err) { this.emit('error', err); }
       }
     });
@@ -505,7 +514,7 @@ class ChatManager extends EventEmitter {
         if (!m.message || !Array.isArray(m.message.content)) break;
         for (const b of m.message.content) {
           if (b.type === 'tool_result') {
-            const it = [...chat.items].reverse().find((x) => x.kind === 'tool' && x.toolUseId === b.tool_use_id);
+            const it = chat.items.findLast((x) => x.kind === 'tool' && x.toolUseId === b.tool_use_id);
             if (it) {
               it.result = clip(resultText(b.content), 2000);
               it.isError = b.is_error === true;
@@ -555,7 +564,7 @@ class ChatManager extends EventEmitter {
         // Either way, once it's out of the queue its images needn't be kept for taking it back.
         if (m.state !== 'queued') chat.queuedImages.delete(m.command_uuid);
         if (m.state === 'started') {
-          const it = [...chat.items].reverse().find((x) => x.kind === 'user' && x.commandUuid === m.command_uuid);
+          const it = chat.items.findLast((x) => x.kind === 'user' && x.commandUuid === m.command_uuid);
           if (it && it.queued) {
             it.queued = false;
             this._touch(chat, it);
@@ -878,7 +887,7 @@ class ChatManager extends EventEmitter {
     for (const b of m.message.content) {
       if (b.type === 'tool_use') t.log.push({ kind: 'tool', id: b.id, name: String(b.name || 'tool'), detail: toolDetail(b.input), ts: Date.now() });
       else if (b.type === 'tool_result') {
-        const entry = [...t.log].reverse().find((e) => e.kind === 'tool' && e.id === b.tool_use_id);
+        const entry = t.log.findLast((e) => e.kind === 'tool' && e.id === b.tool_use_id);
         if (entry) { entry.result = clip(resultText(b.content), 300); entry.isError = b.is_error === true; }
       } else if (b.type === 'text' && typeof b.text === 'string' && b.text.trim() && m.type === 'assistant') {
         t.log.push({ kind: 'text', text: clip(b.text.trim(), 1000), ts: Date.now() });
@@ -986,7 +995,7 @@ class ChatManager extends EventEmitter {
   }
 
   _resolveItem(chat, requestId, status, label) {
-    const it = [...chat.items].reverse().find((x) => x.requestId === requestId);
+    const it = chat.items.findLast((x) => x.requestId === requestId);
     if (!it) return;
     it.status = status;
     it.outcome = label;
@@ -1049,7 +1058,7 @@ class ChatManager extends EventEmitter {
   summary(chat) {
     const s = this._status(chat);
     const first = chat.pending.values().next().value;
-    const firstItem = first ? [...chat.items].reverse().find((x) => x.requestId === first.requestId) : null;
+    const firstItem = first ? chat.items.findLast((x) => x.requestId === first.requestId) : null;
     return {
       id: chat.id,
       kind: 'chat',

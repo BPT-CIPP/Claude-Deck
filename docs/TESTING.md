@@ -17,7 +17,9 @@ The same checks run in three places, so they can't disagree about what "green" m
 - **You**, before committing.
 - **Claude Code's Stop hook** (`.claude/hooks/verify-on-stop.js`, registered in
   `.claude/settings.json`). It runs before a session can end, but only when a `.js`, `.json`,
-  `.html`, `.css` or `.ps1` file has changed.
+  `.html`, `.css` or `.ps1` file has changed, and not again for a tree that already passed. If it
+  blocked the last stop and nothing has changed since, it lets the session end rather than block
+  forever.
 - **GitHub Actions** (`.github/workflows/checks.yml`) on every pull request and every push to
   `main`, on Windows with Node 22.
 
@@ -29,7 +31,12 @@ Node 21 on, and Node 20 is past its end of life.
 `test/*.test.js`, using `node:test`. Any new `test/<area>.test.js` is picked up automatically; there's
 no list to add it to. Call `sandbox()` from `test/helpers.js` at the top of a test file: it points
 `CLAUDE_CONFIG_DIR` and `CLAUDE_DECK_DATA` at throwaway folders, so a test never touches the real
-`~/.claude` or Claude Deck's own data.
+`~/.claude` or Claude Deck's own data. It also sets `CLAUDE_DECK_SKIP_SYSTEM_SETTINGS=1`, so the
+billing guard ignores this PC's registry and managed settings (an API key set there would otherwise
+refuse every test chat); billing tests pass those sources in themselves.
+
+`test/tools.test.js` covers the repo's own guards, such as the push guard hook
+(`.claude/hooks/guard-git-push.js`).
 
 `test/fixtures/fake-claude.js` stands in for `claude.exe`. In terminal mode it writes the status
 file and transcript lines Claude Code would, on a fixed schedule (busy, needs you, busy, idle). With
@@ -48,10 +55,13 @@ npm run sandbox                      # real claude.exe, talking to the mock API
 node tools/sandbox.js --fake         # the stand-in Claude instead
 node tools/sandbox.js --keep         # keep the previous sandbox's chats and data
 node tools/sandbox.js --port 47880   # if the default sandbox port (47874) is busy
+node tools/sandbox.js --mock-port 47990   # if the mock API's default port (47994) is busy
 ```
 
 It starts `test/fixtures/mock-anthropic-api.js` and a separate Claude Deck server (with *Allow API
-billing* on, since it gives Claude a fake key for the mock; see `src/billing.js`) with its own data
+billing* on, since it gives Claude a fake key for the mock; see `src/billing.js`, and with any
+cloud-provider switch or other credential in your environment removed so nothing can reach a real
+account) with its own data
 folder, Claude config folder and port (all under `%TEMP%\claude-deck-sandbox`), prints the address
 to open, and stops everything on Ctrl+C. Your real Claude Deck, sign-in and conversations are
 untouched.
@@ -62,9 +72,10 @@ prompts (listed at the top of `test/fixtures/mock-anthropic-api.js`), for exampl
 | Prompt | What the mock API does |
 |---|---|
 | `please run …` | a Bash tool call |
+| `please run slow` | a Bash tool call that takes 3 seconds |
 | `please write …` | a Write tool call (permission prompt unless auto-accepting edits) |
 | `please ask …` | a multiple-choice question |
-| `please slow …` | a reply after 6 seconds (try Stop and Interrupt) |
+| `please slow …` | a reply after 6 seconds (try Interrupt) |
 | `please delegate`, `… slow`, `… foreground` | subagents |
 | `please stream` / `please stream thinking` | a reply streamed in small pieces |
 | `please use tool <Name>` | a call to any tool name (unknown ones come back as errors) |

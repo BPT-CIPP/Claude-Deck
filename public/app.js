@@ -28,6 +28,7 @@
     chat: null, // the chat shown in the focus view: { id, loaded, items: Map, past, commands, buffer }
     drafts: {},
     attachments: {}, // chat id -> images waiting to be sent
+    sending: {}, // chat id -> true while a message is on its way
     showTasks: {}, // chat id -> subagents panel open
     tasksSeen: {}, // chat id -> how many subagents it had when last shown, to open the panel for new ones
     showChanges: {}, // session key -> changes shown instead of the conversation
@@ -384,12 +385,15 @@
   function renderFocusList() {
     const list = $('#focus-list');
     const scroll = list.scrollTop;
+    // The list is rebuilt on every update; keyboard focus goes back to the same row or trash button.
+    const active = list.contains(document.activeElement) ? document.activeElement : null;
+    const activeItem = active && active.closest('.focus-item, .usage-row');
+    const refocus = activeItem ? { key: (activeItem.querySelector('[data-key]') || activeItem).dataset.key, del: active.classList.contains('fr-del') } : null;
     clear(list);
     // Pinned first: tokens by conversation this week, shown in the detail pane.
     list.appendChild(h('button', {
       class: 'focus-row usage-row',
-      role: 'option',
-      'aria-selected': String(S.selected === USAGE_KEY),
+      'aria-current': S.selected === USAGE_KEY ? 'true' : null,
       dataset: { key: USAGE_KEY },
       onclick: () => select(USAGE_KEY),
     },
@@ -398,18 +402,18 @@
     const groups = visibleItems();
     if (!groups.some((g) => g.items.length)) {
       list.appendChild(h('p', { class: 'faint', style: { padding: '12px' } }, allItems().length ? 'No sessions match that filter.' : 'No sessions running.'));
+      restoreListFocus(list, refocus);
       return;
     }
     for (const { lane, items } of groups) {
       if (!items.length) continue;
-      list.appendChild(h('div', { class: 'focus-group' }, h('span', { class: `lamp ${lane.key}` }), `${lane.label} (${items.length})`));
+      list.appendChild(h('div', { class: 'focus-group', role: 'heading', 'aria-level': '2' }, h('span', { class: `lamp ${lane.key}` }), `${lane.label} (${items.length})`));
       for (const it of items) {
         const removal = rowRemoval(it);
         list.appendChild(h('div', { class: 'focus-item' },
           h('button', {
             class: 'focus-row',
-            role: 'option',
-            'aria-selected': String(S.selected === it.key),
+            'aria-current': S.selected === it.key ? 'true' : null,
             dataset: { key: it.key },
             style: it.deck ? { '--tag': `var(--c-${it.color || 'slate'})` } : null,
             onclick: () => select(it.key),
@@ -423,6 +427,15 @@
       }
     }
     list.scrollTop = scroll;
+    restoreListFocus(list, refocus);
+  }
+
+  function restoreListFocus(list, refocus) {
+    if (!refocus) return;
+    const row = list.querySelector(`[data-key="${CSS.escape(refocus.key)}"]`);
+    const target = row && refocus.del ? row.parentElement.querySelector('.fr-del') : row;
+    if (target) target.focus({ preventScroll: true });
+    else list.focus({ preventScroll: true }); // that session is gone; stay in the list
   }
 
   function fact(label, value, mono) {
@@ -577,7 +590,7 @@
       h('div', { class: 'card-status head-meta' },
         h('span', { class: `lamp ${it.lane}` }),
         h('span', { class: `status-text ${it.lane}` }, statusLabel(it)),
-        it.statusSince ? h('span', { class: 'faint' }, `for ${ago(it.statusSince).replace('just now', 'a moment')}`) : null,
+        it.statusSince ? h('span', { class: 'faint head-since', 'data-since': String(it.statusSince) }, sinceText(it.statusSince)) : null,
         isChat(it) && it.runningTasks ? h('button', { type: 'button', class: 'head-badge', title: 'Show the subagents', onclick: () => setTasksPanel(it.id, true) }, `• ${it.runningTasks} subagent${it.runningTasks === 1 ? '' : 's'} active`) : null,
         it.cwd ? h('span', { class: 'head-id row-path head-folder' },
           // Cut from the start if it doesn't fit, so the folder's own name stays visible.
@@ -895,12 +908,27 @@
     if (b && b.isConnected) b.focus();
   }, true);
 
+  const sinceText = (t) => `for ${ago(t).replace('just now', 'a moment')}`;
+
   // Only rebuild the header when something it shows changed, so dropdowns aren't reset mid-use.
+  // "For 3m" changes every minute on its own, so it's updated in place instead (see below).
   function headSignature(it) {
     return JSON.stringify([it.key, it.state, it.status, it.waitingFor, heading(it), it.title, it.name, it.model, it.requestedModel, it.requestedEffort, it.permissionMode,
-      it.costUSD, it.tokens, it.context, it.sessionId, it.color, it.gitBranch, it.cwd, it.exitCode, it.note, it.userTurns, ago(it.statusSince),
+      it.costUSD, it.tokens, it.context, it.sessionId, it.color, it.gitBranch, it.cwd, it.exitCode, it.note, it.userTurns, it.statusSince,
       it.runningTasks, it.taskCount, Boolean(S.showTasks[it.id]), Boolean(S.showChanges[it.key])]);
   }
+
+  // Someone is using one of the header's controls (typing a model ID, a dropdown open): rebuilding
+  // now would throw that away, so it waits until they're done.
+  function headInUse(pane) {
+    const head = pane.querySelector('.detail-head');
+    const a = document.activeElement;
+    return Boolean(head && a && head.contains(a) && a.matches('input, select, textarea'));
+  }
+  // ...and catches up as soon as they're done.
+  document.addEventListener('focusout', (e) => {
+    if (e.target && e.target.closest && e.target.closest('.detail-head')) setTimeout(() => { if (S.view === 'sessions') renderFocusDetail(); }, 0);
+  });
 
   function renderFocusDetail() {
     const pane = $('#focus-detail');
@@ -968,10 +996,11 @@
       } else {
         S.chat = null;
       }
-    } else if (headSignature(it) !== S.headSig) {
+    } else if (headSignature(it) !== S.headSig && !headInUse(pane)) {
       S.headSig = headSignature(it);
       pane.replaceChild(detailHead(it), pane.querySelector('.detail-head'));
     }
+    for (const el of pane.querySelectorAll('.head-since')) el.textContent = sinceText(Number(el.dataset.since));
     if (isChat(it)) {
       updateComposer(it);
       renderTasksPanel(); // keeps the running times current
@@ -991,10 +1020,13 @@
     }
     const stamp = it.transcriptStamp || 'none';
     if (S.convo.key === it.key && S.convo.sessionId === it.sessionId && S.convo.stamp === stamp) return;
-    S.convo = { key: it.key, sessionId: it.sessionId, stamp };
+    // Remembered only once it has loaded, so a failed read is tried again on the next update
+    // rather than only when the transcript next changes.
+    S.convo = { key: it.key, sessionId: it.sessionId, stamp: null };
     try {
       const data = await api('GET', `/api/transcript/${it.sessionId}?limit=150`);
-      if (S.convo.key !== it.key) return;
+      if (S.convo.key !== it.key || S.convo.sessionId !== it.sessionId) return;
+      S.convo.stamp = stamp;
       renderConversation(box, data.items);
     } catch (err) {
       if (S.convo.key !== it.key) return;
@@ -1048,18 +1080,34 @@
       S.chat.loaded = true;
       renderChat(true);
     } catch (err) {
+      // Only into this chat's pane, if it's still the one showing. Events aren't collected for a
+      // chat that didn't load; Try again (or the next reconnect) loads it afresh.
+      if (!S.chat || S.chat.id !== it.id || S.detailKey !== it.key) return;
+      S.chat.failed = true;
+      S.chat.buffer = [];
       const inner = $('#focus-detail .convo-inner');
-      if (inner) clear(inner).appendChild(h('p', { class: 'convo-note' }, `Couldn't load the chat: ${err.message}`));
+      if (inner) {
+        clear(inner).appendChild(h('p', { class: 'convo-note' }, `Couldn't load the chat: ${err.message} `,
+          h('button', { type: 'button', class: 'ghost small', onclick: () => loadChat(it) }, 'Try again')));
+      }
     }
   }
 
   function onChatEvent(e) {
     if (!S.chat || e.id !== S.chat.id) return;
-    if (e.reset || e.meta) {
+    if (e.reset) {
       const it = findItem(`d:${e.id}`);
       if (it) loadChat(it);
       return;
     }
+    // Only the slash commands changed (Claude started, or plugins were reloaded): the conversation
+    // on screen stays as it is.
+    if (e.meta) {
+      const id = e.id;
+      api('GET', `/api/chats/${id}`).then((d) => { if (S.chat && S.chat.id === id) S.chat.commands = d.commands || []; }).catch(() => {});
+      return;
+    }
+    if (S.chat.failed) return;
     if (!S.chat.loaded) {
       S.chat.buffer.push(e);
       return;
@@ -1090,7 +1138,7 @@
     return run("Couldn't stop the subagent", () => api('POST', `/api/chats/${chatId}/tasks/${encodeURIComponent(t.taskId)}/stop`));
   }
 
-  // One card per subagent; click it for the detail view.
+  // One entry per subagent; click it for the detail view.
   function taskNode(t, chatId) {
     const lane = TASK_LANE[t.status] || 'ended';
     const stats = [t.subagentType, t.model, t.toolUses ? `${t.toolUses} tool call${t.toolUses === 1 ? '' : 's'}` : null, t.tokens ? `${tokenText(t.tokens)} tokens` : null, t.background ? 'in the background' : null].filter(Boolean);
@@ -1106,7 +1154,7 @@
     h('div', { class: 'task-head' },
       h('span', { class: `lamp ${lane}` }),
       h('strong', { class: 'task-title' }, t.description || 'Subagent'),
-      h('span', { class: `status-text ${lane} small` }, taskStatusText(t)),
+      h('span', { class: `status-text ${lane} small`, dataset: t.status === 'running' ? { since: String(t.startedAt) } : {} }, taskStatusText(t)),
       t.status === 'running' ? h('button', { type: 'button', class: 'danger small', onclick: (e) => { e.stopPropagation(); stopSubagent(chatId, t); } }, 'Stop') : null),
     stats.length ? h('div', { class: 'task-stats' }, stats.map((s) => h('span', null, s))) : null,
     t.status === 'running' && t.activity ? h('div', { class: 'task-activity' }, t.activity) : null,
@@ -1121,6 +1169,11 @@
     const open = S.showTasks[S.chat.id] && !(S.agentView && S.agentView.chatId === S.chat.id);
     panel.hidden = !open;
     if (!open) return;
+    // Rebuilt only when a subagent changed; running times are updated in place (see the timer
+    // below). Rebuilding every second lost clicks on Stop and any text being selected.
+    const sig = JSON.stringify([S.chat.id, S.chat.tasks]);
+    if (panel.dataset.sig === sig) return;
+    panel.dataset.sig = sig;
     const focused = document.activeElement && panel.contains(document.activeElement) ? $$('.task', panel).indexOf(document.activeElement) : -1;
     clear(panel);
     const tasks = S.chat.tasks || [];
@@ -1178,6 +1231,13 @@
     const stick = Boolean(scroller && root.dataset.loaded && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80);
     const lane = TASK_LANE[t.status] || 'ended';
     const u = t.usage;
+    // Refreshed every 1.5 s while it runs: nothing to do if nothing changed, and an "Asked to"
+    // section someone opened or closed stays that way.
+    const sig = JSON.stringify(t);
+    if (root.dataset.sig === sig) return;
+    root.dataset.sig = sig;
+    const prior = root.querySelector('.agent-prompt');
+    const promptOpen = prior ? prior.open : t.prompt && t.prompt.length < 600;
     clear(root);
     root.appendChild(h('div', { class: 'tasks-head' },
       h('button', { type: 'button', class: 'ghost small', onclick: closeSubagent }, '← Back'),
@@ -1201,7 +1261,7 @@
       if (t.status !== 'running' && t.reportedTokens && t.reportedTokens !== u.total) root.appendChild(h('p', { class: 'faint small' }, `Claude Code's summary reported ${t.reportedTokens.toLocaleString()} tokens.`));
     }
     if (t.prompt) {
-      root.appendChild(h('details', { class: 'agent-prompt', open: t.prompt.length < 600 },
+      root.appendChild(h('details', { class: 'agent-prompt', open: promptOpen },
         h('summary', { class: 'faint small' }, 'Asked to'),
         h('div', { class: 'task-prompt-text' }, t.prompt)));
     }
@@ -1251,8 +1311,7 @@
 
   // Running times tick while a subagent runs.
   setInterval(() => {
-    if (S.chat && S.showTasks[S.chat.id] && (S.chat.tasks || []).some((t) => t.status === 'running')) renderTasksPanel();
-    for (const el of $$('#focus-detail .agent-panel [data-since]')) el.textContent = `Running for ${duration(Date.now() - Number(el.dataset.since))}`;
+    for (const el of $$('#focus-detail .agent-panel [data-since], #focus-detail .tasks-panel [data-since]')) el.textContent = `Running for ${duration(Date.now() - Number(el.dataset.since))}`;
   }, 1000);
 
   // ---- change timeline -----------------------------------------------------------------------
@@ -1828,6 +1887,8 @@
     };
 
     const submit = async (interrupt) => {
+      // One send at a time: a second Enter while the first is on its way would send it twice.
+      if (S.sending[it.id]) return;
       recall = null;
       const text = ta.value;
       const list = S.attachments[it.id];
@@ -1836,11 +1897,21 @@
         return;
       }
       const images = list.map((a) => ({ mediaType: a.mediaType, data: a.data, thumb: a.thumb }));
-      const res = await run("Couldn't send", () => api('POST', `/api/chats/${it.id}/send`, { text, images, interrupt: interrupt === true }));
+      S.sending[it.id] = true;
+      let res;
+      try {
+        res = await run("Couldn't send", () => api('POST', `/api/chats/${it.id}/send`, { text, images, interrupt: interrupt === true }));
+      } finally {
+        delete S.sending[it.id];
+      }
       if (res) {
-        ta.value = '';
-        delete S.drafts[it.id];
-        S.attachments[it.id] = [];
+        // Only what was sent is cleared. Sending can wait on Claude (after Interrupt, say), and
+        // anything typed or attached meanwhile stays.
+        const rest = ta.value.startsWith(text) ? ta.value.slice(text.length).replace(/^\s+/, '') : ta.value;
+        ta.value = rest;
+        if (rest) S.drafts[it.id] = rest;
+        else delete S.drafts[it.id];
+        S.attachments[it.id] = (S.attachments[it.id] || []).filter((a) => !list.includes(a));
         drawTray();
         autosize();
         drawSlash();
@@ -1880,8 +1951,9 @@
         pasteClipboardImage().then((files) => { if (files.length) addFiles(files); }).catch((err) => toast(err.message, 'error'));
       } else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         // While Claude works this queues the message; Interrupt sends it right away instead.
+        // A held-down Enter repeats; only the first press sends.
         e.preventDefault();
-        submit(false);
+        if (!e.repeat) submit(false);
       } else if (e.key === 'Escape' && !ta.value) {
         e.preventDefault();
         e.stopPropagation();
@@ -2557,6 +2629,7 @@
   async function submitLaunch(e) {
     e.preventDefault();
     const btn = $('#l-go');
+    if (btn.disabled) return; // already starting one
     btn.disabled = true;
     $('#l-error').hidden = true;
     try {
@@ -2598,8 +2671,12 @@
     form.addEventListener('submit', submitLaunch);
     form.addEventListener('input', onLaunchChange);
     form.addEventListener('change', onLaunchChange);
+    // Ctrl+Enter submits the way the Start button does: the form checks its required fields first,
+    // and a held or repeated press doesn't start a second session.
     form.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && e.ctrlKey) submitLaunch(e);
+      if (e.key !== 'Enter' || !e.ctrlKey) return;
+      e.preventDefault();
+      if (!e.repeat) form.requestSubmit();
     });
     $('#l-cancel').addEventListener('click', () => $('#dlg-launch').close());
     $('#l-browse').addEventListener('click', async () => {
@@ -2809,7 +2886,8 @@
         h('button', { class: 'ghost small', onclick: () => openFolder(m.cwd), disabled: !m.cwd }, 'Open folder'),
         cmd ? h('button', { class: 'ghost small', onclick: () => copy(cmd, 'Resume command copied') }, 'Copy resume command') : null,
         h('button', { class: 'ghost small', onclick: () => copy(m.sessionId, 'Session ID copied') }, 'Copy session ID'),
-        m.prUrl ? h('a', { href: m.prUrl, target: '_blank', rel: 'noopener', class: 'small', style: { alignSelf: 'center' } }, 'Linked pull request') : null)));
+        // The link comes from the transcript, so only a web address is made clickable.
+        /^https:\/\//i.test(m.prUrl || '') ? h('a', { href: m.prUrl, target: '_blank', rel: 'noopener', class: 'small', style: { alignSelf: 'center' } }, 'Linked pull request') : null)));
     pane.appendChild(changes);
     pane.appendChild(box);
     api('GET', `/api/transcript/${m.sessionId}?limit=150`).then((data) => {
@@ -2823,7 +2901,7 @@
     if (!fork && S.history.live.includes(m.sessionId)) {
       const ok = await Deck.confirm({
         title: 'This conversation is already open',
-        body: 'Resuming it a second time makes the two copies drift apart. Fork a copy instead, so each has its own conversation. To move it here instead, use Continue here on its card.',
+        body: 'Resuming it a second time makes the two copies drift apart. Fork a copy instead, so each has its own conversation. To move it here instead, select the session and use Continue here.',
         ok: 'Fork a copy',
       });
       if (!ok) return;
@@ -2981,7 +3059,7 @@
     const profileInput = h('input', { type: 'text', value: p.wtProfile, placeholder: 'Your default profile' });
     root.appendChild(h('section', { class: 'pref-section' },
       h('h2', null, 'Windows Terminal'),
-      h('p', null, 'Used for sessions you choose to run in a terminal. Open terminal on a card switches to its tab.'),
+      h('p', null, 'Used for sessions you choose to run in a terminal. Open terminal, beside a terminal session\'s title, switches to its tab.'),
       prefRow('Windows', null,
         h('label', { class: 'radio' }, h('input', { type: 'radio', name: 'p-wm', checked: p.windowMode === 'single', onchange: () => savePrefs({ windowMode: 'single' }) }), 'One window, a tab per session'),
         h('label', { class: 'radio' }, h('input', { type: 'radio', name: 'p-wm', checked: p.windowMode === 'perSession', onchange: () => savePrefs({ windowMode: 'perSession' }) }), 'A separate window per session'),
@@ -3131,17 +3209,27 @@
     es.addEventListener('usage', (e) => { S.usage = JSON.parse(e.data); renderUsage(); });
     es.addEventListener('open', () => {
       setConn(true);
-      // After a reconnect, reload the open chat in case events were missed.
-      if (wasDown && S.chat) { const it = findItem(`d:${S.chat.id}`); if (it) loadChat(it); }
+      // After a reconnect, reload the open chat in case events were missed. If the server that
+      // answers now is another version (restarted by its supervisor, or updated from another
+      // window), this page's scripts are out of date: reload the page instead.
+      if (wasDown) {
+        api('GET', '/api/ping').then((p) => { if (p.version && S.boot && p.version !== S.boot.version) location.reload(); }).catch(() => {});
+        if (S.chat) { const it = findItem(`d:${S.chat.id}`); if (it) loadChat(it); }
+      }
       wasDown = false;
     });
     es.addEventListener('error', () => { setConn(false); wasDown = true; });
   }
 
   function onKey(e) {
+    // A key a control has already used (arrows in a menu, Enter on a subagent card) isn't also a
+    // page shortcut: it would switch sessions under the open menu, or close what Enter just opened.
+    if (e.defaultPrevented) return;
     const t = e.target;
     const typing = t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]');
     const key = e.key.toLowerCase();
+    // Inside the session menu or the plugins popover, plain keys (arrows, Enter) belong to it.
+    if (t && t.closest && t.closest('.hm-menu, .plugin-pop') && !e.ctrlKey && !e.altKey && !e.metaKey) return;
     if ((e.ctrlKey || e.metaKey) && key === 'k') { e.preventDefault(); openPalette(); return; }
     if ((e.ctrlKey || e.metaKey) && key === 'b') { e.preventDefault(); if (S.toggleRail) S.toggleRail(); return; }
     if ((e.ctrlKey || e.metaKey) && key === 's' && S.view === 'settings') { e.preventDefault(); Deck.SettingsUI.save(); return; }

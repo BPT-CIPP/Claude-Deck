@@ -22,8 +22,8 @@ const { UsageMonitor } = require('./usage');
 const { PluginManager } = require('./plugins');
 const { HistoryIndex, readTranscript, UUID_RE } = require('./history');
 const { Registry } = require('./registry');
-const { Launcher, normalizeOptions, buildClaudeArgs, displayCommand, EFFORTS, PERMISSION_MODES, COLORS, MODEL_ALIASES } = require('./launcher');
-const { Live } = require('./live');
+const { Launcher, normalizeOptions, buildClaudeArgs, displayCommand, preflight, EFFORTS, PERMISSION_MODES, COLORS, MODEL_ALIASES } = require('./launcher');
+const { Live, isSameProcess } = require('./live');
 const { ChatManager } = require('./chat');
 const { Timeline } = require('./timeline');
 const trash = require('./trash');
@@ -67,9 +67,9 @@ function runtimeFile() {
 
 // One token per install, kept in the data folder. Web pages can't read it, so they can't call
 // the API; keeping it stable means an open dashboard window survives a server restart.
-function loadToken() {
+function loadToken({ fresh = false } = {}) {
   const file = path.join(paths.dataDir(), 'secret.json');
-  const stored = readJson(file, null);
+  const stored = fresh ? null : readJson(file, null);
   if (stored && typeof stored.token === 'string' && stored.token.length >= 32) return stored.token;
   const token = crypto.randomBytes(24).toString('hex');
   writeJsonAtomic(file, { token });
@@ -128,9 +128,20 @@ function ping(port, token) {
   });
 }
 
+// Compared as bytes: a string of the right length can still be a different number of bytes.
 function sameToken(a, b) {
-  if (typeof a !== 'string' || a.length !== b.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  if (typeof a !== 'string') return false;
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+
+// Part of a request's path, decoded. Malformed escapes (a lone %) and NUL are a bad request.
+function decodePart(text) {
+  let out;
+  try { out = decodeURIComponent(text); } catch { throw new UserError('Bad request.'); }
+  if (out.includes('\0')) throw new UserError('Bad request.');
+  return out;
 }
 
 function sendJson(res, status, value) {
@@ -166,7 +177,9 @@ function readBody(req) {
 
 // Folders from past sessions, most recent first. Temp folders (scratch runs, scheduled jobs) are
 // left out because nobody starts a session there on purpose.
-function recentFolders(history) {
+// Checked asynchronously and all at once: a folder on a disconnected network drive can take the
+// network timeout to answer, and must not hold up the rest of the server meanwhile.
+async function recentFolders(history) {
   const temp = os.tmpdir().toLowerCase() + path.sep;
   const byCwd = new Map();
   for (const m of history.list()) {
@@ -177,8 +190,10 @@ function recentFolders(history) {
     cur.lastUsed = Math.max(cur.lastUsed, m.updatedAt || 0);
     byCwd.set(key, cur);
   }
-  return [...byCwd.values()]
-    .filter((f) => fs.existsSync(f.path))
+  const all = [...byCwd.values()];
+  const exists = await Promise.all(all.map((f) => fs.promises.access(f.path).then(() => true, () => false)));
+  return all
+    .filter((f, i) => exists[i])
     .sort((a, b) => b.lastUsed - a.lastUsed)
     .slice(0, 40);
 }
@@ -186,7 +201,7 @@ function recentFolders(history) {
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   fs.mkdirSync(paths.tabsDir(), { recursive: true });
-  const token = loadToken();
+  let token = loadToken();
 
   // A restart's replacement: the old server is still ending its chats. Once it's gone, carry on
   // as a normal start (on the same port, so open windows reconnect).
@@ -195,13 +210,17 @@ async function main() {
     while (isPidAlive(opts.replace) && Date.now() < until) await new Promise((r) => setTimeout(r, 200));
   }
 
-  const running = readJson(runtimeFile(), null);
-  if (running && running.pid !== process.pid && isPidAlive(running.pid) && (await ping(running.port, token))) {
-    if (opts.open) openDashboard(running.port, token);
-    console.log(`Claude Deck is already running: ${dashboardUrl(running.port, token)}`);
+  function leaveToRunningCopy(runningPort) {
+    if (opts.open) openDashboard(runningPort, token);
+    console.log(`Claude Deck is already running: ${dashboardUrl(runningPort, token)}`);
     // Distinct exit code so the startup task's loop waits for that copy instead of treating
     // this as a crash or a deliberate stop.
     process.exitCode = EXIT_ANOTHER_COPY;
+  }
+
+  const running = readJson(runtimeFile(), null);
+  if (running && running.pid !== process.pid && isPidAlive(running.pid) && (await ping(running.port, token))) {
+    leaveToRunningCopy(running.port);
     return;
   }
 
@@ -237,6 +256,8 @@ async function main() {
   async function shutdown(exitCode = EXIT_STOPPED) {
     if (shuttingDown) return;
     shuttingDown = true;
+    // No new connections; requests on open ones are turned away (see the request handler).
+    server.close();
     live.stop();
     usage.stop();
     // Chats are child processes; end them cleanly so their transcripts are complete and resumable.
@@ -253,6 +274,8 @@ async function main() {
   // with "another copy is serving" keeps the sign-in task's supervisor watching (it takes over if
   // the replacement doesn't come up) instead of staying stopped.
   function restart() {
+    // Once is enough: a second Restart (or an update's) mustn't start a second replacement.
+    if (shuttingDown) return;
     const args = [path.join(__dirname, 'server.js'), '--replace', String(process.pid), '--port', String(port), ...(opts.resident ? ['--resident'] : [])];
     const child = spawn(process.execPath, args, { cwd: path.join(__dirname, '..'), env: process.env, detached: true, stdio: 'ignore', windowsHide: true });
     child.on('error', (err) => console.error('starting the replacement server failed:', err));
@@ -280,10 +303,12 @@ async function main() {
   usage.on('usage', (u) => broadcast('usage', u));
   chats.on('error', (err) => console.error('chat message failed:', err));
 
-  function findExternal(pidText) {
+  // An outside session, confirmed to still be the Claude process that wrote its session file, so
+  // ending it can't end some other program that Windows has since given the same pid.
+  async function findExternal(pidText) {
     const pid = Number(pidText);
     const x = live.state.external.find((e) => e.pid === pid);
-    if (!x || !isPidAlive(pid)) throw new UserError('That session is no longer running.', 404);
+    if (!x || !isPidAlive(pid) || !(await isSameProcess(pid, x.procStart))) throw new UserError('That session is no longer running.', 404);
     return x;
   }
 
@@ -311,7 +336,7 @@ async function main() {
   }
 
   const routes = {
-    'GET /api/ping': () => ({ ok: true, pid: process.pid }),
+    'GET /api/ping': () => ({ ok: true, pid: process.pid, version: VERSION }),
 
     'GET /api/bootstrap': async () => ({
       version: VERSION,
@@ -377,7 +402,7 @@ async function main() {
     'POST /api/chats/:id/model': async (req, p) => chats.setModel(p.id, (await readBody(req)).model),
     'POST /api/chats/:id/effort': async (req, p) => chats.setEffort(p.id, (await readBody(req)).effort),
     'POST /api/chats/:id/mode': async (req, p) => chats.setPermissionMode(p.id, (await readBody(req)).mode),
-    // { keep? }: keep leaves the chat on the board as ended (Ctrl+W's first press).
+    // { keep? }: keep leaves the chat in the session list as ended (Ctrl+W's first press).
     'POST /api/chats/:id/end': async (req, p) => {
       await chats.end(p.id, { keep: (await readBody(req)).keep === true });
       return { ok: true };
@@ -391,9 +416,11 @@ async function main() {
     'POST /api/chats/:id/to-terminal': async (req, p) => {
       const c = chats.detail(p.id);
       if (!c.sessionId) throw new UserError('This chat has no conversation to continue yet.');
-      const options = chats.optionsOf(p.id);
+      const next = { ...chats.optionsOf(p.id), mode: 'resume', resumeId: c.sessionId, cwd: c.cwd, name: c.name, color: c.color };
+      // Checked before the chat ends, so a refusal leaves it running.
+      preflight(next);
       await chats.end(p.id);
-      const entry = launcher.launch({ ...options, mode: 'resume', resumeId: c.sessionId, cwd: c.cwd, name: c.name, color: c.color });
+      const entry = launcher.launch(next);
       live.poke(0);
       return entry;
     },
@@ -402,25 +429,29 @@ async function main() {
       const s = live.state.sessions.find((x) => x.id === p.id && x.kind === 'terminal');
       if (!s || !s.sessionId) throw new UserError('That session has no conversation to continue yet.', 404);
       const entry = registry.get(p.id);
+      const next = { ...(entry ? entry.options : {}), mode: 'resume', resumeId: s.sessionId, cwd: s.cwd, name: s.name, color: s.color };
+      preflight(next);
       const pid = s.claudePid;
       launcher.close(p.id);
       await waitForExit(pid, 8000);
-      const c = chats.create({ ...(entry ? entry.options : {}), mode: 'resume', resumeId: s.sessionId, cwd: s.cwd, name: s.name, color: s.color });
+      const c = chats.create(next);
       live.poke(0);
       return c;
     },
-    'POST /api/external/:pid/end': (req, p) => {
-      const x = findExternal(p.pid);
+    'POST /api/external/:pid/end': async (req, p) => {
+      const x = await findExternal(p.pid);
       process.kill(x.pid);
       live.poke(300);
       return { ok: true };
     },
     'POST /api/external/:pid/to-chat': async (req, p) => {
-      const x = findExternal(p.pid);
+      const x = await findExternal(p.pid);
       if (!x.sessionId || !x.cwd) throw new UserError('That session has no conversation to continue yet.');
+      const next = { mode: 'resume', resumeId: x.sessionId, cwd: x.cwd, name: x.name || '' };
+      preflight(next);
       process.kill(x.pid);
       await waitForExit(x.pid, 8000);
-      const c = chats.create({ mode: 'resume', resumeId: x.sessionId, cwd: x.cwd, name: x.name || '' });
+      const c = chats.create(next);
       live.poke(0);
       return c;
     },
@@ -507,6 +538,7 @@ async function main() {
       if (!touched.length) return { restored: 0, undoId: null, files: [] };
       const undoId = timeline.saveUndo(p.sessionId, b.messageId, touched);
       await chats.rewindFiles(owner.chat.id, b.messageId, false);
+      timeline.markRestored(undoId);
       timeline.cache.delete(p.sessionId);
       return { restored: touched.length, undoId, files: plan.map((a) => ({ path: a.path, action: a.action })) };
     },
@@ -531,7 +563,7 @@ async function main() {
       return result;
     },
 
-    'GET /api/folders': () => ({ favorites: prefsStore.load().favorites, recent: recentFolders(history) }),
+    'GET /api/folders': async () => ({ favorites: prefsStore.load().favorites, recent: await recentFolders(history) }),
     'GET /api/dirs': (req, p, url) => folders.listDir(url.searchParams.get('path') || ''),
     'POST /api/mkdir': async (req) => {
       const body = await readBody(req);
@@ -553,7 +585,7 @@ async function main() {
     'GET /api/settings/backups': (req, p, url) => settingsFiles.listBackups(url.searchParams.get('scope'), url.searchParams.get('folder')),
     'POST /api/settings/restore': async (req) => {
       const b = await readBody(req);
-      return settingsFiles.restore(b.scope, b.folder, b.name);
+      return settingsFiles.restore(b.scope, b.folder, b.name, b.baseMtimeMs, b.force === true);
     },
 
     // Plugins, through Claude Code's CLI (src/plugins.js). cwd is the chat's folder, for plugins
@@ -633,7 +665,7 @@ async function main() {
   });
 
   function serveStatic(res, pathname) {
-    const rel = pathname === '/' ? 'index.html' : decodeURIComponent(pathname.slice(1));
+    const rel = pathname === '/' ? 'index.html' : decodePart(pathname.slice(1));
     const file = path.resolve(PUBLIC_DIR, rel);
     if (!file.startsWith(PUBLIC_DIR + path.sep)) {
       res.writeHead(403);
@@ -658,14 +690,27 @@ async function main() {
     });
   }
 
-  const server = http.createServer(async (req, res) => {
+  // Every request goes through here, so nothing a request contains can end the server: a bad
+  // request gets an error response, never an unhandled exception.
+  const server = http.createServer((req, res) => {
+    handle(req, res).catch((err) => {
+      const status = err instanceof UserError ? err.status : 500;
+      if (status === 500) console.error(err);
+      if (!res.headersSent) sendJson(res, status, { error: err.message || String(err) });
+      else res.destroy();
+    });
+  });
+
+  async function handle(req, res) {
     // Reject requests addressed to any other host name (DNS rebinding).
     const host = req.headers.host || '';
     if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}`) {
       res.writeHead(421);
       return res.end();
     }
-    const url = new URL(req.url, `http://${host}`);
+    if (shuttingDown) return sendJson(res, 503, { error: 'Claude Deck is shutting down.' });
+    let url;
+    try { url = new URL(req.url, `http://${host}`); } catch { throw new UserError('Bad request.'); }
     if (!url.pathname.startsWith('/api/')) {
       if (req.method !== 'GET') {
         res.writeHead(405);
@@ -697,7 +742,7 @@ async function main() {
       if (r.method !== req.method) continue;
       const m = r.re.exec(url.pathname);
       if (!m) continue;
-      const params = Object.fromEntries(r.names.map((n, i) => [n, decodeURIComponent(m[i + 1])]));
+      const params = Object.fromEntries(r.names.map((n, i) => [n, decodePart(m[i + 1])]));
       try {
         const result = await r.handler(req, params, url);
         return sendJson(res, 200, result === undefined ? { ok: true } : result);
@@ -709,17 +754,28 @@ async function main() {
       }
     }
     return sendJson(res, 404, { error: 'Unknown endpoint.' });
-  });
+  }
 
-  await new Promise((resolve, reject) => {
-    server.once('error', (err) => {
-      if (err.code !== 'EADDRINUSE' || port === 0) return reject(err);
-      // Preferred port is taken by something else; fall back to any free port.
-      port = 0;
-      server.listen(0, '127.0.0.1', resolve);
-    });
-    server.listen(port, '127.0.0.1', resolve);
+  const listen = (p) => new Promise((resolve, reject) => {
+    const onError = (err) => (err.code === 'EADDRINUSE' && p !== 0 ? resolve(false) : reject(err));
+    server.once('error', onError);
+    server.listen(p, '127.0.0.1', () => { server.off('error', onError); resolve(true); });
   });
+  if (!(await listen(port))) {
+    // Taken. Another Claude Deck started at the same moment (sign-in and the shortcut, say)
+    // answers with this install's token once it's up; then this copy leaves it to that one.
+    for (let i = 0; i < 10; i++) {
+      if (await ping(port, token)) {
+        leaveToRunningCopy(port);
+        process.exit(EXIT_ANOTHER_COPY); // chat and history timers have started; don't wait on them
+      }
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    // Something else has it; fall back to any free port. Whatever holds the usual port shares its
+    // web origin, where the dashboard keeps the token, so a new token makes that one useless.
+    token = loadToken({ fresh: true });
+    await listen(0);
+  }
   port = server.address().port;
 
   writeJsonAtomic(runtimeFile(), { pid: process.pid, port, startedAt: Date.now() });
@@ -727,7 +783,7 @@ async function main() {
   try { trash.purgeOld(); } catch (err) { console.error('emptying old trash failed:', err); }
   live.start();
   usage.start();
-  detectClaude();
+  detectClaude().catch((err) => console.error('checking Claude Code failed:', err));
   scheduleIdleExit();
 
   console.log(`Claude Deck running at ${dashboardUrl(port, token)}`);

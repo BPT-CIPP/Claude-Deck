@@ -89,6 +89,11 @@ function newMeta(file) {
   };
 }
 
+// The tags Claude Code wraps its own user records in (slash commands, their output, ! shell
+// commands, background-task notices, reminders). A prompt that starts with any other "<" is the
+// person's own text (HTML, a <Component>), so it counts. See docs/CLAUDE-CODE-INTERNALS.md.
+const WRAPPER_RE = /^<(command-name|command-message|command-args|local-command-caveat|local-command-stdout|local-command-stderr|task-notification|bash-input|bash-stdout|bash-stderr|system-reminder|user-prompt-submit-hook)>/;
+
 // The text of a real user prompt, or null for tool results, slash-command wrappers,
 // caveats, system reminders and interruption markers.
 function promptText(message) {
@@ -106,8 +111,9 @@ function promptText(message) {
   text = (text || '').trim();
   // A prompt that is only images still counts; describe it so lists have something to show.
   if (!text && images) return `[${images} image${images === 1 ? '' : 's'}]`;
-  if (!text || text.startsWith('<') || text.startsWith('[Request interrupted')) return null;
-  return text;
+  if (!text || WRAPPER_RE.test(text) || text.startsWith('[Request interrupted')) return null;
+  // Pasted text arrives wrapped in <pasted_content> tags; the prompt is what's inside.
+  return text.replace(/<\/?pasted_content\b[^>]*>/g, '').trim() || null;
 }
 
 function imageCount(message) {
@@ -215,10 +221,14 @@ async function readLinesFrom(file, start, end, onLine) {
       const chunk = carry.length ? Buffer.concat([carry, fresh]) : fresh;
       let from = 0;
       let idx;
-      while ((idx = chunk.indexOf(0x0a, from)) !== -1) {
+      // The carried-over part has no newline in it, so the search starts after it: one very long
+      // line isn't searched again from its start with every read.
+      let search = carry.length;
+      while ((idx = chunk.indexOf(0x0a, search)) !== -1) {
         onLine(chunk.toString('utf8', from, idx));
         consumed += idx - from + 1;
         from = idx + 1;
+        search = from;
       }
       carry = chunk.subarray(from);
     }
@@ -437,6 +447,9 @@ class HistoryIndex {
   _scheduleSave() {
     clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => this.saveNow(), 2000);
+    // Doesn't keep a process alive by itself (the server has plenty else); a test that's finished
+    // and removed its folders shouldn't have the cache written back into them afterwards.
+    this.saveTimer.unref();
   }
 
   saveNow() {
@@ -481,18 +494,21 @@ function toolDetail(input) {
   return clip(String(v).replace(/\s+/g, ' ').trim(), 160);
 }
 
-const transcriptCache = new Map(); // file -> { stamp, items }
+const transcriptCache = new Map(); // file -> { stamp, size, offset, keep, items }
 
 // Readable conversation: prompts, assistant text, and one-line tool calls. Thinking is omitted.
+// A transcript that has only grown since the last read (a session still running) is read from
+// where that read stopped, not from the start.
 async function readTranscript(file, limit = 200) {
   const st = await fs.promises.stat(file);
   const stamp = `${st.size}:${st.mtimeMs}`;
   const hit = transcriptCache.get(file);
   if (hit && hit.stamp === stamp) return hit.items.slice(-limit);
 
-  const items = [];
   const keep = Math.max(limit, 400);
-  await readLinesFrom(file, 0, st.size, (line) => {
+  const grown = hit && hit.keep >= keep && st.size >= hit.size && (await endsAtLineBoundary(file, hit.offset));
+  const items = grown ? hit.items : [];
+  const offset = await readLinesFrom(file, grown ? hit.offset : 0, st.size, (line) => {
     const o = parseLine(line);
     if (!o || o.isSidechain) return;
     const ts = typeof o.timestamp === 'string' ? Date.parse(o.timestamp) || null : null;
@@ -511,7 +527,8 @@ async function readTranscript(file, limit = 200) {
     }
     if (items.length > keep * 2) items.splice(0, items.length - keep);
   });
-  transcriptCache.set(file, { stamp, items });
+  transcriptCache.delete(file); // re-added last, so the least recently read goes first
+  transcriptCache.set(file, { stamp, size: st.size, offset, keep, items });
   if (transcriptCache.size > 20) transcriptCache.delete(transcriptCache.keys().next().value);
   return items.slice(-limit);
 }

@@ -11,7 +11,7 @@
 // Scripted replies, keyed on the latest prompt:
 //   "please run ..."   -> Bash tool call (echo)       "please write ..." -> Write tool call
 //   "please run slow"  -> Bash tool call that takes 3s
-//   "please ask ..."   -> AskUserQuestion              "please slow ..."  -> text after 6s (try Stop)
+//   "please ask ..."   -> AskUserQuestion              "please slow ..."  -> text after 6s (try Interrupt)
 //   "please delegate"  -> Agent tool call (the subagent then runs Bash)
 //   "please delegate slow" -> a subagent whose reply takes 6s (try stopping it)
 //   "please delegate foreground" -> a subagent Claude waits for; it runs the 3s Bash call

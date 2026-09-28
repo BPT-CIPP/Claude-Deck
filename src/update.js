@@ -33,7 +33,7 @@ function git(root, args, timeout = 60000) {
   return new Promise((resolve, reject) => {
     execFile('git', args, { cwd: root, timeout, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (err, stdout, stderr) => {
       if (err && err.code === 'ENOENT') return reject(new UserError('Git is not installed, so Claude Deck cannot update itself. Install Git for Windows, then try again.'));
-      if (err) return reject(new Error((String(stderr).trim() || err.message).split('\n').filter(Boolean).pop()));
+      if (err) return reject(Object.assign(new Error((String(stderr).trim() || err.message).split('\n').filter(Boolean).pop()), { stderr: String(stderr) }));
       resolve(String(stdout).trim());
     });
   });
@@ -70,7 +70,15 @@ async function checkForUpdates({ apply = false, root = ROOT, auth = GH_AUTH } = 
     throw refuse(`This copy has commits that aren't on GitHub's ${BRANCH}, so it isn't updated from here.`, root, `git pull --rebase origin ${BRANCH}`);
   }
   if (!apply) return { updated: false, available: true, from, to };
-  await git(root, ['merge', '--ff-only', '--quiet', 'FETCH_HEAD']);
+  try {
+    await git(root, ['merge', '--ff-only', '--quiet', 'FETCH_HEAD']);
+  } catch (err) {
+    // Usually a file that isn't part of this copy (untracked) sits where the update puts one of its
+    // own; git lists them indented. Nothing was changed.
+    const inTheWay = String(err.stderr || '').split(/\r?\n/).filter((l) => /^\s+\S/.test(l)).map((l) => l.trim());
+    const why = inTheWay.length ? `these files are in the way: ${clip(inTheWay.join(', '), 300)}` : clip(err.message, 300);
+    throw refuse(`Git couldn't update this copy (${why}), so nothing was changed. Move ${inTheWay.length ? 'them' : 'what it names'} somewhere else and try again.`, root, 'git pull --ff-only');
+  }
   return { updated: true, available: true, from, to: readJson(path.join(root, 'package.json'), {}).version || to };
 }
 

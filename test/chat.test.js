@@ -473,7 +473,8 @@ test('a chat restored after a restart shows its conversation so far, from the tr
     + rec({ type: 'assistant', message: { id: 'm1', model: 'claude-x', content: [{ type: 'text', text: 'Done: logging added.' }] } }));
   const file = path.join(box.root, 'restored-chats.json');
   fs.writeFileSync(file, JSON.stringify([{ id: 'restored', name: 'Lockout', cwd, sessionId: SID }]));
-  const m = new ChatManager({ history: new HistoryIndex({ cacheFile: path.join(box.root, 'restored-history.json') }), file });
+  const history = new HistoryIndex({ cacheFile: path.join(box.root, 'restored-history.json') });
+  const m = new ChatManager({ history, file });
   try {
     assert.strictEqual(m.summary(m.chats.get('restored')).state, 'exited', 'back as ended');
     assert.deepStrictEqual(m.detail('restored').past, [], 'nothing in memory at first');
@@ -481,6 +482,8 @@ test('a chat restored after a restart shows its conversation so far, from the tr
     assert.deepStrictEqual(m.detail('restored').past.map((x) => [x.kind, x.text]), [['user', 'Fix the lockout script'], ['assistant', 'Done: logging added.']]);
   } finally {
     clearInterval(m.sleepTimer);
+    // Saved now, not by its timer after this file's tests have removed the folder.
+    history.saveNow();
   }
 });
 

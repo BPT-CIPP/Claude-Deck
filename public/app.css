@@ -656,71 +656,11 @@ main { min-width: 0; overflow: hidden; display: flex; flex-direction: column; ba
 .status-text.idle { color: var(--idle); font-weight: 500; }
 .status-text.ended { color: var(--ended); }
 
-/* ---- board ----------------------------------------------------------------------------------- */
-.board { overflow-y: auto; padding: 16px 24px 36px; flex: 1; }
+/* ---- lanes (the usage view's panel) ---------------------------------------------------------- */
 .lane { margin-bottom: 24px; }
 .lane-head { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; }
 .lane-head h2 { font-size: 14.5px; font-weight: 600; }
-.lane-head .lane-count {
-  color: var(--faint);
-  font-size: 12px;
-  background: var(--panel-2);
-  padding: 1px 7px;
-  border-radius: 999px;
-  border: 1px solid var(--line-soft);
-}
-.lane.waiting {
-  background: var(--waiting-wash);
-  border: 1px solid rgba(245, 158, 11, 0.18);
-  margin-left: -12px;
-  margin-right: -12px;
-  padding: 14px 16px;
-  border-radius: 12px;
-  box-shadow: 0 4px 20px -2px rgba(245, 158, 11, 0.04);
-}
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
-.card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 14px 16px 12px 18px;
-  border-radius: 10px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  cursor: pointer;
-  min-width: 0;
-  transition: all var(--dur-normal) var(--ease-spring);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25), inset 0 1px 0 0 rgba(255, 255, 255, 0.03);
-}
-.card::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 12px;
-  bottom: 12px;
-  width: 3.5px;
-  border-radius: 0 3px 3px 0;
-  background: var(--tag, transparent);
-  box-shadow: 0 0 8px var(--tag, transparent);
-  transition: width var(--dur-fast);
-}
-.card:hover {
-  border-color: var(--line-strong);
-  background: var(--raise);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--line-strong);
-}
-.card:hover::before { width: 4.5px; }
-.card.selected {
-  border-color: var(--working);
-  box-shadow: 0 0 0 2px var(--working-wash), 0 8px 24px -4px rgba(0, 0, 0, 0.45);
-}
-.card.external { background: transparent; border-style: dashed; }
 .card-status { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.card-status .since { margin-left: auto; color: var(--faint); font-size: 11.5px; }
-.card-title { font-family: var(--font-display); font-size: 15.5px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; color: var(--text); }
-.card-title.untitled { color: var(--muted); font-weight: 500; }
 .card-prompt {
   color: var(--muted);
   font-size: 12.5px;
@@ -735,39 +675,6 @@ main { min-width: 0; overflow: hidden; display: flex; flex-direction: column; ba
   overflow: hidden;
   overflow-wrap: anywhere;
 }
-.card-meta { display: flex; gap: 8px; align-items: center; font-size: 11.5px; color: var(--faint); min-width: 0; margin-top: 2px; }
-.card-meta .path {
-  font-family: var(--mono);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-  background: var(--panel-2);
-  padding: 1px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--line-soft);
-}
-.card-meta .where {
-  white-space: nowrap;
-  background: var(--panel-2);
-  padding: 1px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--line-soft);
-}
-.card-meta .branch {
-  margin-left: auto;
-  white-space: nowrap;
-  font-family: var(--mono);
-  font-size: 11px;
-  background: var(--panel-2);
-  padding: 1px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--line-soft);
-}
-.card-actions { display: flex; gap: 6px; margin-top: 4px; align-items: center; }
-.card-actions .grow { flex: 1; }
-.card .error { color: var(--danger); font-size: 12px; }
 
 .empty {
   max-width: 520px;
@@ -839,7 +746,7 @@ main { min-width: 0; overflow: hidden; display: flex; flex-direction: column; ba
   box-shadow: none;
 }
 .focus-row:hover { background: var(--panel-2); transform: translateX(2px); }
-.focus-row[aria-selected="true"] {
+.focus-row[aria-current="true"] {
   background: var(--raise);
   box-shadow: inset 3px 0 0 var(--tag, var(--working)), 0 1px 3px rgba(0, 0, 0, 0.25);
 }
@@ -974,7 +881,7 @@ pre.code {
 /* Centered without transform: button:hover sets its own transform, which would replace a centering
    one and drop the button out from under the pointer (it then flickered as hover came and went). */
 .fr-del { position: absolute; right: 6px; top: 0; bottom: 0; margin: auto 0; height: fit-content; padding: 3px; line-height: 0; color: var(--faint); opacity: 0; transition: opacity var(--dur-fast) var(--ease-smooth), color var(--dur-fast) var(--ease-smooth); }
-.focus-item:hover .fr-del, .fr-del:focus-visible, .focus-row[aria-selected="true"] + .fr-del { opacity: 1; }
+.focus-item:hover .fr-del, .fr-del:focus-visible, .focus-row[aria-current="true"] + .fr-del { opacity: 1; }
 .fr-del:hover { color: var(--danger); background: var(--danger-wash); }
 /* The pinned usage entry at the top of the list, and its view in the detail pane. */
 .usage-row { margin-bottom: 4px; }
@@ -986,29 +893,6 @@ pre.code {
 .model-picker select { min-width: 150px; }
 .facts .model-picker select, .facts select { font-size: 12.5px; padding: 2px 22px 2px 6px; }
 
-.card .who { color: var(--faint); font-weight: 500; }
-.card-meta .where { white-space: nowrap; }
-.card-req {
-  border: 1px solid color-mix(in srgb, var(--waiting) 45%, transparent);
-  background: var(--waiting-wash);
-  border-radius: 8px;
-  padding: 9px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  font-size: 12.5px;
-  min-width: 0;
-  box-shadow: 0 2px 8px var(--waiting-glow);
-}
-.card-req .req-detail {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  margin-top: 3px;
-  font-family: var(--mono);
-  font-size: 11.5px;
-}
 
 .req {
   border: 1px solid var(--line);
@@ -1267,7 +1151,7 @@ pre.code.small { font-size: 11px; max-height: 280px; overflow: auto; white-space
 .hm-sub { position: absolute; left: 100%; top: -5px; min-width: 160px; }
 .hm-swatch { width: 12px; height: 12px; border-radius: 3px; background: var(--tag); flex: none; }
 
-/* tokens by conversation this week (board) */
+/* tokens by conversation this week */
 .week-usage .lane-head { flex-wrap: wrap; }
 .week-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .week-row {
@@ -1386,7 +1270,6 @@ label.pp-row { cursor: pointer; }
 .composer.dropping { outline: 2px dashed var(--focus-ring); outline-offset: -6px; }
 
 /* subagents */
-.card-tasks { display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--working); }
 .tasks-panel { border-bottom: 1px solid var(--line-soft); padding: 12px 28px 14px; max-height: 42vh; overflow-y: auto; background: var(--panel); }
 .tasks-head { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
 .tasks-head .spacer { flex: 1; }
@@ -1740,7 +1623,7 @@ dialog.palette {
   .setting, .pref-row { grid-template-columns: 1fr; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   input[type="search"] { width: 100%; }
-  .view-head, .board, .scope-bar, .tabs, .settings-body, .prefs { padding-left: 16px; padding-right: 16px; }
+  .view-head, .scope-bar, .tabs, .settings-body, .prefs { padding-left: 16px; padding-right: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

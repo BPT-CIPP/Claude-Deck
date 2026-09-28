@@ -29,6 +29,33 @@ const MAX_UNDO = 20;
 // Tools whose file changes Claude Code checkpoints, and the input field naming the file.
 const EDIT_TOOLS = { Write: 'file_path', Edit: 'file_path', MultiEdit: 'file_path', NotebookEdit: 'notebook_path' };
 
+// Calls fn with each line of a file, reading a megabyte at a time: a transcript can be larger
+// than the biggest string V8 can hold, so it's never read as one.
+function forEachLine(file, fn) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.alloc(1024 * 1024);
+    let carry = Buffer.alloc(0);
+    let n;
+    while ((n = fs.readSync(fd, buf, 0, buf.length, null)) > 0) {
+      const chunk = carry.length ? Buffer.concat([carry, buf.subarray(0, n)]) : buf.subarray(0, n);
+      let from = 0;
+      let idx;
+      // Only the new bytes can hold the next newline.
+      let search = carry.length;
+      while ((idx = chunk.indexOf(0x0a, search)) !== -1) {
+        fn(chunk.toString('utf8', from, idx));
+        from = idx + 1;
+        search = from;
+      }
+      carry = Buffer.from(chunk.subarray(from));
+    }
+    if (carry.length) fn(carry.toString('utf8'));
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function parseTranscript(file) {
   const prompts = new Map(); // uuid -> { text, ts }
   const snapshots = []; // in transcript order: { messageId, backups }
@@ -37,10 +64,10 @@ function parseTranscript(file) {
   const touched = new Map(); // prompt uuid -> Set(lower-case absolute paths edit tools wrote)
   let cwd = null;
   let current = null; // the prompt whose turn the following records belong to
-  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-    if (!line.trim()) continue;
+  forEachLine(file, (line) => {
+    if (!line.trim()) return;
     let r;
-    try { r = JSON.parse(line); } catch { continue; }
+    try { r = JSON.parse(line); } catch { return; }
     if (!cwd && typeof r.cwd === 'string') cwd = r.cwd;
     if (r.type === 'user' && !r.isMeta && !r.isSidechain && r.uuid) {
       const text = promptText(r.message);
@@ -71,7 +98,7 @@ function parseTranscript(file) {
       const m = deltas.get(r.snapshotMessageId);
       if (!m.has(r.trackingPath)) m.set(r.trackingPath, r.backup || { backupFileName: null });
     }
-  }
+  });
   return { prompts, snapshots, deltas, touched, cwd };
 }
 
@@ -99,6 +126,16 @@ function diskContent(file) {
     return err.code === 'ENOENT' ? null : undefined;
   }
 }
+
+// A file the restore would change but can't read (locked, a folder, no permission) is never
+// overwritten blind, and can't be saved for Undo: the restore stops before touching anything.
+function readable(file) {
+  const now = diskContent(file);
+  if (now === undefined) throw new UserError(`Claude Deck can't read ${file} (it may be open in another program, or not a file), so nothing was restored. Close it and try again.`, 409);
+  return now;
+}
+
+const hashOf = (buf) => (buf === null ? null : crypto.createHash('sha256').update(buf).digest('hex'));
 
 function sameContent(a, b) {
   if (a === null || b === null) return a === b;
@@ -188,6 +225,20 @@ class Timeline {
   constructor({ history }) {
     this.history = history;
     this.cache = new Map(); // sessionId -> { stamp, data }
+    this.counts = new Map(); // hash of a before/after pair -> { added, removed }, so diffs aren't redone
+  }
+
+  // Lines added and removed between two versions of a file. The line diff is the slow part of
+  // listing a timeline, so its result is kept by content.
+  _count(before, after) {
+    const key = crypto.createHash('sha256').update(before || '').update('\0').update(after || '').digest('hex');
+    let c = this.counts.get(key);
+    if (!c) {
+      c = countOps(diffLines(toLines(before), toLines(after)));
+      this.counts.set(key, c);
+      if (this.counts.size > 5000) this.counts.delete(this.counts.keys().next().value);
+    }
+    return c;
   }
 
   _file(sessionId) {
@@ -245,7 +296,7 @@ class Timeline {
       const files = this._turnFiles(sessionId, model, i).map((f) => {
         const binary = isBinary(f.before) || isBinary(f.after);
         const large = !binary && (((f.before && f.before.length) || 0) + ((f.after && f.after.length) || 0) > MAX_DIFF_BYTES);
-        const counts = binary || large || f.before === undefined || f.after === undefined ? { added: null, removed: null } : countOps(diffLines(toLines(f.before), toLines(f.after)));
+        const counts = binary || large || f.before === undefined || f.after === undefined ? { added: null, removed: null } : this._count(f.before, f.after);
         const change = f.before === null ? 'created' : f.after === null ? 'deleted' : 'edited';
         return { key: f.key, path: f.path, rel: model.cwd && f.path.toLowerCase().startsWith(model.cwd.toLowerCase() + path.sep) ? path.relative(model.cwd, f.path) : f.path, change, binary, large, outside: f.outside, unknown: f.before === undefined || f.after === undefined, ...counts };
       });
@@ -293,7 +344,7 @@ class Timeline {
       const abs = resolveKey(key, backup, model.cwd);
       const want = backupContent(sessionId, backup);
       if (want === undefined) continue; // backup missing: leave the file alone
-      const now = diskContent(abs);
+      const now = readable(abs);
       if (sameContent(want, now)) continue;
       actions.push({ path: abs, action: want === null ? 'delete' : now === null ? 'recreate' : 'restore', content: want });
     }
@@ -306,7 +357,7 @@ class Timeline {
     const dir = path.join(paths.dataDir(), 'rewinds', id);
     fs.mkdirSync(dir, { recursive: true });
     const files = filePaths.map((p, i) => {
-      const now = diskContent(p);
+      const now = readable(p);
       if (now) fs.writeFileSync(path.join(dir, `${i}.bin`), now);
       return { path: p, existed: now !== null, blob: now ? `${i}.bin` : null };
     });
@@ -318,28 +369,57 @@ class Timeline {
     return id;
   }
 
-  // Restore from the checkpoints directly (used when no Claude process owns the session).
+  // After a restore: what each file now holds, so Undo can tell whether it has changed since.
+  markRestored(undoId) {
+    const file = path.join(paths.dataDir(), 'rewinds', undoId, 'manifest.json');
+    const manifest = readJson(file, null);
+    if (!manifest) return;
+    for (const f of manifest.files) {
+      const now = diskContent(f.path);
+      f.restored = now === undefined ? undefined : hashOf(now);
+    }
+    writeJsonAtomic(file, manifest);
+  }
+
+  // Restore from the checkpoints directly (used when no Claude process owns the session). If a
+  // file can't be written, the ones already restored go back as they were, so nothing is left
+  // half restored.
   restore(sessionId, messageId) {
     const actions = this.plan(sessionId, messageId);
     if (!actions.length) return { restored: 0, undoId: null, files: [] };
     const undoId = this.saveUndo(sessionId, messageId, actions.map((a) => a.path));
+    const done = [];
     for (const a of actions) {
-      if (a.content === null) fs.rmSync(a.path, { force: true });
-      else {
-        fs.mkdirSync(path.dirname(a.path), { recursive: true });
-        fs.writeFileSync(a.path, a.content);
+      try {
+        if (a.content === null) fs.rmSync(a.path, { force: true });
+        else {
+          fs.mkdirSync(path.dirname(a.path), { recursive: true });
+          fs.writeFileSync(a.path, a.content);
+        }
+      } catch (err) {
+        this.cache.delete(sessionId);
+        try {
+          this._putBack(undoId, done);
+        } catch {
+          throw new UserError(`Couldn't restore ${a.path} (${err.message}), and couldn't put back the files already restored. Their earlier versions are in ${path.join(paths.dataDir(), 'rewinds', undoId)}.`, 409);
+        }
+        throw new UserError(`Couldn't restore ${a.path} (${err.message}), so nothing was restored. Close anything using it and try again.`, 409);
       }
+      done.push(a.path);
     }
+    this.markRestored(undoId);
     this.cache.delete(sessionId);
     return { restored: actions.length, undoId, files: actions.map((a) => ({ path: a.path, action: a.action })) };
   }
 
-  undo(undoId) {
-    if (typeof undoId !== 'string' || !/^[\w-]+$/.test(undoId)) throw new UserError('Invalid undo id.');
+  // Writes back the saved versions of these files (all of them when `only` is omitted), then
+  // forgets the saved copy.
+  _putBack(undoId, only) {
     const dir = path.join(paths.dataDir(), 'rewinds', undoId);
     const manifest = readJson(path.join(dir, 'manifest.json'), null);
     if (!manifest) throw new UserError('That restore can no longer be undone.', 404);
-    for (const f of manifest.files) {
+    const files = only ? manifest.files.filter((f) => only.includes(f.path)) : manifest.files;
+    for (const f of files) {
       if (f.existed) {
         fs.mkdirSync(path.dirname(f.path), { recursive: true });
         fs.writeFileSync(f.path, fs.readFileSync(path.join(dir, f.blob)));
@@ -349,6 +429,21 @@ class Timeline {
     }
     fs.rmSync(dir, { recursive: true, force: true });
     this.cache.delete(manifest.sessionId);
+    return manifest;
+  }
+
+  // Undo refuses if a restored file has changed since (Claude or someone kept working on it):
+  // putting the old version back would throw that work away.
+  undo(undoId) {
+    if (typeof undoId !== 'string' || !/^[\w-]+$/.test(undoId)) throw new UserError('Invalid undo id.');
+    const dir = path.join(paths.dataDir(), 'rewinds', undoId);
+    const manifest = readJson(path.join(dir, 'manifest.json'), null);
+    if (!manifest) throw new UserError('That restore can no longer be undone.', 404);
+    const changed = manifest.files.filter((f) => 'restored' in f && hashOf(diskContent(f.path) ?? null) !== f.restored).map((f) => f.path);
+    if (changed.length) {
+      throw new UserError(`Undo wasn't done, because ${changed.length === 1 ? `${changed[0]} has` : `${changed.length} files have`} changed since the restore, and undoing would overwrite that. ${changed.length === 1 ? '' : `Changed: ${changed.join(', ')}.`}`.trim(), 409);
+    }
+    this._putBack(undoId);
     return { restored: manifest.files.length, sessionId: manifest.sessionId };
   }
 }

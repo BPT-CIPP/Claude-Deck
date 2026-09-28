@@ -54,6 +54,9 @@ const env = {
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
 };
 delete env.CLAUDECODE; // when run from inside a Claude Code session
+// Allow API billing is on here, so nothing else may point Claude somewhere real: a cloud-provider
+// switch (Bedrock, Vertex, ...) or another credential in this PC's environment would bypass the mock.
+for (const name of require('../src/billing').BILLING_VARS) if (name !== 'ANTHROPIC_API_KEY') delete env[name];
 
 const children = [];
 const start = (file, childArgs) => {
