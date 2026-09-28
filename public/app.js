@@ -387,18 +387,11 @@
     const scroll = list.scrollTop;
     // The list is rebuilt on every update; keyboard focus goes back to the same row or trash button.
     const active = list.contains(document.activeElement) ? document.activeElement : null;
-    const activeItem = active && active.closest('.focus-item, .usage-row');
-    const refocus = activeItem ? { key: (activeItem.querySelector('[data-key]') || activeItem).dataset.key, del: active.classList.contains('fr-del') } : null;
+    const activeItem = active && active.closest('.focus-item');
+    const refocus = activeItem ? { key: activeItem.querySelector('[data-key]').dataset.key, del: active.classList.contains('fr-del') } : null;
     clear(list);
-    // Pinned first: tokens by conversation this week, shown in the detail pane.
-    list.appendChild(h('button', {
-      class: 'focus-row usage-row',
-      'aria-current': S.selected === USAGE_KEY ? 'true' : null,
-      dataset: { key: USAGE_KEY },
-      onclick: () => select(USAGE_KEY),
-    },
-    h('span', { class: 'usage-icon', 'aria-hidden': 'true' }, '▤'),
-    h('span', { class: 'fr-text' }, h('div', { class: 'fr-title' }, 'Most tokens this week'), h('div', { class: 'fr-sub' }, h('span', null, 'Usage by conversation')))));
+    // Tokens by conversation this week lives in the header; it's pressed while the detail pane shows it.
+    $('#btn-week-usage').setAttribute('aria-pressed', String(S.selected === USAGE_KEY));
     const groups = visibleItems();
     if (!groups.some((g) => g.items.length)) {
       list.appendChild(h('p', { class: 'faint', style: { padding: '12px' } }, allItems().length ? 'No sessions match that filter.' : 'No sessions running.'));
@@ -3386,6 +3379,7 @@
 
     $$('.nav-item').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
     $('#btn-new').addEventListener('click', () => openLaunch());
+    $('#btn-week-usage').addEventListener('click', () => select(USAGE_KEY));
     $('#session-filter').addEventListener('input', (e) => { S.filter = e.target.value.trim(); renderSessions(); });
     $('#history-search').addEventListener('input', () => { S.historyLimit = 150; renderHistory(); });
     $('#history-folder').addEventListener('change', () => { S.historyLimit = 150; renderHistory(); });
