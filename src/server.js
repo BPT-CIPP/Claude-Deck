@@ -22,14 +22,15 @@ const { UsageMonitor } = require('./usage');
 const { PluginManager } = require('./plugins');
 const { HistoryIndex, readTranscript, UUID_RE } = require('./history');
 const { Registry } = require('./registry');
-const { Launcher, normalizeOptions, buildClaudeArgs, displayCommand, preflight, EFFORTS, PERMISSION_MODES, COLORS, MODEL_ALIASES } = require('./launcher');
+const { Launcher, normalizeOptions, buildClaudeArgs, displayCommand, preflight, requireClaude, EFFORTS, PERMISSION_MODES, COLORS, MODEL_ALIASES } = require('./launcher');
 const { Live, isSameProcess } = require('./live');
 const { ChatManager } = require('./chat');
 const { Timeline } = require('./timeline');
 const trash = require('./trash');
 const update = require('./update');
 const billing = require('./billing');
-const { locateClaude, claudeVersion } = require('./claude-locate');
+const { locateClaude, claudeVersion, autoUpdateStatus, runUpdate } = require('./claude-locate');
+const models = require('./models');
 const { readJson, writeJsonAtomic, isPidAlive, UserError } = require('./util');
 
 // The version this server was started from; a pulled update shows once the server restarts.
@@ -243,7 +244,27 @@ async function main() {
   async function detectClaude() {
     const found = locateClaude(prefsStore.load().claudePath);
     claudeInfo = found ? { ...found, version: await claudeVersion(found.path) } : { path: null, source: null, version: null };
+    claudeInfo.autoUpdate = autoUpdateStatus();
     return claudeInfo;
+  }
+
+  // The model menus, with versions from Claude Code's own list (src/models.js).
+  const modelMenu = () => models.menu(models.load().models, MODEL_ALIASES);
+  function rememberModels(list) {
+    if (models.remember(list, claudeInfo && claudeInfo.version)) broadcast('models', modelMenu());
+  }
+  // A list from this Claude Code version, asking Claude Code for one if there isn't. force: ask
+  // even so (after an update).
+  let modelProbe = null;
+  function refreshModels({ force = false } = {}) {
+    if (modelProbe) return modelProbe;
+    if (!claudeInfo || !claudeInfo.path) return Promise.resolve();
+    const saved = models.load();
+    if (!force && saved.models.length && saved.claudeVersion === claudeInfo.version) return Promise.resolve();
+    modelProbe = models.probe(claudeInfo.path).then((list) => { if (list) rememberModels(list); })
+      .catch((err) => console.error('reading Claude Code models failed:', err))
+      .finally(() => { modelProbe = null; });
+    return modelProbe;
   }
 
   function broadcast(event, data) {
@@ -300,6 +321,7 @@ async function main() {
   live.on('error', (err) => console.error('live update failed:', err));
   chats.on('item', (e) => broadcast('chat', e));
   chats.on('tasks', (e) => broadcast('chat-tasks', e));
+  chats.on('models', rememberModels);
   usage.on('usage', (u) => broadcast('usage', u));
   chats.on('error', (err) => console.error('chat message failed:', err));
 
@@ -343,6 +365,7 @@ async function main() {
       prefs: prefsStore.load(),
       claude: claudeInfo || (await detectClaude()),
       enums: { efforts: EFFORTS, permissionModes: PERMISSION_MODES, colors: COLORS, models: MODEL_ALIASES },
+      models: modelMenu(),
       scopes: Object.fromEntries(Object.entries(settingsFiles.SCOPES).map(([k, v]) => [k, { label: v.label, kind: v.kind, needsFolder: v.needsFolder }])),
       claudeDir: paths.claudeDir(),
       dataDir: paths.dataDir(),
@@ -391,6 +414,8 @@ async function main() {
     },
     'GET /api/chats/:id/tasks/:taskId': (req, p) => chats.taskDetail(p.id, p.taskId),
     'POST /api/chats/:id/tasks/:taskId/stop': (req, p) => chats.stopTask(p.id, p.taskId),
+    // { name, data (base64) }: a dropped file that isn't an image, kept so Claude can read it: { path }.
+    'POST /api/chats/:id/files': async (req, p) => chats.saveFile(p.id, await readBody(req)),
     'POST /api/chats/:id/respond': async (req, p) => {
       const b = await readBody(req);
       return chats.respond(p.id, b.requestId, b);
@@ -618,7 +643,22 @@ async function main() {
       live.tick();
       return next;
     },
-    'POST /api/claude/detect': () => detectClaude(),
+    'POST /api/claude/detect': async () => {
+      const info = await detectClaude();
+      refreshModels();
+      return info;
+    },
+    'GET /api/models': () => modelMenu(),
+    // Claude Code's own `claude update`, only when the user asks. Running chats keep the version
+    // they started with until they're resumed. { ok, output, before, claude }.
+    'POST /api/claude/update': async () => {
+      const before = (claudeInfo || (await detectClaude())).version;
+      const claude = requireClaude(prefsStore.load());
+      const res = await runUpdate(claude.path);
+      const info = await detectClaude();
+      if (info.version !== before) await refreshModels({ force: true });
+      return { ok: res.ok, output: res.output, before, claude: info };
+    },
     'GET /api/app': async () => {
       const installed = appInstall.findInstalledApp(port);
       return { installed: Boolean(installed.profile), profile: installed.profile, startup: await appInstall.startupEnabled(), resident: opts.resident };
@@ -783,7 +823,7 @@ async function main() {
   try { trash.purgeOld(); } catch (err) { console.error('emptying old trash failed:', err); }
   live.start();
   usage.start();
-  detectClaude().catch((err) => console.error('checking Claude Code failed:', err));
+  detectClaude().then(() => refreshModels()).catch((err) => console.error('checking Claude Code failed:', err));
   scheduleIdleExit();
 
   console.log(`Claude Deck running at ${dashboardUrl(port, token)}`);

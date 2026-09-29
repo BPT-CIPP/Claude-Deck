@@ -19,6 +19,7 @@ const DEFAULTS = Object.freeze({
   notifySound: false,
   theme: 'system',             // one of THEMES
   showToolIcons: false,        // an emoji beside each tool call in a chat
+  clearChatOnClear: true,      // /clear also empties the chat's messages, as Claude Code clears its screen
   showExternal: true,          // show Claude sessions running outside Claude Deck
   stopWhenClosed: true,        // stop the local server a while after the dashboard window closes
   allowApiBilling: false,      // start sessions that would bill an API or cloud account (src/billing.js)

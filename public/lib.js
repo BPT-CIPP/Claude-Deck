@@ -207,24 +207,110 @@
     return frag;
   };
 
-  // Model dropdown: every alias the CLI accepts, plus "Other" for a full model ID.
-  // A plain <select>, because a text box with suggestions only lists matches for what's typed.
-  Deck.modelPicker = function modelPicker(aliases, value, onChange, defaultLabel = 'Default') {
-    const current = value || '';
-    const known = !current || aliases.includes(current);
-    const sel = Deck.h('select', { 'aria-label': 'Model' },
-      Deck.h('option', { value: '' }, defaultLabel),
-      aliases.map((a) => Deck.h('option', { value: a, selected: a === current }, a)),
-      Deck.h('option', { value: '__other', selected: !known }, 'Other model ID…'));
-    const custom = Deck.h('input', { type: 'text', value: known ? '' : current, placeholder: 'e.g. claude-opus-5-5', hidden: known, spellcheck: 'false', 'aria-label': 'Model ID' });
-    const wrap = Deck.h('div', { class: 'model-picker' }, sel, custom);
-    wrap.getValue = () => (sel.value === '__other' ? custom.value.trim() : sel.value);
-    sel.addEventListener('change', () => {
-      custom.hidden = sel.value !== '__other';
-      if (!custom.hidden) custom.focus();
-      if (onChange && (sel.value !== '__other' || custom.value.trim())) onChange(wrap.getValue());
-    });
+  // Model picker: a button that opens a menu with a flyout for each model family (Sonnet ▸ Sonnet
+  // 5.5, Sonnet 5.5 · 1M context, ...), like a Windows context menu, plus "Other model ID…" for any
+  // other ID. catalog is the server's model menu ({ families, extras }, src/models.js), with the
+  // versions Claude Code reports. The menu lives on <body> (class model-menu) while it's open.
+  Deck.modelPicker = function modelPicker(catalog, value, onChange, defaultLabel = 'Default') {
+    const h = Deck.h;
+    const cat = catalog && Array.isArray(catalog.families) ? catalog : { families: [], extras: [] };
+    const choices = [...cat.families.flatMap((f) => f.items), ...(cat.extras || [])];
+    let current = value || '';
+    let other = Boolean(current) && !choices.some((c) => c.value === current);
+    const btn = h('button', { type: 'button', class: 'model-btn', 'aria-haspopup': 'menu', 'aria-expanded': 'false' });
+    const custom = h('input', { type: 'text', value: other ? current : '', placeholder: 'e.g. claude-opus-5-5', hidden: !other, spellcheck: 'false', 'aria-label': 'Model ID' });
+    const wrap = h('div', { class: 'model-picker' }, btn, custom);
+    const draw = () => {
+      const c = choices.find((x) => x.value === current);
+      const label = other ? 'Other model ID' : c ? c.label : current || defaultLabel;
+      Deck.clear(btn).append(h('span', { class: 'model-btn-label' }, label), h('span', { class: 'model-btn-arrow', 'aria-hidden': 'true' }, '▾'));
+      btn.title = c ? `${c.label}: ${c.hint}` : current || defaultLabel;
+      btn.setAttribute('aria-label', `Model: ${label}`);
+    };
+    wrap.getValue = () => (other ? custom.value.trim() : current);
+
+    let menu = null;
+    const onDoc = (e) => { if (menu && !menu.contains(e.target) && !btn.contains(e.target)) close(false); };
+    const onEsc = (e) => { if (e.key === 'Escape' && menu) { e.stopPropagation(); e.preventDefault(); close(true); } };
+    const onResize = () => close(false);
+    function close(refocus) {
+      if (!menu) return;
+      menu.remove();
+      menu = null;
+      btn.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('mousedown', onDoc, true);
+      document.removeEventListener('keydown', onEsc, true);
+      window.removeEventListener('resize', onResize);
+      if (refocus && btn.isConnected) btn.focus();
+    }
+    const choose = (v) => {
+      close(true);
+      other = false;
+      custom.hidden = true;
+      current = v;
+      draw();
+      if (onChange) onChange(v);
+    };
+    const check = (on) => (on ? h('span', { class: 'hm-check', 'aria-hidden': 'true' }, '✓') : null);
+    const item = (label, v, hint) => h('button', { type: 'button', role: 'menuitemradio', class: 'hm-item', 'aria-checked': String(!other && v === current), title: hint || null, onclick: () => choose(v) }, label, check(!other && v === current));
+    const family = (f) => {
+      const wrapF = h('div', { class: 'hm-flyout' });
+      const mine = !other && f.items.some((i) => i.value === current);
+      const open = () => {
+        if (wrapF.querySelector('.hm-sub')) return;
+        for (const s of menu.querySelectorAll('.hm-sub')) s.remove();
+        const sub = h('div', { class: 'hm-menu hm-sub', role: 'menu', 'aria-label': f.name }, f.items.map((i) => item(i.label, i.value, i.hint)));
+        wrapF.appendChild(sub);
+        // Opens to the left when there's no room on the right, as Windows menus do.
+        if (sub.getBoundingClientRect().right > window.innerWidth - 8) sub.classList.add('hm-sub-left');
+      };
+      const trigger = h('button', { type: 'button', role: 'menuitem', class: 'hm-item', 'aria-haspopup': 'menu', onclick: (e) => { e.stopPropagation(); open(); const first = wrapF.querySelector('.hm-sub .hm-item'); if (first) first.focus(); } },
+        f.version || f.name, check(mine), h('span', { class: 'hm-arrow', 'aria-hidden': 'true' }, '▸'));
+      wrapF.append(trigger);
+      wrapF.addEventListener('mouseenter', open);
+      wrapF.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' && e.target === trigger) { e.preventDefault(); trigger.click(); }
+        if (e.key === 'ArrowLeft' && e.target !== trigger) { e.preventDefault(); e.stopPropagation(); const sub = wrapF.querySelector('.hm-sub'); if (sub) sub.remove(); trigger.focus(); }
+      });
+      return wrapF;
+    };
+    const openMenu = () => {
+      menu = h('div', { class: 'hm-menu model-menu', role: 'menu', 'aria-label': 'Model' },
+        item(defaultLabel, '', 'Whatever your Claude Code settings choose'),
+        cat.families.map(family),
+        (cat.extras || []).map((x) => item(x.label, x.value, x.hint)),
+        h('button', { type: 'button', role: 'menuitemradio', class: 'hm-item', 'aria-checked': String(other), onclick: () => { close(false); other = true; custom.hidden = false; draw(); custom.focus(); } }, 'Other model ID…', check(other)));
+      // A plain item closes any open flyout, so only one is open at a time.
+      menu.addEventListener('mouseover', (e) => {
+        const it = e.target.closest && e.target.closest('.model-menu > .hm-item');
+        if (it) for (const s of menu.querySelectorAll('.hm-sub')) s.remove();
+      });
+      // Up and down move between the items of the (sub)menu that has focus.
+      menu.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+        e.preventDefault();
+        const m = document.activeElement && document.activeElement.closest('.hm-menu');
+        if (!m) return;
+        const list = [...m.querySelectorAll(':scope > .hm-item, :scope > .hm-flyout > .hm-item')];
+        const i = list.indexOf(document.activeElement);
+        list[(i + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length].focus();
+      });
+      document.body.appendChild(menu);
+      btn.setAttribute('aria-expanded', 'true');
+      const r = btn.getBoundingClientRect();
+      menu.style.top = `${Math.round(Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 8))}px`;
+      menu.style.left = `${Math.round(Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)))}px`;
+      document.addEventListener('mousedown', onDoc, true);
+      document.addEventListener('keydown', onEsc, true);
+      window.addEventListener('resize', onResize);
+      const at = menu.querySelector('.hm-item[aria-checked="true"]') || menu.querySelector('.hm-flyout .hm-check') || menu.querySelector('.hm-item');
+      (at.closest('.hm-item') || at).focus();
+    };
+    btn.addEventListener('click', () => { if (menu) close(true); else openMenu(); });
+    // Enter and Space open it through click; ↓ does too, as it does on a dropdown.
+    btn.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown' && !menu) { e.preventDefault(); openMenu(); } });
     custom.addEventListener('change', () => { if (onChange && custom.value.trim()) onChange(wrap.getValue()); });
+    draw();
     return wrap;
   };
 

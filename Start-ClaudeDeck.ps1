@@ -110,7 +110,15 @@ function Install-DeckShortcuts {
 function Register-DeckTask {
     $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     $taskArgs = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Service' -f $scriptPath
-    $action = New-ScheduledTaskAction -Execute $powershellExe -Argument $taskArgs -WorkingDirectory $root
+    # Where Windows Terminal is the default terminal app, -WindowStyle Hidden doesn't hide the
+    # console: the supervisor stays open as a Terminal tab. conhost.exe --headless (Windows' own
+    # console host) runs PowerShell with no window at all.
+    $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
+    if (Test-Path -LiteralPath $conhost) {
+        $action = New-ScheduledTaskAction -Execute $conhost -Argument ('--headless "{0}" {1}' -f $powershellExe, $taskArgs) -WorkingDirectory $root
+    } else {
+        $action = New-ScheduledTaskAction -Execute $powershellExe -Argument $taskArgs -WorkingDirectory $root
+    }
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
     # Interactive: runs in your desktop session, so Windows Terminal tabs and Edge windows appear.
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
