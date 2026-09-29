@@ -18,6 +18,14 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+// initialize's `models`, shaped like the real CLI's (2.1.284), fields trimmed.
+const FAKE_MODELS = [
+  { value: 'default', resolvedModel: 'claude-opus-5-5', displayName: 'Default (recommended)', description: 'Opus 5.5 · Best for everyday, complex tasks' },
+  { value: 'opus', resolvedModel: 'claude-opus-5-5', displayName: 'Opus', description: 'Opus 5.5 · Best for everyday, complex tasks' },
+  { value: 'sonnet', resolvedModel: 'claude-sonnet-5-5', displayName: 'Sonnet', description: 'Sonnet 5.5 · Efficient for routine tasks' },
+  { value: 'haiku', resolvedModel: 'claude-haiku-4-5-20251001', displayName: 'Haiku', description: 'Haiku 4.5 · Fastest for quick answers' },
+];
+
 const args = process.argv.slice(2);
 if (args[0] === '--version') {
   console.log('0.0.0 (fake Claude Code)');
@@ -325,7 +333,7 @@ function streamMode() {
         if (sub === 'stop_task' && stopTask.has(m.request.task_id)) stopTask.get(m.request.task_id)();
         // Like the real CLI: effortLevel changes the session's effort; null goes back to the default.
         if (sub === 'apply_flag_settings' && m.request.settings && 'effortLevel' in m.request.settings) effort = m.request.settings.effortLevel;
-        let response = sub === 'initialize' ? { commands: [{ name: 'compact', description: 'Summarize the conversation', argumentHint: '' }, ...pluginCommands(sessionPlugins)] } : {};
+        let response = sub === 'initialize' ? { commands: [{ name: 'compact', description: 'Summarize the conversation', argumentHint: '' }, ...pluginCommands(sessionPlugins)], models: FAKE_MODELS } : {};
         if (sub === 'reload_plugins') response = reloadPlugins(m.request, cost > 0);
         // Like the real CLI (2.1.281), with detail "summary": answered locally.
         if (sub === 'get_context_usage') response = { totalTokens: context, maxTokens: 200000, percentage: Math.round((context / 200000) * 100), categories: [], apiUsage: null };

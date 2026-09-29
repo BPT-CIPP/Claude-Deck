@@ -149,6 +149,38 @@ picks up after an interrupt (it may merge several into one turn), so busy state 
 file is named after the new `session_id`. `new_conversation_id` is a different uuid from it. The
 old transcript gets a `cost-state` record.
 
+✅ **Models, with their versions.** The `initialize` response also carries `models`: `[{value,
+resolvedModel, displayName, description, supportsEffort?, supportedEffortLevels?,
+supportsAdaptiveThinking?, supportsFastMode?, supportsAutoMode?}]`. With 2.1.284 on a Claude plan:
+`default` → `claude-opus-5-5` ("Default (recommended)"), `opus` → `claude-opus-5-5`,
+`claude-fable-5-1[1m]` → `claude-fable-5-1` (Fable is listed by its full 1M ID, not an alias),
+`sonnet` → `claude-sonnet-5-5`, `haiku` → `claude-haiku-4-5-20251001`. `description` starts with
+the versioned name ("Sonnet 5.5 · Efficient for routine tasks"), which is where Claude Deck's menus
+get it. An alias follows the newest model as Claude Code is updated, so the list is re-read for each
+Claude Code version (`src/models.js`). Initialize alone makes no model request; with
+`--strict-mcp-config` and no `--mcp-config`, no MCP servers start. About 2 s.
+
+✅ **Updates.** `claude update` prints `Current version: …`, `Checking for updates to latest
+version...`, then `Claude Code is up to date (…)` (exit 0) when there's nothing newer; checked with
+2.1.284 (an npm global install, then npm's `latest` too). Background updates are on unless
+`DISABLE_AUTOUPDATER` (background only) or `DISABLE_UPDATES` (every update path) is set, in the
+environment or in settings' `env`; `autoUpdatesChannel` is `latest` (default) or `stable`
+(SchemaStore's settings schema). ⚠️ What `claude update` prints when it does install a version, or
+fails, hasn't been seen yet.
+
+✅ **Slash commands only run at the start of a message.** Checked with 2.1.284 against the mock,
+with a user command `greet` (`commands/greet.md` in a sandbox `CLAUDE_CONFIG_DIR`): `/greet alice`
+reached the API as the command's expanded body, but `please /greet bob now` and `hello there
+/clear` reached it as the literal text, with no `local_command` in the `result` and no
+`conversation_reset`. A command later in a message is left to the model: the Skill tool's
+description says "Users may also ask for one by name (`/<name>`, or "slash command"); that's a
+request to invoke it", and that built-in commands (`/help`, `/clear`) aren't skills. So a mid-message
+`/<skill>` works through the model the same way in stream-json as in the terminal, and Claude Deck
+only needs its command list to open anywhere in the reply box. The `initialize` response's
+`commands` entries are `{name, description, argumentHint}`, plus `builtin: true` for everything
+Claude Code ships (local commands such as `clear` and bundled skills such as `dataviz` alike) and
+`aliases` on some; nothing tells a local command from a skill.
+
 ✅ **`/compact`** sent as a user message works in stream-json. You get `system/status` `{status:
 'compacting'}`, then `{status: null, compact_result: 'success'}`, then `system/init`, then
 `system/compact_boundary` `{compact_metadata: {trigger: 'manual'|'auto', pre_tokens, post_tokens,

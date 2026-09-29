@@ -50,7 +50,7 @@ node tools/make-icons.js   # regenerate public/icons after changing the mascot g
   reduction rule that blocks executables that aren't prevalent (Electron and node-pty were tried and
   blocked). Everything runs on `node.exe`, `wt.exe`, Edge, `claude.exe`, `git` (with the GitHub CLI,
   for *Check for updates*) and Windows built-ins (`powershell.exe`, `reg.exe`, `where.exe`,
-  `schtasks.exe`, `explorer.exe`, `choice.exe`; see docs/ARCHITECTURE.md). Don't work around it, for
+  `schtasks.exe`, `explorer.exe`, `choice.exe`, `conhost.exe`; see docs/ARCHITECTURE.md). Don't work around it, for
   example with runtime-compiled C# or P/Invoke.
 - **Claude Deck makes no Claude API calls.** It reads files Claude Code writes and relays what the
   user types. Tests and checks never hit the real API: use `test/fixtures/fake-claude.js`, or the

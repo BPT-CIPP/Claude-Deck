@@ -892,6 +892,14 @@ pre.code {
 .model-picker { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .model-picker select { min-width: 150px; }
 .facts .model-picker select, .facts select { font-size: 12.5px; padding: 2px 22px 2px 6px; }
+/* Looks like the dropdowns beside it; opens the model menu with its flyouts (Deck.modelPicker). */
+.model-btn { display: inline-flex; align-items: center; gap: 8px; min-width: 150px; justify-content: space-between; text-align: left; }
+.model-btn-arrow { color: var(--muted); font-size: 11px; }
+.facts .model-btn { font-size: 12.5px; padding: 2px 6px; min-width: 0; }
+.model-menu .hm-sub { min-width: 220px; }
+/* A family holding the current model: the check sits just before its arrow. */
+.model-menu .hm-check + .hm-arrow { margin-left: 8px; }
+.hm-sub.hm-sub-left { left: auto; right: 100%; }
 
 
 .req {

@@ -148,7 +148,7 @@
     const value = getPath(T.model, p);
     const listId = `dl-${p.replace(/\W/g, '-')}`;
     if (p === 'model') {
-      return Deck.modelPicker(T.ctx.boot.enums.models, typeof value === 'string' ? value : '', (v) => { setValue(p, v || undefined); refreshRow(p); }, 'Not set (default)');
+      return Deck.modelPicker(T.ctx.boot.models, typeof value === 'string' ? value : '', (v) => { setValue(p, v || undefined); refreshRow(p); }, 'Not set (default)');
     }
     if (def.type === 'boolean') {
       const seg = h('div', { class: 'seg', role: 'group', 'aria-label': p });

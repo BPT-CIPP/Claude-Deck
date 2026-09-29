@@ -8,7 +8,7 @@ const { sandbox } = require('./helpers');
 
 const box = sandbox();
 const prefs = require('../src/prefs');
-const { ChatManager, describeSuggestion, STREAM_ARGS } = require('../src/chat');
+const { ChatManager, describeSuggestion, safeFileName, STREAM_ARGS } = require('../src/chat');
 
 const FAKE = path.join(__dirname, 'fixtures', 'fake-claude.js');
 const cwd = path.join(box.root, 'project');
@@ -98,6 +98,8 @@ test('effort changes for the running session, and back to the default', async ()
 const near = (a, b) => Math.abs(a - b) < 1e-9;
 
 test('the current cost and tokens start again after /clear', async () => {
+  // The chat keeps its messages here, so every reply can be counted across the /clear.
+  prefs.save({ clearChatOnClear: false });
   const c = mgr.create({ cwd, prompt: 'hello' });
   const its = () => mgr.detail(c.id).items;
   const replies = () => its().filter((i) => i.kind === 'result').length;
@@ -126,8 +128,86 @@ test('the current cost and tokens start again after /clear', async () => {
     assert.ok(near(sum().chatCost, 0.01));
     assert.strictEqual(sum().tokens.input, 100, 'only the new conversation');
   } finally {
+    prefs.save({ clearChatOnClear: true });
     await mgr.end(c.id);
   }
+});
+
+test('/clear empties the chat too, unless that preference is off', async () => {
+  assert.strictEqual(prefs.load().clearChatOnClear, true, 'on by default');
+  const c = mgr.create({ cwd, prompt: 'first prompt' });
+  const its = () => mgr.detail(c.id).items;
+  const replies = () => its().filter((i) => i.kind === 'result').length;
+  const cleared = () => its().some((i) => i.kind === 'note' && /^Context cleared/.test(i.text));
+  let resets = 0;
+  const onItem = (e) => { if (e.id === c.id && e.reset) resets++; };
+  mgr.on('item', onItem);
+  try {
+    await waitFor(() => replies() === 1, 'first reply');
+    mgr.send(c.id, '/clear');
+    await waitFor(() => cleared() && replies() === 1, '/clear done');
+    assert.deepStrictEqual(its().map((i) => i.kind), ['note', 'result'], 'only the note and the /clear result are left');
+    assert.strictEqual(resets, 1, 'the page is told to load the chat again');
+    assert.deepStrictEqual(mgr.detail(c.id).earlierPrompts, ['first prompt', '/clear'], 'kept for ↑ in the reply box');
+
+    mgr.send(c.id, 'second prompt');
+    await waitFor(() => replies() === 2, 'reply after /clear');
+    prefs.save({ clearChatOnClear: false });
+    mgr.send(c.id, '/clear');
+    await waitFor(() => replies() === 3, 'second /clear');
+    assert.ok(its().some((i) => i.kind === 'user' && i.text === 'second prompt'), 'with the preference off, the messages stay');
+    assert.strictEqual(its().filter((i) => i.kind === 'note' && /^Context cleared/.test(i.text)).length, 2);
+    assert.strictEqual(resets, 1);
+  } finally {
+    mgr.off('item', onItem);
+    prefs.save({ clearChatOnClear: true });
+    await mgr.end(c.id);
+  }
+});
+
+test('/clear keeps messages still waiting in line', () => {
+  const chat = mgr._blank({ id: 'clear-queue' });
+  chat.past = [{ kind: 'user', text: 'from the transcript' }, { kind: 'assistant', text: 'reply' }];
+  chat.items = [
+    { kind: 'user', text: 'sent', n: 1 },
+    { kind: 'assistant', text: 'reply', n: 2 },
+    { kind: 'user', text: 'taken back', withdrawn: true, n: 3 },
+    { kind: 'user', text: 'waiting', queued: true, n: 4 },
+  ];
+  mgr._clearItems(chat);
+  assert.deepStrictEqual(chat.items.map((i) => i.text), ['waiting']);
+  assert.deepStrictEqual(chat.past, []);
+  assert.deepStrictEqual(chat.earlierPrompts, ['from the transcript', 'sent']);
+});
+
+test('a dropped file is kept in the data folder under a safe name', async () => {
+  const c = mgr.create({ cwd });
+  try {
+    const data = Buffer.from('%PDF-1.4 not really a PDF');
+    const res = mgr.saveFile(c.id, { name: 'Q3 report.pdf', data: data.toString('base64') });
+    assert.ok(res.path.startsWith(path.join(box.dataDir, 'attachments', c.id) + path.sep), res.path);
+    assert.strictEqual(path.basename(res.path), 'Q3 report.pdf');
+    assert.deepStrictEqual(fs.readFileSync(res.path), data);
+    // The same name twice doesn't overwrite the first.
+    const again = mgr.saveFile(c.id, { name: 'Q3 report.pdf', data: '' });
+    assert.notStrictEqual(again.path, res.path);
+    assert.strictEqual(fs.readFileSync(res.path).length, data.length);
+    assert.throws(() => mgr.saveFile(c.id, { name: 'x.txt', data: 'not base64!' }), /couldn't be read/);
+  } finally {
+    await mgr.end(c.id);
+  }
+});
+
+test('dropped file names are made safe for Windows', () => {
+  assert.strictEqual(safeFileName('..\\..\\evil.txt'), 'evil.txt');
+  assert.strictEqual(safeFileName('a/b/c.pdf'), 'c.pdf');
+  assert.strictEqual(safeFileName('what?<now>.md'), 'what__now_.md');
+  assert.strictEqual(safeFileName('trailing. . '), 'trailing');
+  assert.strictEqual(safeFileName('..'), 'file');
+  assert.strictEqual(safeFileName('CON.txt'), 'file');
+  assert.strictEqual(safeFileName(''), 'file');
+  assert.strictEqual(safeFileName(`${'x'.repeat(200)}.pdf`).length, 120);
+  assert.ok(safeFileName(`${'x'.repeat(200)}.pdf`).endsWith('.pdf'));
 });
 
 test('compact summarizes the conversation, and waits until Claude is done', async () => {

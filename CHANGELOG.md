@@ -6,6 +6,39 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.9.0] - 2026-09-29
+
+### Added
+- **Clear the chat on /clear** (Claude Deck Preferences → Appearance, on by default): `/clear` also
+  clears the chat's messages, as Claude Code clears its screen. Messages still queued stay, and
+  **↑** still brings back your earlier messages.
+- Dropping a file that isn't an image (a PDF, say) on the reply box puts its path in your message,
+  as dropping a file into Claude Code's terminal does. Claude reads it from a copy kept in Claude
+  Deck's data folder.
+
+- The model menus (chat header, New session, Claude Code Settings) have a flyout for each model,
+  named with its version as your Claude Code reports it (*Opus 5.5 ▸*, *Sonnet 5.5 ▸*, *Fable 5.1 ▸*,
+  *Haiku 4.5 ▸*), listing its variants: the latest, with a 1M-token context, and pinned to that
+  version. The list comes from Claude Code itself and is read again whenever Claude Code updates,
+  so a new model shows up without a Claude Deck update.
+- **Update Claude Code now** in Claude Deck Preferences → Claude Code runs `claude update`, and the
+  section says whether Claude Code updates itself (and when it's been told not to).
+
+### Changed
+- The slash command list opens wherever you type `/` in the reply box, not only at the start, as in
+  Claude Code. Picking a command replaces just that word. A command at the start of a message runs
+  as before; one later in it asks Claude to run it.
+
+### Fixed
+- Dropping a PDF or another file that isn't an image on the reply box opened it in Edge in place of
+  Claude Deck. A file dropped anywhere else in the window now does nothing.
+- The sign-in task's supervisor showed as an open PowerShell window (a Windows Terminal tab where
+  Terminal is the default terminal app), printing "Claude Deck is already running" every 30
+  seconds after a restart. It now runs with no window. Turn *Start with Windows* off and on again,
+  or run `.\Start-ClaudeDeck.ps1 -InstallStartup`, to update an existing task.
+- **↑** stopped at a recalled message that was a slash command (such as `/clear`), because the
+  command list opened and took the next **↑**. The list stays closed while you step through.
+
 ## [1.8.1] - 2026-09-28
 
 ### Fixed
@@ -226,6 +259,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.9.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.8.1...v1.9.0
 [1.8.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.7.0...v1.7.1

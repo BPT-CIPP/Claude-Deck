@@ -549,7 +549,7 @@
     let modeFact = isChat(it) ? it.permissionMode || null : null;
     if (isChat(it) && it.state !== 'exited') {
       // "claude-" left off the default's name, to keep the control row on one line.
-      modelFact = Deck.modelPicker(S.boot.enums.models, it.requestedModel || '',(m) => run("Couldn't change the model", () => api('POST', `/api/chats/${it.id}/model`, { model: m })), `Default (${it.model ? it.model.replace(/^claude-/, '') : 'from settings'})`);
+      modelFact = Deck.modelPicker(S.boot.models, it.requestedModel || '',(m) => run("Couldn't change the model", () => api('POST', `/api/chats/${it.id}/model`, { model: m })), `Default (${it.model ? it.model.replace(/^claude-/, '') : 'from settings'})`);
       effortFact = h('select', { class: 'small', 'aria-label': 'Effort', onchange: (e) => run("Couldn't change the effort", () => api('POST', `/api/chats/${it.id}/effort`, { effort: e.target.value })) },
         h('option', { value: '' }, 'Default'),
         S.boot.enums.efforts.map((v) => h('option', { value: v, selected: v === it.requestedEffort }, v)));
@@ -916,7 +916,8 @@
   function headInUse(pane) {
     const head = pane.querySelector('.detail-head');
     const a = document.activeElement;
-    return Boolean(head && a && head.contains(a) && a.matches('input, select, textarea'));
+    // The model menu is on <body>, so it counts while it's open.
+    return Boolean(head && ((a && head.contains(a) && a.matches('input, select, textarea')) || document.querySelector('.model-menu')));
   }
   // ...and catches up as soon as they're done.
   document.addEventListener('focusout', (e) => {
@@ -1064,6 +1065,7 @@
       const d = await api('GET', `/api/chats/${it.id}`);
       if (!S.chat || S.chat.id !== it.id) return;
       S.chat.past = d.past || [];
+      S.chat.earlierPrompts = d.earlierPrompts || [];
       S.chat.commands = d.commands || [];
       S.chat.tasks = d.tasks || [];
       renderTasksPanel();
@@ -1762,8 +1764,10 @@
     if (!S.chat) return [];
     const live = [...S.chat.items.values()].filter((x) => x.kind === 'user' && !x.withdrawn && !x.queued).sort((a, b) => b.n - a.n).map((x) => x.text);
     const past = (S.chat.past || []).filter((x) => x.kind === 'user').map((x) => x.text).reverse();
+    // From before a /clear that emptied the chat.
+    const earlier = [...(S.chat.earlierPrompts || [])].reverse();
     const out = [];
-    for (const t of [...live, ...past]) {
+    for (const t of [...live, ...past, ...earlier]) {
       if (t && t.trim() && !/^\[\d+ images?\]$/.test(t) && out[out.length - 1] !== t) out.push(t);
     }
     return out;
@@ -1782,11 +1786,21 @@
       ta.style.height = 'auto';
       ta.style.height = `${Math.min(ta.scrollHeight, window.innerHeight * 0.4)}px`;
     };
+    // The /command being typed at the cursor, anywhere in the message as in Claude Code: a / at the
+    // start or after a space, with the cursor at the end of that word. Claude runs one at the start
+    // itself; one later in the message is for Claude to run (the Skill tool takes /<name> as asking).
+    const slashWord = () => {
+      if (ta.selectionStart !== ta.selectionEnd) return null;
+      const at = ta.selectionStart;
+      const m = /(^|\s)\/(\S*)$/.exec(ta.value.slice(0, at));
+      if (!m || /^\S/.test(ta.value.slice(at))) return null;
+      return { start: m.index + m[1].length, end: at, query: m[2] };
+    };
     const drawSlash = () => {
-      const v = ta.value;
-      const m = /^\/(\S*)$/.exec(v);
+      // Not while ↑ steps through earlier messages: the list would take the next ↑.
+      const w = browsing() ? null : slashWord();
       const commands = (S.chat && S.chat.commands) || [];
-      slashItems = m ? commands.filter((c) => c.name.toLowerCase().startsWith(m[1].toLowerCase())).slice(0, 8) : [];
+      slashItems = w ? commands.filter((c) => c.name.toLowerCase().startsWith(w.query.toLowerCase())).slice(0, 8) : [];
       slashIndex = Math.min(slashIndex, Math.max(0, slashItems.length - 1));
       clear(slash);
       slash.hidden = !slashItems.length;
@@ -1797,9 +1811,15 @@
     };
     const pick = (i) => {
       const c = slashItems[i];
-      if (!c) return;
-      ta.value = `/${c.name} `;
+      const w = slashWord();
+      if (!c || !w) return;
+      // Only the word being typed is replaced; the rest of the message stays.
+      const word = `/${c.name} `;
+      const rest = ta.value.slice(w.end).replace(/^ /, '');
+      ta.value = ta.value.slice(0, w.start) + word + rest;
+      ta.setSelectionRange(w.start + word.length, w.start + word.length);
       S.drafts[it.id] = ta.value;
+      autosize();
       drawSlash();
       ta.focus();
     };
@@ -1825,6 +1845,30 @@
         }
       }
       drawTray();
+      ta.focus();
+    };
+    // Any other dropped file: Claude Deck keeps a copy and types its path at the cursor (quoted if it
+    // has spaces), as dropping a file into Claude Code's terminal does. Claude reads it from there.
+    const insertText = (text) => {
+      const before = ta.value.slice(0, ta.selectionStart);
+      const after = ta.value.slice(ta.selectionEnd);
+      const typed = `${before && !/\s$/.test(before) ? ' ' : ''}${text}${/^\s/.test(after) ? '' : ' '}`;
+      ta.value = before + typed + after;
+      ta.setSelectionRange(before.length + typed.length, before.length + typed.length);
+      S.drafts[it.id] = ta.value;
+      autosize();
+    };
+    const addOtherFiles = async (files) => {
+      for (const f of files) {
+        try {
+          if (f.size > MAX_FILE_BYTES) throw new Error('It is larger than 40 MB. Put it in the project folder and name it in your message instead.');
+          const data = (await readAsDataUrl(f)).replace(/^data:[^,]*,/, '');
+          const res = await api('POST', `/api/chats/${it.id}/files`, { name: f.name, data });
+          insertText(/\s/.test(res.path) ? `"${res.path}"` : res.path);
+        } catch (err) {
+          toast(`Couldn't attach ${f.name}: ${err.message}`, 'error');
+        }
+      }
       ta.focus();
     };
 
@@ -1912,6 +1956,9 @@
     };
 
     ta.addEventListener('input', () => { S.drafts[it.id] = ta.value; autosize(); drawSlash(); });
+    // The command list follows the cursor: it opens or closes as the cursor moves onto or off a /word.
+    ta.addEventListener('click', drawSlash);
+    ta.addEventListener('keyup', (e) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) drawSlash(); });
     // Ctrl+V: pasted images come in with the paste event (no permission needed).
     ta.addEventListener('paste', (e) => {
       const files = [...(e.clipboardData ? e.clipboardData.items : [])].filter((x) => x.kind === 'file' && x.type.startsWith('image/')).map((x) => x.getAsFile()).filter(Boolean);
@@ -1957,7 +2004,7 @@
 
     const picker = h('input', { type: 'file', accept: IMAGE_TYPES.join(','), multiple: true, hidden: true });
     picker.addEventListener('change', () => { addFiles([...picker.files]); picker.value = ''; });
-    const attachBtn = h('button', { type: 'button', class: 'ghost attach-btn', title: 'Attach images (or paste with Ctrl+V or Alt+V, or drop them here)', onclick: () => picker.click() }, 'Image');
+    const attachBtn = h('button', { type: 'button', class: 'ghost attach-btn', title: 'Attach images (or paste with Ctrl+V or Alt+V, or drop them here). Drop any other file here to add its path.', onclick: () => picker.click() }, 'Image');
     const sendBtn = h('button', { type: 'button', class: 'primary send-btn', onclick: () => submit(false) }, 'Send');
     const interruptBtn = h('button', { type: 'button', class: 'danger interrupt-btn', hidden: true, onclick: () => submit(true), title: 'Stop what Claude is doing, and send your message now if you typed one' }, 'Interrupt');
     const ended = h('div', { class: 'composer-ended', hidden: true },
@@ -1969,13 +2016,20 @@
       tray,
       h('div', { class: 'composer-row' }, ta, h('div', { class: 'composer-buttons' }, attachBtn, sendBtn, interruptBtn), picker),
       h('div', { class: 'composer-hint' }, 'Enter sends. Shift+Enter adds a line. Type / for commands. Ctrl+V or Alt+V pastes an image. Esc goes to the session list.'));
-    // Drop images anywhere on the reply box.
+    // Drop files anywhere on the reply box: images are attached, anything else goes in by path.
+    // Every dropped file is handled here; left to Edge, it would open the file in place of Claude Deck.
     box.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); box.classList.add('dropping'); } });
     box.addEventListener('dragleave', () => box.classList.remove('dropping'));
     box.addEventListener('drop', (e) => {
       box.classList.remove('dropping');
-      const files = [...e.dataTransfer.files].filter((f) => f.type.startsWith('image/'));
-      if (files.length) { e.preventDefault(); addFiles(files); }
+      const files = [...e.dataTransfer.files];
+      if (!files.length) return;
+      e.preventDefault();
+      if (ta.disabled) return;
+      const images = files.filter((f) => IMAGE_TYPES.includes(f.type));
+      const others = files.filter((f) => !images.includes(f));
+      if (images.length) addFiles(images);
+      if (others.length) addOtherFiles(others);
     });
     drawTray();
     return box;
@@ -2007,12 +2061,15 @@
   const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
   const MAX_IMAGE_BYTES = 3.75 * 1024 * 1024; // 5 MB once base64-encoded
   const MAX_IMAGE_SIDE = 2000;
+  // A dropped file that isn't an image, as the server keeps it (src/chat.js saveFile).
+  const MAX_FILE_BYTES = 40 * 1024 * 1024;
 
   function readAsDataUrl(blob) {
     return new Promise((resolve, reject) => {
       const r = new FileReader();
       r.onload = () => resolve(r.result);
-      r.onerror = () => reject(new Error('That image could not be read.'));
+      // A dropped folder lands here too: it can't be read as a file.
+      r.onerror = () => reject(new Error('That file could not be read.'));
       r.readAsDataURL(blob);
     });
   }
@@ -2515,7 +2572,7 @@
   }
 
   function mountModelPicker(value) {
-    L.model = Deck.modelPicker(S.boot.enums.models, value || '', () => onLaunchChange(), 'From your settings');
+    L.model = Deck.modelPicker(S.boot.models, value || '', () => onLaunchChange(), 'From your settings');
     clear($('#l-model')).appendChild(L.model);
   }
 
@@ -3033,6 +3090,30 @@
     return section;
   }
 
+  function claudeUpdateHint(a) {
+    if (!a) return '';
+    if (!a.enabled) return `Automatic updates are off (${a.blockedBy} is set). New models, such as a new Sonnet, show up once Claude Code is updated.`;
+    return `Claude Code updates itself in the background${a.channel === 'stable' ? ', from the stable channel' : ''}. New models show up in the model menus once it has.`;
+  }
+
+  // Claude Code's own `claude update`. Open chats keep the version they started with until resumed.
+  async function updateClaude(btn) {
+    btn.disabled = true;
+    btn.textContent = 'Checking…';
+    try {
+      const res = await run("Couldn't update Claude Code", () => api('POST', '/api/claude/update'));
+      if (!res) return;
+      S.boot.claude = res.claude;
+      const changed = res.claude.version !== res.before;
+      if (!res.ok) toast(`Claude Code couldn't update: ${res.output.split('\n').pop()}`, 'error');
+      else toast(changed ? `Claude Code updated to ${res.claude.version}. Resume open chats to use it.` : `Claude Code is up to date (${res.claude.version || 'unknown version'})`);
+      if (changed) S.boot.models = await api('GET', '/api/models');
+      if (S.view === 'prefs') renderPrefs();
+    } finally {
+      if (btn.isConnected) { btn.disabled = false; btn.textContent = 'Update Claude Code now'; }
+    }
+  }
+
   function renderPrefs() {
     const root = clear($('#prefs-root'));
     const p = S.prefs;
@@ -3046,7 +3127,10 @@
       prefRow('Program', 'Leave empty to find it automatically',
         h('div', { class: 'row' }, pathInput,
           h('button', { class: 'ghost', onclick: async () => { await savePrefs({ claudePath: pathInput.value.trim() }, true); const info = await run("Couldn't check Claude Code", () => api('POST', '/api/claude/detect')); if (info) { S.boot.claude = info; renderPrefs(); toast(info.path ? `Found ${info.version || 'Claude Code'}` : 'Claude Code was not found', info.path ? 'info' : 'error'); } } }, 'Save and check')),
-        detected)));
+        detected),
+      claude.path ? prefRow('Updates', claudeUpdateHint(claude.autoUpdate),
+        h('div', { class: 'row' },
+          h('button', { class: 'ghost', title: "Runs Claude Code's own claude update", onclick: (e) => updateClaude(e.currentTarget) }, 'Update Claude Code now'))) : null));
 
     const nameInput = h('input', { type: 'text', value: p.windowName });
     const profileInput = h('input', { type: 'text', value: p.wtProfile, placeholder: 'Your default profile' });
@@ -3088,7 +3172,8 @@
       prefRow('Theme', null, h('select', { 'aria-label': 'Theme', onchange: (e) => savePrefs({ theme: e.target.value }) },
         THEME_GROUPS.map(([group, themes]) => h('optgroup', { label: group },
           themes.map(([v, t]) => h('option', { value: v, selected: p.theme === v }, t)))))),
-      prefRow('Tool calls', null, toggle('showToolIcons', 'Show an icon beside each tool call in a chat'))));
+      prefRow('Tool calls', null, toggle('showToolIcons', 'Show an icon beside each tool call in a chat')),
+      prefRow('/clear', 'Claude starts a new conversation either way; ↑ still recalls your earlier messages', toggle('clearChatOnClear', "Clear the chat's messages too, as Claude Code clears its screen"))));
 
     root.appendChild(h('section', { class: 'pref-section' },
       h('h2', null, 'Billing'),
@@ -3200,6 +3285,8 @@
     es.addEventListener('chat', (e) => onChatEvent(JSON.parse(e.data)));
     es.addEventListener('chat-tasks', (e) => onChatTasks(JSON.parse(e.data)));
     es.addEventListener('usage', (e) => { S.usage = JSON.parse(e.data); renderUsage(); });
+    // Claude Code reported a different model list (a new version, say): menus opened from now on use it.
+    es.addEventListener('models', (e) => { S.boot.models = JSON.parse(e.data); });
     es.addEventListener('open', () => {
       setConn(true);
       // After a reconnect, reload the open chat in case events were missed. If the server that
@@ -3391,6 +3478,15 @@
     $('#btn-enable-notif').addEventListener('click', async () => { await Notification.requestPermission(); updateNotifBanner(); });
     $('#btn-dismiss-notif').addEventListener('click', () => { store.set('notifDismissed', true); updateNotifBanner(); });
     document.addEventListener('keydown', onKey);
+    // A file dropped outside the reply box does nothing; left to Edge, it would open the file in
+    // place of the dashboard. (The reply box handles its own drops first.)
+    const noDrop = (e) => {
+      if (![...e.dataTransfer.types].includes('Files')) return;
+      e.preventDefault();
+      if (!e.target.closest || !e.target.closest('.composer')) e.dataTransfer.dropEffect = 'none';
+    };
+    document.addEventListener('dragover', noDrop);
+    document.addEventListener('drop', noDrop);
     // Installable-app support: the service worker shows an offline page when the server is down.
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
     window.addEventListener('beforeinstallprompt', (e) => {

@@ -11,6 +11,7 @@
 //   control_request (can_use_tool), control_cancel_request, control_response.
 // Verified against claude.exe 2.1.281 with a local mock API, so no model calls were made.
 
+const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
@@ -28,6 +29,8 @@ const { readJson, writeJsonAtomic, parseArgString, clip, UserError } = require('
 // as they're written (text arriving a chunk at a time read as choppy); the spinner covers the wait.
 const STREAM_ARGS = ['--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json', '--permission-prompt-tool', 'stdio'];
 const MAX_ITEMS = 1500;
+// Prompts kept for ↑ in the reply box after /clear empties a chat.
+const MAX_PROMPTS = 200;
 // How often running subagents' transcripts are read for live steps and token usage.
 const AGENT_POLL_MS = 1500;
 // Sleep detection: nothing runs while Windows sleeps, so on waking the time since the last check
@@ -117,6 +120,14 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGES = 20;
 const BASE64 = /^[A-Za-z0-9+/]+=*$/;
 const THUMB = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/;
+// A dropped file, base64-encoded, has to fit in one request (the server takes up to 60 MB).
+const MAX_FILE_BYTES = 40 * 1024 * 1024;
+
+// A dropped file's name, safe to create on Windows: no folders, reserved characters or device names.
+function safeFileName(name) {
+  const base = String(name || '').split(/[\\/]/).pop().replace(/[<>:"|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(-120);
+  return base && !/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(base) ? base : 'file';
+}
 
 // A message to send: a string, or { text, images: [{ mediaType, data, thumb }] }.
 function normalizeMessage(input) {
@@ -202,6 +213,7 @@ class ChatManager extends EventEmitter {
       requests: new Map(),
       items: [],
       past: null,
+      earlierPrompts: [], // your prompts from before a /clear that emptied the chat, oldest first
       seq: 0,
       nextItem: 1,
       commands: [],
@@ -336,6 +348,8 @@ class ChatManager extends EventEmitter {
       }
       chat.commands = commandList(res.commands);
       this.emit('item', { id: chat.id, meta: true });
+      // The models this Claude Code offers, with their versions, for the model menus (src/models.js).
+      if (Array.isArray(res.models)) this.emit('models', res.models);
       this._readContext(chat);
     }).catch(() => {});
   }
@@ -486,6 +500,7 @@ class ChatManager extends EventEmitter {
         // /clear: Claude starts a new conversation (a new session id arrives with the next init).
         // The current cost and tokens start again at zero.
         chat.context = null;
+        if (prefsStore.load().clearChatOnClear) this._clearItems(chat);
         this._push(chat, { kind: 'note', text: 'Context cleared. Claude starts a new conversation from here.' });
         this._changed(chat);
         break;
@@ -692,6 +707,24 @@ class ChatManager extends EventEmitter {
     if (wasBusy && images.length) chat.queuedImages.set(uuid, images.map((img) => ({ mediaType: img.mediaType, data: img.data, thumb: img.thumb })));
     this._changed(chat);
     return { queued: chat.queued > 0 };
+  }
+
+  // A file dropped on the reply box that isn't an image: { name, data (base64) }. The page can't
+  // see where a dropped file is on disk, so a copy is kept in Claude Deck's data folder and its path
+  // goes in the prompt, as dropping a file into Claude Code's terminal types its path. Claude then
+  // reads it with its own tools. Returns { path }.
+  saveFile(id, input) {
+    const chat = this._get(id);
+    const raw = input && typeof input === 'object' ? input : {};
+    const data = typeof raw.data === 'string' ? raw.data : '';
+    if (data && !BASE64.test(data)) throw new UserError("That file couldn't be read.");
+    const bytes = Buffer.from(data, 'base64');
+    if (bytes.length > MAX_FILE_BYTES) throw new UserError('That file is larger than 40 MB. Put it in the project folder and name it in your message instead.');
+    const dir = path.join(paths.dataDir(), 'attachments', chat.id, crypto.randomBytes(4).toString('hex'));
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, safeFileName(raw.name));
+    fs.writeFileSync(file, bytes);
+    return { path: file };
   }
 
   // Takes the messages still waiting in Claude's queue back out, oldest first, so they can be
@@ -994,6 +1027,19 @@ class ChatManager extends EventEmitter {
     this.emit('item', { id: chat.id, seq: chat.seq, item });
   }
 
+  // /clear with Clear the chat on /clear on (Claude Deck Preferences): the messages go, as Claude
+  // Code clears its screen. Messages still waiting in line stay, since Claude reads them in the new
+  // conversation, and your prompts are kept for ↑ in the reply box, as Claude Code keeps its history.
+  _clearItems(chat) {
+    const prompts = [...(chat.past || []), ...chat.items]
+      .filter((x) => x.kind === 'user' && !x.queued && !x.withdrawn && typeof x.text === 'string' && x.text.trim())
+      .map((x) => x.text);
+    chat.earlierPrompts = [...chat.earlierPrompts, ...prompts].slice(-MAX_PROMPTS);
+    chat.items = chat.items.filter((x) => x.kind === 'user' && x.queued);
+    chat.past = [];
+    this.emit('item', { id: chat.id, reset: true });
+  }
+
   _resolveItem(chat, requestId, status, label) {
     const it = chat.items.findLast((x) => x.requestId === requestId);
     if (!it) return;
@@ -1102,7 +1148,7 @@ class ChatManager extends EventEmitter {
         if (!chat.past) chat.past = []; // no transcript to show; don't keep looking
       });
     }
-    return { ...this.summary(chat), items: chat.items, past: chat.past || [], seq: chat.seq, commands: chat.commands, tasks: this._taskList(chat) };
+    return { ...this.summary(chat), items: chat.items, past: chat.past || [], earlierPrompts: chat.earlierPrompts, seq: chat.seq, commands: chat.commands, tasks: this._taskList(chat) };
   }
 
   list() {
@@ -1123,4 +1169,4 @@ class ChatManager extends EventEmitter {
   }
 }
 
-module.exports = { ChatManager, describeSuggestion, STREAM_ARGS };
+module.exports = { ChatManager, describeSuggestion, safeFileName, STREAM_ARGS };

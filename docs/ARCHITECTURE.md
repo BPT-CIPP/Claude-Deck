@@ -62,7 +62,9 @@ src/usage.js            plan usage limits (the one automatic outbound request; t
 src/billing.js          billing guard: refuses sessions that would bill an API or cloud account
 src/update.js           Check for updates: git fetch through `gh auth git-credential`, fast-forward a clean main
 src/app-install.js      finds the installed Edge app; sign-in task status and toggle
-src/prefs.js, registry.js, paths.js, util.js, claude-locate.js
+src/models.js           the model menus: Claude Code's own model list (versions), kept per Claude Code version
+src/claude-locate.js    finds claude.exe; its version, auto-update status and `claude update`
+src/prefs.js, registry.js, paths.js, util.js
 public/                 index.html, app.css, lib.js, app.js, settings-ui.js, spinner-verbs.js,
                         tick-worker.js, manifest.webmanifest, sw.js, offline.html, icons/, vendor/
 tools/check-syntax.js   parses every .js file, and Start-ClaudeDeck.ps1 with Windows PowerShell 5.1
@@ -81,8 +83,10 @@ test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes),
   exceptions. Electron and node-pty were tried and blocked. Everything runs on `node.exe`, `wt.exe`,
   Edge, `claude.exe` and Windows built-ins (`explorer.exe`, `powershell.exe` (also to check a
   process's start time before ending an outside session), `schtasks.exe`, `where.exe`, `reg.exe`
-  (the billing guard reads Windows' stored environment and the Claude Code policy key), and
-  `choice.exe` for the tab host's resume prompt). *Check for updates* also runs `git`, signed in
+  (the billing guard reads Windows' stored environment and the Claude Code policy key),
+  `choice.exe` for the tab host's resume prompt, and `conhost.exe --headless`, which the sign-in task
+  runs its PowerShell supervisor under: `-WindowStyle Hidden` doesn't hide a console that Windows
+  Terminal hosts, as it does when Terminal is the default terminal app). *Check for updates* also runs `git`, signed in
   through the GitHub CLI (`gh auth git-credential`), both of which a contributor already has. In-app
   chats are possible because Claude's streaming JSON mode needs only pipes, not a terminal.
 - **No Claude API calls.** Everything shown is read from files Claude Code writes, and what the user
@@ -118,10 +122,12 @@ test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes),
 
 Claude Deck's own data is in `%LOCALAPPDATA%\ClaudeDeck\` (or `CLAUDE_DECK_DATA`): `prefs.json`,
 `registry.json` (terminal sessions it launched), `chats.json` (open chats), `tabs\` (tab host status),
-`history-cache.json`, `backups\` (the last 30 versions of each settings file), `rewinds\` (files as
+`history-cache.json`, `models.json` (Claude Code's model list and the version it came from),
+`backups\` (the last 30 versions of each settings file), `rewinds\` (files as
 they were before each of the last 20 restores, for Undo), `trash\` (deleted conversations, removed for
-good after 30 days), `secret.json` (the API token) and `runtime.json` (the running server's pid and
-port).
+good after 30 days), `attachments\<chat id>\` (copies of files dropped on a chat's reply box, which
+Claude reads by path; not cleaned up yet), `secret.json` (the API token) and `runtime.json` (the
+running server's pid and port).
 
 Claude Code's files live in `%USERPROFILE%\.claude\` (or `CLAUDE_CONFIG_DIR`). Claude Deck writes
 there only through the settings editor (`src/settings-files.js`: backup first, refused if the file
