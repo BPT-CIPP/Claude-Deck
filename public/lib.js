@@ -259,10 +259,23 @@
       const open = () => {
         if (wrapF.querySelector('.hm-sub')) return;
         for (const s of menu.querySelectorAll('.hm-sub')) s.remove();
-        const sub = h('div', { class: 'hm-menu hm-sub', role: 'menu', 'aria-label': f.name }, f.items.map((i) => item(i.label, i.value, i.hint)));
+        // The ones that follow the newest version first, then the specific versions under a heading.
+        const firstPinned = f.items.findIndex((i) => i.pinned);
+        const sub = h('div', { class: 'hm-menu hm-sub', role: 'menu', 'aria-label': f.name }, f.items.map((i, n) => {
+          const el = item(i.label, i.value, i.hint);
+          if (!i.pinned) return el;
+          el.classList.add('hm-pinned');
+          return n === firstPinned ? [h('div', { class: 'hm-heading', role: 'presentation' }, 'Specific versions'), el] : el;
+        }));
         wrapF.appendChild(sub);
-        // Opens to the left when there's no room on the right, as Windows menus do.
-        if (sub.getBoundingClientRect().right > window.innerWidth - 8) sub.classList.add('hm-sub-left');
+        // Opens to the left when there's no room on the right, as Windows menus do, and moves up
+        // (scrolling if it's taller than the window) rather than running off the bottom.
+        const s = sub.getBoundingClientRect();
+        if (s.right > window.innerWidth - 8) sub.classList.add('hm-sub-left');
+        const room = window.innerHeight - 16;
+        if (s.height > room) { sub.style.maxHeight = `${room}px`; sub.style.overflowY = 'auto'; }
+        const over = Math.min(s.height, room) + s.top - (window.innerHeight - 8);
+        if (over > 0) sub.style.top = `${-5 - over}px`;
       };
       const trigger = h('button', { type: 'button', role: 'menuitem', class: 'hm-item', 'aria-haspopup': 'menu', onclick: (e) => { e.stopPropagation(); open(); const first = wrapF.querySelector('.hm-sub .hm-item'); if (first) first.focus(); } },
         f.version || f.name, check(mine), h('span', { class: 'hm-arrow', 'aria-hidden': 'true' }, '▸'));
@@ -295,10 +308,16 @@
         const i = list.indexOf(document.activeElement);
         list[(i + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length].focus();
       });
+      // A popover, so it's drawn in the top layer: above a modal such as New session (which covers
+      // everything else on <body>), placed against the window, and not clipped by the modal.
+      menu.setAttribute('popover', 'manual');
       document.body.appendChild(menu);
+      if (menu.showPopover) menu.showPopover();
       btn.setAttribute('aria-expanded', 'true');
       const r = btn.getBoundingClientRect();
-      menu.style.top = `${Math.round(Math.min(r.bottom + 4, window.innerHeight - menu.offsetHeight - 8))}px`;
+      // Below the button, or above it when there's no room below.
+      const below = r.bottom + 4 + menu.offsetHeight <= window.innerHeight - 8;
+      menu.style.top = `${Math.round(below ? r.bottom + 4 : Math.max(8, r.top - 4 - menu.offsetHeight))}px`;
       menu.style.left = `${Math.round(Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)))}px`;
       document.addEventListener('mousedown', onDoc, true);
       document.addEventListener('keydown', onEsc, true);

@@ -6,6 +6,18 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.9.1] - 2026-09-29
+
+### Fixed
+- The model menu's flyouts named the current version "Opus 5.5 only" but earlier versions by model
+  ID (`claude-opus-4-8`), in one mixed list. Each flyout now lists what follows the newest version
+  first (Opus 5.5, Opus 5.5 · 1M context, Opus 5.5 for planning), then, under *Specific versions*,
+  every version by its model ID, newest first: `claude-opus-5-5`, `claude-opus-5-5[1m]`,
+  `claude-opus-5`, `claude-opus-4-8` and so on. Hover one for its name.
+- In the New session window the model menu opened behind the window, so it couldn't be used. It
+  now opens in front, above the button when there's no room below, and a long flyout stays on
+  screen.
+
 ## [1.9.0] - 2026-09-29
 
 ### Added
@@ -259,6 +271,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.9.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.8.1...v1.9.0
 [1.8.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.7.1...v1.8.0

@@ -157,7 +157,16 @@ supportsAdaptiveThinking?, supportsFastMode?, supportsAutoMode?}]`. With 2.1.284
 `sonnet` → `claude-sonnet-5-5`, `haiku` → `claude-haiku-4-5-20251001`. `description` starts with
 the versioned name ("Sonnet 5.5 · Efficient for routine tasks"), which is where Claude Deck's menus
 get it. An alias follows the newest model as Claude Code is updated, so the list is re-read for each
-Claude Code version (`src/models.js`). Initialize alone makes no model request; with
+Claude Code version (`src/models.js`).
+
+⚠️ **The list's shape varies.** Seen with the same 2.1.284: signed in with an API key, the 1M
+variants are separate entries (`opus[1m]` "Opus (1M context)", `sonnet[1m]` "Sonnet 5.5 (1M
+context)") and descriptions carry prices. A chat's initialize on a Claude plan had versioned display
+names ("Opus 5.5", with the version no longer in `description`) and also listed earlier versions by
+full ID, newest first after the current one: `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`,
+`claude-opus-4-8`, `-4-7`, `-4-6`, `claude-sonnet-4-6`. What decides which shape (sign-in, a server
+flag, the account) isn't known, so Claude Deck groups by the family in the alias or ID
+(`familyOf`) and reads the version from the name or the description. Initialize alone makes no model request; with
 `--strict-mcp-config` and no `--mcp-config`, no MCP servers start. About 2 s.
 
 ✅ **Updates.** `claude update` prints `Current version: …`, `Checking for updates to latest
