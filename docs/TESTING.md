@@ -80,6 +80,13 @@ prompts (listed at the top of `test/fixtures/mock-anthropic-api.js`), for exampl
 | `please stream` / `please stream thinking` | a reply streamed in small pieces |
 | `please use tool <Name>` | a call to any tool name (unknown ones come back as errors) |
 
+**Prompts that run a shell command run it for real.** `please run …`, and the subagents' Bash
+calls, make the real `claude.exe` start a shell. On Windows that's Git Bash, and `bash.exe`
+starts Git's `locale.exe`. On a managed PC with Defender's attack surface reduction rule for
+uncommon executables, that is blocked and reported to your security team. Where that rule is on,
+test with the prompts that only reply (`please stream`, `please slow`, `please write`,
+`please ask`).
+
 **Keyboard shortcuts** like Ctrl+Tab and Ctrl+W only reach the page in an app window; in a normal
 browser tab the browser keeps them. To test them, open the sandbox address with
 `msedge --app=<address>`.

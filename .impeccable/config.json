@@ -1,0 +1,44 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "all-caps-body",
+        "value": "*",
+        "files": [
+          "public/index.html"
+        ],
+        "createdAt": "2026-09-29T17:47:22.635Z",
+        "reason": "direction contract (signal box, chosen by user on the decision page 2026-09-29): engraved Bahnschrift capitals on short plate labels and view tabs only"
+      },
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "public/index.html"
+        ],
+        "createdAt": "2026-09-29T17:47:22.762Z",
+        "reason": "direction contract raise from the timetable challenger: two type sizes, rank by weight, capitals, reversed plates and rules"
+      },
+      {
+        "rule": "cream-palette",
+        "value": "*",
+        "files": [
+          "public/index.html"
+        ],
+        "createdAt": "2026-09-29T17:47:22.900Z",
+        "reason": "cream enamel reading shelf is in the signal-box card palette the user chose on the decision page 2026-09-29"
+      },
+      {
+        "rule": "clipped-overflow-container",
+        "value": "*",
+        "files": [
+          "public/index.html"
+        ],
+        "createdAt": "2026-09-29T17:47:42.969Z",
+        "reason": "false positive: .app is the viewport-sized shell; its positioned children (usage popover, splitter) sit inside the viewport; menus use position fixed or the popover API"
+      }
+    ]
+  }
+}

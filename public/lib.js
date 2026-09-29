@@ -79,6 +79,48 @@
     }
   }
 
+  // Drawn icons, one stroke weight, in the text color: Deck.icon('copy'). Built as SVG elements
+  // (never innerHTML). 16x16 grid, 1.5px stroke.
+  const SVG = 'http://www.w3.org/2000/svg';
+  const ICONS = {
+    copy: 'M5.5 5.5h7v7h-7zM3.5 10.5v-7h7',
+    open: 'M9 3h4v4M13 3L7.5 8.5M11 9.5v3.5h-8v-8h3.5',
+    down: 'M4 6.5l4 4 4-4',
+    right: 'M6.5 4l4 4-4 4',
+    check: 'M3.5 8.5l3 3 6-7',
+    close: 'M4.5 4.5l7 7M11.5 4.5l-7 7',
+    star: 'M8 2.5l1.7 3.5 3.8.5-2.8 2.7.7 3.8L8 11.2 4.6 13l.7-3.8-2.8-2.7 3.8-.5z',
+    up: 'M8 13V3.5M4 7.5l4-4 4 4',
+    branch: 'M5 2.5v11M5 10h2.5A3.5 3.5 0 0 0 11 6.5v-4',
+    bars: 'M3 13V9M6.5 13V5M10 13V7.5M13.5 13V3',
+    panel: 'M2.5 3.5h11v9h-11zM6 3.5v9',
+    left: 'M9.5 4l-4 4 4 4',
+    // Tool calls (Preferences > Appearance > Tool calls)
+    terminal: 'M2.5 3.5h11v9h-11zM5 6.5l2 1.5-2 1.5M8.5 10h2.5',
+    file: 'M4 2.5h5l3 3v8H4zM9 2.5v3h3',
+    pen: 'M10.5 3l2.5 2.5-7 7H3.5V10z',
+    folder: 'M2.5 4.5h4l1.5 1.5h5.5v6.5h-11z',
+    search: 'M7 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM10 10l3.5 3.5',
+    globe: 'M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11zM2.5 8h11M8 2.5c-2 2-2 9 0 11M8 2.5c2 2 2 9 0 11',
+    agent: 'M4 5.5h8v6.5H4zM8 3v2.5M6.5 8.5v.5M9.5 8.5v.5',
+    list: 'M6 4.5h7.5M6 8h7.5M6 11.5h7.5M3 4.5h.5M3 8h.5M3 11.5h.5',
+    question: 'M6 6a2 2 0 1 1 2.8 1.8c-.5.3-.8.7-.8 1.2v.5M8 12v.2',
+    clock: 'M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11zM8 5v3l2 1.5',
+    stop: 'M4.5 4.5h7v7h-7z',
+    plug: 'M6 2.5v3M10 2.5v3M4.5 5.5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11.5v2',
+    pointer: 'M4 3l8 4.5-3.5 1 2 3.5-1.5.8-2-3.5-3 2.2z',
+  };
+  Deck.icon = function icon(name, { size = 14, filled = false, label = null } = {}) {
+    const svg = document.createElementNS(SVG, 'svg');
+    const attrs = { viewBox: '0 0 16 16', width: String(size), height: String(size), fill: filled ? 'currentColor' : 'none', stroke: 'currentColor', 'stroke-width': '1.5', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', class: `ico ico-${name}` };
+    if (label) { attrs.role = 'img'; attrs['aria-label'] = label; } else attrs['aria-hidden'] = 'true';
+    for (const [k, v] of Object.entries(attrs)) svg.setAttribute(k, v);
+    const p = document.createElementNS(SVG, 'path');
+    p.setAttribute('d', ICONS[name] || '');
+    svg.appendChild(p);
+    return svg;
+  };
+
   Deck.$ = (sel, root = document) => root.querySelector(sel);
   Deck.$$ = (sel, root = document) => [...root.querySelectorAll(sel)];
   Deck.clear = (el) => { while (el.firstChild) el.removeChild(el.firstChild); return el; };
@@ -178,7 +220,7 @@
       const copyBtn = Deck.h('button', { class: 'code-block-copy', title: 'Copy code' }, 'Copy');
       copyBtn.addEventListener('click', async () => {
         await Deck.copy(code, 'Code copied');
-        copyBtn.textContent = '✓ Copied';
+        copyBtn.textContent = 'Copied';
         setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1800);
       });
       const block = Deck.h('div', { class: 'code-block-wrap' },
@@ -223,7 +265,7 @@
     const draw = () => {
       const c = choices.find((x) => x.value === current);
       const label = other ? 'Other model ID' : c ? c.label : current || defaultLabel;
-      Deck.clear(btn).append(h('span', { class: 'model-btn-label' }, label), h('span', { class: 'model-btn-arrow', 'aria-hidden': 'true' }, '▾'));
+      Deck.clear(btn).append(h('span', { class: 'model-btn-label' }, label), h('span', { class: 'model-btn-arrow' }, Deck.icon('down', { size: 12 })));
       btn.title = c ? `${c.label}: ${c.hint}` : current || defaultLabel;
       btn.setAttribute('aria-label', `Model: ${label}`);
     };
@@ -251,7 +293,7 @@
       draw();
       if (onChange) onChange(v);
     };
-    const check = (on) => (on ? h('span', { class: 'hm-check', 'aria-hidden': 'true' }, '✓') : null);
+    const check = (on) => (on ? h('span', { class: 'hm-check' }, Deck.icon('check', { size: 12 })) : null);
     const item = (label, v, hint) => h('button', { type: 'button', role: 'menuitemradio', class: 'hm-item', 'aria-checked': String(!other && v === current), title: hint || null, onclick: () => choose(v) }, label, check(!other && v === current));
     const family = (f) => {
       const wrapF = h('div', { class: 'hm-flyout' });
@@ -278,7 +320,7 @@
         if (over > 0) sub.style.top = `${-5 - over}px`;
       };
       const trigger = h('button', { type: 'button', role: 'menuitem', class: 'hm-item', 'aria-haspopup': 'menu', onclick: (e) => { e.stopPropagation(); open(); const first = wrapF.querySelector('.hm-sub .hm-item'); if (first) first.focus(); } },
-        f.version || f.name, check(mine), h('span', { class: 'hm-arrow', 'aria-hidden': 'true' }, '▸'));
+        f.version || f.name, check(mine), h('span', { class: 'hm-arrow' }, Deck.icon('right', { size: 12 })));
       wrapF.append(trigger);
       wrapF.addEventListener('mouseenter', open);
       wrapF.addEventListener('keydown', (e) => {

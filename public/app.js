@@ -240,11 +240,34 @@
     await run("Couldn't dismiss", () => api('POST', `/api/sessions/${it.id}/dismiss`));
   }
 
+  // The name plate is edited where it sits: Enter saves, Esc puts it back. Without the header on
+  // screen (another session selected), it asks in a small dialog instead.
   async function rename(it) {
-    const name = await Deck.promptText({ title: 'Rename session', label: 'Name shown in Claude Deck', value: it.name || '' });
-    if (name === null) return;
     const base = isChat(it) ? '/api/chats' : '/api/sessions';
-    await run("Couldn't rename", () => api('PATCH', `${base}/${it.id}`, { name }));
+    const save = (name) => run("Couldn't rename", () => api('PATCH', `${base}/${it.id}`, { name }));
+    const plate = S.selected === it.key ? $('#focus-detail .head-title h2') : null;
+    if (!plate) {
+      const name = await Deck.promptText({ title: 'Rename session', label: 'Name shown in Claude Deck', value: it.name || '' });
+      if (name !== null) await save(name);
+      return;
+    }
+    const input = h('input', { type: 'text', class: 'rename-input', value: it.name || heading(it), 'aria-label': 'Session name', spellcheck: 'false' });
+    let done = false;
+    const finish = async (keep) => {
+      if (done) return;
+      done = true;
+      const name = input.value.trim();
+      input.replaceWith(plate);
+      if (keep && name !== (it.name || '')) await save(name);
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+    });
+    input.addEventListener('blur', () => finish(true));
+    plate.replaceWith(input);
+    input.focus();
+    input.select();
   }
 
   async function recolor(it, color) {
@@ -405,7 +428,9 @@
         const removal = rowRemoval(it);
         list.appendChild(h('div', { class: 'focus-item' },
           h('button', {
-            class: 'focus-row',
+            // route-set: this line was just picked, so its plate runs into the reading shelf once.
+            class: `focus-row${S.routeSet === it.key ? ' route-set' : ''}`,
+            title: heading(it),
             'aria-current': S.selected === it.key ? 'true' : null,
             dataset: { key: it.key },
             style: it.deck ? { '--tag': `var(--c-${it.color || 'slate'})` } : null,
@@ -473,14 +498,14 @@
     closeHeadMenu();
     const menuItem = (label, onclick, extra = {}) => h('button', { type: 'button', role: 'menuitem', class: 'hm-item', onclick, ...extra }, label);
     const colors = () => h('div', { class: 'hm-menu hm-sub', role: 'menu', 'aria-label': 'Tag color' },
-      Object.entries(COLOR_NAMES).map(([k, v]) => menuItem([h('span', { class: 'hm-swatch', style: { '--tag': `var(--c-${k})` } }), v, k === (it.color || 'slate') ? h('span', { class: 'hm-check', 'aria-hidden': 'true' }, '✓') : null],
+      Object.entries(COLOR_NAMES).map(([k, v]) => menuItem([h('span', { class: 'hm-swatch', style: { '--tag': `var(--c-${k})` } }), v, k === (it.color || 'slate') ? h('span', { class: 'hm-check' }, Deck.icon('check', { size: 12 })) : null],
         () => { closeHeadMenu(); recolor(it, k); }, { role: 'menuitemradio', 'aria-checked': String(k === (it.color || 'slate')) })));
     const el = h('div', { class: 'hm-menu', role: 'menu', 'aria-label': 'Session actions' },
       sessionMenuItems(it).map((m) => {
         if (!m.colors) return menuItem(m.label, () => { closeHeadMenu(); m.run(); }, { title: m.title || null });
         const wrap = h('div', { class: 'hm-flyout' });
         const open = () => { if (!wrap.querySelector('.hm-sub')) wrap.appendChild(colors()); };
-        const trigger = menuItem([m.label, h('span', { class: 'hm-arrow', 'aria-hidden': 'true' }, '▸')], (e) => { e.stopPropagation(); open(); const first = wrap.querySelector('.hm-sub .hm-item'); if (first) first.focus(); }, { 'aria-haspopup': 'menu' });
+        const trigger = menuItem([m.label, h('span', { class: 'hm-arrow' }, Deck.icon('right', { size: 12 }))], (e) => { e.stopPropagation(); open(); const first = wrap.querySelector('.hm-sub .hm-item'); if (first) first.focus(); }, { 'aria-haspopup': 'menu' });
         wrap.appendChild(trigger);
         wrap.addEventListener('mouseenter', open);
         wrap.addEventListener('mouseleave', () => { const sub = wrap.querySelector('.hm-sub'); if (sub && !sub.contains(document.activeElement)) sub.remove(); });
@@ -558,8 +583,13 @@
         modes.map((m) => h('option', { value: m, selected: m === (it.permissionMode || 'default') }, m)));
     }
     // One row of controls and meters under the title.
+    // Cost and tokens read like the context meter: the value, and what the latest turn added.
+    const reading = (value, change) => (value === null || value === undefined || value === '' ? null : h('span', { class: 'reading' }, value, change));
+    const costNow = money(it.costUSD);
     const controls = [fact('Model', modelFact), fact('Effort', effortFact), fact('Permissions', modeFact), isChat(it) ? fact('Plugins', pluginsButton(it)) : null,
-      contextFact(it), fact('Current cost', money(it.costUSD)), fact('Current total tokens', tokensFact(it.tokens))].filter(Boolean);
+      contextFact(it),
+      fact('Current cost', reading(costNow, costNow ? turnChange(it, 'cost', it.costUSD, money) : null)),
+      fact('Current total tokens', reading(tokensFact(it.tokens), turnChange(it, 'tokens', tokenSum(it.tokens), tokenText)))].filter(Boolean);
     const menuItems = sessionMenuItems(it);
     const menuBtn = menuItems.length ? h('button', {
       type: 'button',
@@ -569,40 +599,44 @@
       'aria-haspopup': 'menu',
       'aria-expanded': String(headMenu.key === it.key),
       onclick: (e) => { e.stopPropagation(); toggleHeadMenu(it, menuBtn); },
-    }, '▾') : null;
+    }, Deck.icon('down')) : null;
     if (menuBtn && headMenu.key === it.key) headMenu.btn = menuBtn;
     const extra = [
-      it.gitBranch && it.gitBranch !== 'HEAD' ? h('span', { class: 'head-id', title: `Git branch: ${it.gitBranch}` }, `⎇ ${it.gitBranch}`) : null,
+      it.gitBranch && it.gitBranch !== 'HEAD' ? h('span', { class: 'head-id head-branch', title: `Git branch: ${it.gitBranch}` }, Deck.icon('branch', { size: 12 }), it.gitBranch) : null,
       it.userTurns ? h('span', { class: 'head-id' }, `${it.userTurns} prompt${it.userTurns === 1 ? '' : 's'}`) : null,
       isTerminal(it) && it.windowName ? h('span', { class: 'head-id' }, `Window ${it.windowName}`) : null,
       it.kind === 'external' && it.pid ? h('span', { class: 'head-id' }, `Process ${it.pid}`) : null,
     ];
 
+    const iconBtn = (name, title, onclick) => h('button', { type: 'button', class: 'ghost icon small', title, 'aria-label': title, onclick }, Deck.icon(name, { size: 13 }));
     return h('div', { class: 'detail-head' },
-      // Status, then where the session is: the folder gets the rest of the line.
-      h('div', { class: 'card-status head-meta' },
+      // The line plate: its lamp and name, what it's doing, then branch, prompt count and the like.
+      h('div', { class: 'head-title' },
         h('span', { class: `lamp ${it.lane}` }),
+        h('h2', { title: it.deck ? 'Double-click to rename (F2)' : null, ondblclick: it.deck ? () => rename(it) : null }, heading(it)),
+        menuBtn,
         h('span', { class: `status-text ${it.lane}` }, statusLabel(it)),
         it.statusSince ? h('span', { class: 'faint head-since', 'data-since': String(it.statusSince) }, sinceText(it.statusSince)) : null,
-        isChat(it) && it.runningTasks ? h('button', { type: 'button', class: 'head-badge', title: 'Show the subagents', onclick: () => setTasksPanel(it.id, true) }, `• ${it.runningTasks} subagent${it.runningTasks === 1 ? '' : 's'} active`) : null,
+        isChat(it) && it.runningTasks ? h('button', { type: 'button', class: 'head-badge', title: 'Show the subagents', onclick: () => setTasksPanel(it.id, true) }, `${it.runningTasks} subagent${it.runningTasks === 1 ? '' : 's'} active`) : null,
+        h('span', { class: 'head-extra' }, extra)),
+      // Where the session is, on the same line: the folder gets the rest of it.
+      it.cwd || it.sessionId ? h('div', { class: 'head-meta' },
         it.cwd ? h('span', { class: 'head-id row-path head-folder' },
           // Cut from the start if it doesn't fit, so the folder's own name stays visible.
           h('span', { class: 'path-text', title: it.cwd }, h('bdi', null, it.cwd)),
-          h('button', { class: 'ghost icon small', title: 'Copy folder path', onclick: () => copy(it.cwd, 'Folder path copied') }, '⎘'),
-          h('button', { class: 'ghost icon small', title: 'Open folder in Explorer', onclick: () => openFolder(it.cwd) }, '↗')) : null,
+          iconBtn('copy', 'Copy folder path', () => copy(it.cwd, 'Folder path copied')),
+          iconBtn('open', 'Open folder in Explorer', () => openFolder(it.cwd))) : null,
         it.sessionId ? h('span', { class: 'head-id row-path' },
           h('span', { class: 'mono', title: 'Session ID' }, it.sessionId),
           // No Stop button here: the reply box's Interrupt stops Claude (with nothing typed, it just stops).
-          h('button', { class: 'ghost icon small', title: 'Copy session ID', onclick: () => copy(it.sessionId, 'Session ID copied') }, '⎘')) : null),
-      // Branch, prompt count and the like go beside the title, which has room to spare.
-      h('div', { class: 'head-title' }, h('h2', null, heading(it)), menuBtn, h('span', { class: 'head-extra' }, extra)),
+          iconBtn('copy', 'Copy session ID', () => copy(it.sessionId, 'Session ID copied'))) : null) : null,
+      // Resume, End and the like close the line, leaving the instrument row to controls and meters.
+      h('div', { class: 'head-cta' }, acts),
       subtitle(it) ? h('div', { class: 'muted' }, subtitle(it)) : null,
       it.note ? h('p', { class: 'faint', style: { margin: '6px 0 0' } }, it.note) : null,
       it.kind === 'external' ? h('p', { class: 'faint', style: { margin: '6px 0 0' } }, 'Started outside Claude Deck. Choose Continue here to reply to it from the dashboard.') : null,
       it.state === 'failed' && it.launchError ? h('p', { class: 'error' }, it.launchError) : null,
-      h('div', { class: 'head-controls' },
-        controls.length ? h('dl', { class: 'facts' }, controls) : null,
-        h('div', { class: 'head-cta' }, acts)));
+      controls.length ? h('div', { class: 'head-controls' }, h('dl', { class: 'facts' }, controls)) : h('div', { class: 'head-gap' }));
   }
 
   // ---- cost, tokens and context (chat header) ------------------------------------------------
@@ -613,6 +647,20 @@
   }
 
   const tokenSum = (t) => (t ? t.input + t.output + t.cacheRead + t.cacheWrite : 0);
+
+  // What a reading gained (or lost) since the page last saw it change, shown beside it like an
+  // instrument's trend: "+1.2k". Nothing until it has changed once while the page was open.
+  function turnChange(it, key, value, fmt) {
+    if (typeof value !== 'number') return null;
+    S.readings = S.readings || {};
+    const k = `${it.id}:${key}`;
+    const seen = S.readings[k];
+    if (!seen || seen.value !== value) S.readings[k] = { value, delta: seen ? value - seen.value : 0 };
+    const d = S.readings[k].delta;
+    // A change too small to show (a fraction of a cent) isn't worth a "+$0.00".
+    if (!d || fmt(Math.abs(d)) === fmt(0)) return null;
+    return h('span', { class: `ctx-delta${d < 0 ? ' down' : ''}`, title: d > 0 ? 'Added by the latest turn' : 'Since the last reading' }, `${d > 0 ? '+' : '−'}${fmt(Math.abs(d))}`);
+  }
 
   function tokensFact(t) {
     if (!tokenSum(t)) return null;
@@ -627,13 +675,25 @@
     const level = pct === null ? 'ok' : pct >= 90 ? 'over' : pct >= 75 ? 'warn' : 'ok';
     const label = c.max ? `${tokenText(c.tokens)} / ${tokenText(c.max)} (${pct}%)` : tokenText(c.tokens);
     const canCompact = isChat(it) && it.state !== 'exited' && it.sessionId;
+    // Like an instrument, the meter shows the change as well as the value: what the latest turn
+    // added (or compacting took away), and the needle moves there from where it was.
+    S.ctxSeen = S.ctxSeen || {};
+    const seen = S.ctxSeen[it.id];
+    if (!seen || seen.tokens !== c.tokens) S.ctxSeen[it.id] = { tokens: c.tokens, delta: seen ? c.tokens - seen.tokens : 0, pct: seen ? seen.pct : pct };
+    const now = S.ctxSeen[it.id];
+    const from = now.pct === null || now.pct === undefined ? pct : now.pct;
+    const needle = (p) => `scaleX(${Math.min(100, Math.max(0, p)) / 100})`;
+    const fill = h('span', { class: 'ufill', style: { transform: needle(from) } });
+    if (from !== pct) requestAnimationFrame(() => requestAnimationFrame(() => { fill.style.transform = needle(pct); now.pct = pct; }));
+    const delta = now.delta ? h('span', { class: `ctx-delta${now.delta < 0 ? ' down' : ''}`, title: now.delta > 0 ? 'Added by the latest turn' : 'Freed since the last reading' }, `${now.delta > 0 ? '+' : '−'}${tokenText(Math.abs(now.delta))}`) : null;
     return h('div', { class: 'ctx-fact' },
       h('dt', null, 'Context',
         canCompact ? h('button', { type: 'button', class: 'ghost small ctx-compact', disabled: it.status === 'busy', title: it.status === 'busy' ? 'Wait for Claude to finish, then compact' : 'Summarize the conversation so far to free up context (/compact)', onclick: () => compactChat(it) }, 'Compact') : null),
       h('dd', { class: 'ctx-meter', title: c.max ? `${c.tokens.toLocaleString()} of ${c.max.toLocaleString()} tokens in Claude's context window` : `${c.tokens.toLocaleString()} tokens in the context window as of the latest reply` },
         c.max ? h('span', { class: `ubar ${level}`, role: 'meter', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pct), 'aria-label': `Context ${pct}% full` },
-          h('span', { class: 'ufill', style: { width: `${Math.min(100, Math.max(0, pct))}%` } })) : null,
-        h('span', null, label)));
+          fill) : null,
+        h('span', null, label),
+        delta));
   }
 
   async function compactChat(it) {
@@ -710,7 +770,7 @@
   }
 
   function updatePluginButtons() {
-    for (const b of $$('.plugin-btn')) b.textContent = `${pluginSummary(plugins.byCwd.get(b.dataset.cwd))} ▾`;
+    for (const b of $$('.plugin-btn')) clear(b).append(pluginSummary(plugins.byCwd.get(b.dataset.cwd)), Deck.icon('down', { size: 12 }));
   }
 
   async function refreshPlugins(cwd) {
@@ -729,7 +789,7 @@
       'aria-expanded': String(Boolean(plugins.pop && plugins.pop.chatId === it.id)),
       title: "Claude Code's plugins: turn them on or off, or install more",
       onclick: (e) => { e.stopPropagation(); togglePluginsMenu(it, btn); },
-    }, `${pluginSummary(plugins.byCwd.get(key))} ▾`);
+    }, pluginSummary(plugins.byCwd.get(key)), Deck.icon('down', { size: 12 }));
     if (!plugins.byCwd.has(key)) loadPlugins(key).then(updatePluginButtons).catch(() => {});
     if (plugins.pop && plugins.pop.chatId === it.id) plugins.pop.btn = btn;
     return btn;
@@ -1154,7 +1214,7 @@
     stats.length ? h('div', { class: 'task-stats' }, stats.map((s) => h('span', null, s))) : null,
     t.status === 'running' && t.activity ? h('div', { class: 'task-activity' }, t.activity) : null,
     t.summary ? h('div', { class: 'task-summary clamp' }, richText(t.summary)) : null,
-    h('div', { class: 'task-open faint small' }, 'Details →'));
+    h('div', { class: 'task-open faint small' }, 'Details'));
   }
 
   function renderTasksPanel() {
@@ -1178,7 +1238,7 @@
       h('span', { class: 'faint small' }, running ? `${running} running` : 'None running'),
       h('span', { class: 'spacer' }),
       // Closed until another subagent starts, or reopened from the session menu.
-      h('button', { type: 'button', class: 'ghost icon small', title: 'Close (reopen it from the ▾ menu beside the title)', 'aria-label': 'Close the subagents panel', onclick: () => setTasksPanel(S.chat.id, false) }, '✕')));
+      h('button', { type: 'button', class: 'ghost icon small', title: 'Close (reopen it from the menu beside the title)', 'aria-label': 'Close the subagents panel', onclick: () => setTasksPanel(S.chat.id, false) }, Deck.icon('close'))));
     if (!tasks.length) panel.appendChild(h('p', { class: 'faint small' }, 'No subagents since this chat last started. Subagents appear here when Claude hands off work to one.'));
     tasks.forEach((t) => panel.appendChild(taskNode(t, S.chat.id)));
     if (focused >= 0 && $$('.task', panel)[focused]) $$('.task', panel)[focused].focus();
@@ -1211,7 +1271,7 @@
         renderSubagent(root, chatId, d);
         if (d.status === 'running') timer = setTimeout(load, 1500);
       } catch (err) {
-        clear(root).appendChild(h('div', { class: 'tasks-head' }, h('button', { type: 'button', class: 'ghost small', onclick: closeSubagent }, '← Back')));
+        clear(root).appendChild(h('div', { class: 'tasks-head' }, h('button', { type: 'button', class: 'ghost small', onclick: closeSubagent }, Deck.icon('left', { size: 12 }), 'Back')));
         root.appendChild(h('p', { class: 'convo-note' }, err.status === 404 ? 'That subagent is no longer listed. The list starts fresh when a chat restarts.' : `Couldn't load the subagent: ${err.message}`));
       }
       root.dataset.loaded = '1';
@@ -1235,7 +1295,7 @@
     const promptOpen = prior ? prior.open : t.prompt && t.prompt.length < 600;
     clear(root);
     root.appendChild(h('div', { class: 'tasks-head' },
-      h('button', { type: 'button', class: 'ghost small', onclick: closeSubagent }, '← Back'),
+      h('button', { type: 'button', class: 'ghost small', onclick: closeSubagent }, Deck.icon('left', { size: 12 }), 'Back'),
       h('span', { class: 'spacer' }),
       t.status === 'running' ? h('button', { type: 'button', class: 'danger small', onclick: () => stopSubagent(chatId, t) }, 'Stop') : null));
     root.appendChild(h('div', { class: 'card-status' },
@@ -1497,43 +1557,37 @@
   }
 
   // ---- tool icons ----------------------------------------------------------------------------
-  // One per tool call in a chat, by what the tool does. Claude Code's own tools by name; anything
-  // else (MCP tools are named mcp__<server>__<action>) by words in its action; 🔧 otherwise.
+  // One per tool call in a chat, by what the tool does, drawn in the same stroke as the page's other
+  // icons (Deck.icon). Claude Code's own tools by name; anything else (MCP tools are named
+  // mcp__<server>__<action>) by words in its action; a plug otherwise.
   const TOOL_ICONS = {
-    Bash: '💻', PowerShell: '💻', BashOutput: '💻', KillShell: '🛑', KillBash: '🛑', TaskStop: '🛑',
-    Read: '📖', Write: '📝', Edit: '✏️', MultiEdit: '✏️', NotebookEdit: '📓', NotebookRead: '📓',
-    Glob: '🗂️', Grep: '🔍', LS: '📁',
-    WebFetch: '🌐', WebSearch: '🌍',
-    Agent: '🤖', Task: '🤖', SendMessage: '💬', ListAgents: '🤖',
-    TodoWrite: '✅', TaskCreate: '✅', TaskUpdate: '✅', TaskList: '✅', TaskGet: '✅',
-    AskUserQuestion: '❓', EnterPlanMode: '🗺️', ExitPlanMode: '🗺️',
-    Skill: '🧩', SlashCommand: '⌨️', ToolSearch: '🧰', Monitor: '👀',
-    ScheduleWakeup: '⏰', CronCreate: '⏰', CronDelete: '⏰', CronList: '⏰',
-    EnterWorktree: '🌿', ExitWorktree: '🌿', Workflow: '🔀', Artifact: '🖼️',
+    Bash: 'terminal', PowerShell: 'terminal', BashOutput: 'terminal', KillShell: 'stop', KillBash: 'stop', TaskStop: 'stop',
+    Read: 'file', Write: 'pen', Edit: 'pen', MultiEdit: 'pen', NotebookEdit: 'pen', NotebookRead: 'file',
+    Glob: 'folder', Grep: 'search', LS: 'folder',
+    WebFetch: 'globe', WebSearch: 'globe',
+    Agent: 'agent', Task: 'agent', SendMessage: 'agent', ListAgents: 'agent',
+    TodoWrite: 'list', TaskCreate: 'list', TaskUpdate: 'list', TaskList: 'list', TaskGet: 'list',
+    AskUserQuestion: 'question', EnterPlanMode: 'list', ExitPlanMode: 'list',
+    Skill: 'plug', SlashCommand: 'terminal', ToolSearch: 'search', Monitor: 'clock',
+    ScheduleWakeup: 'clock', CronCreate: 'clock', CronDelete: 'clock', CronList: 'clock',
+    EnterWorktree: 'branch', ExitWorktree: 'branch', Workflow: 'branch', Artifact: 'file',
   };
   const TOOL_ICON_WORDS = [
-    [/screenshot|snapshot|capture/, '📸'],
-    [/click|hover|drag|tap/, '👆'],
-    [/press_key|type_text|keyboard|\bfill|type\b/, '⌨️'],
-    [/navigate|new_page|select_page|open_url|browse|goto/, '🧭'],
-    [/evaluate|script|execute|exec|run/, '📜'],
-    [/mail|outlook|inbox/, '📧'],
-    [/calendar|event|meeting|availability/, '📅'],
-    [/chat|message|teams|slack|channel/, '💬'],
-    [/search|query|find|lookup/, '🔎'],
-    [/delete|remove|trash|close/, '🗑️'],
-    [/create|write|update|upload|edit|set|send|post/, '📝'],
-    [/list|get|read|fetch|download|view/, '📖'],
-    [/file|folder|drive|sharepoint|document/, '📁'],
-    [/trace|performance|lighthouse|audit|heap/, '📈'],
+    [/click|hover|drag|tap|press_key|type_text|keyboard|\bfill/, 'pointer'],
+    [/navigate|new_page|select_page|open_url|browse|goto/, 'globe'],
+    [/evaluate|script|execute|exec|run/, 'terminal'],
+    [/search|query|find|lookup/, 'search'],
+    [/create|write|update|upload|edit|set|send|post/, 'pen'],
+    [/list|get|read|fetch|download|view|screenshot|snapshot/, 'file'],
+    [/file|folder|drive|sharepoint|document/, 'folder'],
+    [/calendar|event|meeting|availability|trace|performance/, 'clock'],
   ];
 
   function toolIcon(name) {
     const n = String(name || '');
-    if (TOOL_ICONS[n]) return TOOL_ICONS[n];
     const action = (n.startsWith('mcp__') ? n.split('__').slice(2).join('_') : n).toLowerCase();
-    for (const [re, icon] of TOOL_ICON_WORDS) if (re.test(action)) return icon;
-    return '🔧';
+    const word = TOOL_ICON_WORDS.find(([re]) => re.test(action));
+    return Deck.icon(TOOL_ICONS[n] || (word ? word[1] : 'plug'), { size: 13 });
   }
 
   function chatNode(it) {
@@ -1784,7 +1838,10 @@
 
     const autosize = () => {
       ta.style.height = 'auto';
-      ta.style.height = `${Math.min(ta.scrollHeight, window.innerHeight * 0.4)}px`;
+      const max = window.innerHeight * 0.4;
+      ta.style.height = `${Math.min(ta.scrollHeight, max)}px`;
+      // A scrollbar only once the message is taller than the box can grow.
+      ta.style.overflowY = ta.scrollHeight > max ? 'auto' : 'hidden';
     };
     // The /command being typed at the cursor, anywhere in the message as in Claude Code: a / at the
     // start or after a space, with the cursor at the end of that word. Claude runs one at the start
@@ -1833,7 +1890,7 @@
       list.forEach((a, i) => {
         tray.appendChild(h('div', { class: 'attach', title: `${a.name} (${Math.round(a.bytes / 1024)} KB${a.resized ? ', resized' : ''})` },
           h('img', { src: a.thumb, alt: a.name }),
-          h('button', { type: 'button', class: 'attach-remove', 'aria-label': `Remove ${a.name}`, onclick: () => { list.splice(i, 1); drawTray(); } }, '×')));
+          h('button', { type: 'button', class: 'attach-remove', 'aria-label': `Remove ${a.name}`, onclick: () => { list.splice(i, 1); drawTray(); } }, Deck.icon('close', { size: 12 }))));
       });
     };
     const addFiles = async (files) => {
@@ -2210,8 +2267,10 @@
   }
 
   function select(key) {
+    if (key !== S.selected) S.routeSet = key;
     S.selected = key;
     renderFocus();
+    S.routeSet = null;
   }
 
   function showDetails(key) {
@@ -2288,7 +2347,7 @@
 
   function usageBar(l, wide) {
     return h('span', { class: `ubar${wide ? ' wide' : ''} ${usageLevel(l)}`, role: 'meter', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(l.percent), 'aria-label': `${l.long} ${l.percent}% used` },
-      h('span', { class: 'ufill', style: { width: `${Math.min(100, Math.max(0, l.percent))}%` } }));
+      h('span', { class: 'ufill', style: { transform: `scaleX(${Math.min(100, Math.max(0, l.percent)) / 100})` } }));
   }
 
   function renderUsage() {
@@ -2624,13 +2683,15 @@
         class: `chip${f.pinned ? ' pinned' : ''}`,
         title: f.path,
         onclick: () => { $('#l-cwd').value = f.path; onLaunchChange(); },
-      }, `${f.pinned ? '★ ' : ''}${shortPath(f.path)}`));
+      }, f.pinned ? Deck.icon('star', { size: 12, filled: true }) : null, shortPath(f.path)));
     }
     for (const f of [...S.prefs.favorites, ...S.folders.recent.map((r) => r.path)]) list.appendChild(h('option', { value: f }));
   }
 
   function onLaunchChange() {
-    $('#l-star').textContent = isFavorite($('#l-cwd').value.trim()) ? '★' : '☆';
+    const pinned = isFavorite($('#l-cwd').value.trim());
+    clear($('#l-star')).appendChild(Deck.icon('star', { filled: pinned }));
+    $('#l-star').setAttribute('aria-pressed', String(pinned));
     $('#l-worktree-name').disabled = !$('#l-worktree').checked;
     const where = launchWhere();
     $('#l-go').textContent = where === 'chat' ? 'Start chat' : 'Open in terminal';
@@ -2916,8 +2977,11 @@
     };
     changesBtn.addEventListener('click', () => showChanges(changes.hidden));
     pane.appendChild(h('div', { class: 'detail-head' },
-      live ? h('div', { class: 'card-status' }, h('span', { class: 'lamp working' }), h('span', { class: 'status-text working' }, 'Open right now')) : null,
-      h('h2', null, m.title || 'Untitled conversation'),
+      // The line plate: its lamp and name, then whether it's open right now, on one line.
+      h('div', { class: 'head-title' },
+        h('span', { class: `lamp ${live ? 'working' : 'ended'}` }),
+        h('h2', null, m.title || 'Untitled conversation'),
+        live ? h('span', { class: 'status-text working' }, 'Open right now') : null),
       m.firstPrompt && m.firstPrompt !== m.title ? h('div', { class: 'muted card-prompt' }, m.firstPrompt) : null,
       h('dl', { class: 'facts' },
         fact('Folder', m.cwd, true),
@@ -3383,6 +3447,16 @@
     S.toggleRail = toggleRail;
   }
 
+  // Needs-you lamps flash once a second, like a signal box's. One clock for the whole page, so a
+  // lamp on a row that was just rebuilt stays in step with the rest (a CSS animation per lamp would
+  // restart on every update). With reduced motion they stay lit.
+  function wireLampFlash() {
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)');
+    setInterval(() => {
+      document.documentElement.classList.toggle('lamps-dim', !still.matches && !document.documentElement.classList.contains('lamps-dim'));
+    }, 500);
+  }
+
   function wireFocusSplitter() {
     const splitter = $('#focus-splitter');
     const focusEl = $('#focus');
@@ -3502,6 +3576,7 @@
     window.addEventListener('beforeunload', (e) => { if (Deck.SettingsUI.isDirty()) { e.preventDefault(); e.returnValue = ''; } });
 
     wireRailCollapse();
+    wireLampFlash();
     wireFocusSplitter();
     wireLaunch();
     wireFolderPicker();

@@ -6,6 +6,25 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.10.0] - 2026-09-29
+
+### Changed
+- **A new look: the signal box.** Every screen is redesigned around one idea: each session is a
+  line with a lamp, and the line you pick runs straight into a calm reading area.
+  - The navigation moved from a left rail to a shelf across the top, which also holds plan usage,
+    Search, the connection lamp and **New session**. The session list keeps the whole left side.
+  - Status lamps sit in dark bezels: amber needs you (and flashes once a second), lit white is
+    working, green is idle, unlit is ended. Group headers and view names are engraved plates.
+  - The chat header is two quiet lines and one row of instruments (model, effort, permissions,
+    plugins, context, cost, tokens); **End session** moved up beside the title. Replies read at a
+    comfortable line length, and tool calls are ruled lines instead of boxes.
+  - The context meter shows what the latest turn added, and its needle moves there smoothly.
+  - Double-click a session's name (or press **F2**) to rename it where it sits.
+  - **Ctrl+B** now narrows the session list to its lamps, for more reading room.
+  - Icons are drawn instead of text symbols. All 15 themes keep working in the new layout.
+- The README is up to date with 1.9: updating Claude Code, the slash command and model rows,
+  dropped files, and the sign-in task fix.
+
 ## [1.9.1] - 2026-09-29
 
 ### Fixed
@@ -271,6 +290,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.10.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.9.1...v1.10.0
 [1.9.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.8.1...v1.9.0
 [1.8.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.8.0...v1.8.1

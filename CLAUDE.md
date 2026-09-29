@@ -98,8 +98,11 @@ Claude Code's files and protocol are undocumented and change between versions.
 - CommonJS, `'use strict'`, 2-space indent, single quotes. Match the surrounding code.
 - Page scripts hang off `window.Deck`; DOM is built with `Deck.h()`.
 - User-facing copy: sentence case, plain verbs; errors say what happened and what to do.
-- Status colors mean status only: amber needs you, cyan working, green idle, gray ended. Other colors
-  (diffs, the mascot) have their own tokens.
+- Status lamps mean status only: amber needs you (flashing), lit white working (the theme's own
+  working color in the other themes), green idle, unlit ended. Other colors (diffs, tags, the
+  mascot) have their own tokens.
+- The look is the signal box: read `DESIGN.md` before changing the page's appearance (tokens,
+  plates, lamps, the two type sizes).
 - Themes: an id in `THEMES` (`src/prefs.js`), a block in `public/app.css`, a label in `THEME_GROUPS`
   (`public/app.js`); `test/prefs.test.js` checks they match.
 - The mascot is a 14x10 grid in `tools/make-icons.js` and the same grid as an SVG in
