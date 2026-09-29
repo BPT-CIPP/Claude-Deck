@@ -30,8 +30,11 @@ test('the menu has a flyout per model family, named with its version', () => {
   assert.deepStrictEqual(menu.families.map((f) => f.version), ['Opus 5.5', 'Fable 5.1', 'Sonnet 5.5', 'Haiku 4.5']);
   const sonnet = family(menu, 'Sonnet');
   assert.deepStrictEqual(values(sonnet), ['sonnet', 'sonnet[1m]', 'claude-sonnet-5-5', 'claude-sonnet-5-5[1m]']);
-  assert.deepStrictEqual(sonnet.items.map((i) => i.label), ['Sonnet 5.5', 'Sonnet 5.5 · 1M context', 'Sonnet 5.5 only', 'Sonnet 5.5 only · 1M context']);
-  assert.ok(values(family(menu, 'Opus')).includes('opusplan'), 'opusplan is an Opus variant');
+  // The latest first, by name; then the specific versions, by model ID.
+  assert.deepStrictEqual(sonnet.items.map((i) => i.label), ['Sonnet 5.5', 'Sonnet 5.5 · 1M context', 'claude-sonnet-5-5', 'claude-sonnet-5-5[1m]']);
+  assert.deepStrictEqual(sonnet.items.map((i) => i.pinned), [false, false, true, true]);
+  assert.match(sonnet.items[2].hint, /^Sonnet 5\.5; stays on this version/);
+  assert.deepStrictEqual(values(family(menu, 'Opus')), ['opus', 'opus[1m]', 'opusplan', 'claude-opus-5-5', 'claude-opus-5-5[1m]'], 'opusplan follows the latest too');
   // Claude Code's own value for Fable is the pinned 1M one; it's listed once.
   assert.deepStrictEqual(values(family(menu, 'Fable')), ['fable', 'fable[1m]', 'claude-fable-5-1', 'claude-fable-5-1[1m]']);
   assert.deepStrictEqual(values(family(menu, 'Haiku')), ['haiku', 'claude-haiku-4-5-20251001']);
@@ -63,8 +66,37 @@ const WITH_API_KEY = [
 test('a family listed more than once, under other names, is still one flyout', () => {
   const menu = models.menu(WITH_API_KEY, MODEL_ALIASES);
   assert.deepStrictEqual(menu.families.map((f) => f.version), ['Opus 5.5', 'Fable 5.1', 'Sonnet 5.5', 'Haiku 4.5']);
-  assert.deepStrictEqual(values(family(menu, 'Opus')), ['opus', 'opus[1m]', 'claude-opus-5-5', 'claude-opus-5-5[1m]', 'opusplan']);
+  assert.deepStrictEqual(values(family(menu, 'Opus')), ['opus', 'opus[1m]', 'opusplan', 'claude-opus-5-5', 'claude-opus-5-5[1m]']);
   assert.deepStrictEqual(values(family(menu, 'Sonnet')), ['sonnet', 'sonnet[1m]', 'claude-sonnet-5-5', 'claude-sonnet-5-5[1m]']);
+});
+
+// A chat's initialize on a Claude plan (2.1.284, from Claude Deck's models.json): versioned display
+// names, and earlier versions still offered, listed by model ID.
+const WITH_OLDER = [
+  { value: 'default', resolvedModel: 'claude-opus-5-5', displayName: 'Default (recommended)', description: 'Opus 5.5 · Best for everyday, complex tasks' },
+  { value: 'opus', resolvedModel: 'claude-opus-5-5', displayName: 'Opus 5.5', description: 'For complex work and everyday tasks' },
+  { value: 'sonnet', resolvedModel: 'claude-sonnet-5-5', displayName: 'Sonnet 5.5', description: 'Most efficient for simpler tasks' },
+  { value: 'claude-fable-5-1', resolvedModel: 'claude-fable-5-1', displayName: 'Fable 5.1', description: 'For your toughest challenges' },
+  { value: 'haiku', resolvedModel: 'claude-haiku-4-5-20251001', displayName: 'Haiku 4.5', description: 'Fastest for quick answers' },
+  { value: 'claude-sonnet-5', resolvedModel: 'claude-sonnet-5', displayName: 'Sonnet 5', description: 'Efficient for routine tasks' },
+  { value: 'claude-opus-5', resolvedModel: 'claude-opus-5', displayName: 'Opus 5', description: 'Best for everyday, complex tasks' },
+  { value: 'claude-fable-5', resolvedModel: 'claude-fable-5', displayName: 'Fable 5', description: 'Most capable for your hardest and longest-running tasks' },
+  { value: 'claude-opus-4-8', resolvedModel: 'claude-opus-4-8', displayName: 'Opus 4.8', description: 'Best for everyday, complex tasks' },
+  { value: 'claude-opus-4-7', resolvedModel: 'claude-opus-4-7', displayName: 'Opus 4.7', description: 'Best for everyday, complex tasks' },
+  { value: 'claude-opus-4-6', resolvedModel: 'claude-opus-4-6', displayName: 'Opus 4.6', description: 'Best for everyday, complex tasks' },
+  { value: 'claude-sonnet-4-6', resolvedModel: 'claude-sonnet-4-6', displayName: 'Sonnet 4.6', description: 'Efficient for routine tasks' },
+];
+
+test('earlier versions are specific versions too, named by model ID after the newest', () => {
+  const menu = models.menu(WITH_OLDER, MODEL_ALIASES);
+  assert.deepStrictEqual(menu.families.map((f) => f.version), ['Opus 5.5', 'Sonnet 5.5', 'Fable 5.1', 'Haiku 4.5']);
+  const opus = family(menu, 'Opus');
+  assert.deepStrictEqual(opus.items.map((i) => i.label), ['Opus 5.5', 'Opus 5.5 · 1M context', 'Opus 5.5 for planning',
+    'claude-opus-5-5', 'claude-opus-5-5[1m]', 'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6']);
+  assert.deepStrictEqual(opus.items.filter((i) => !i.pinned).map((i) => i.value), ['opus', 'opus[1m]', 'opusplan']);
+  assert.strictEqual(opus.items.find((i) => i.value === 'claude-opus-4-8').hint, 'Opus 4.8: Best for everyday, complex tasks');
+  assert.deepStrictEqual(values(family(menu, 'Sonnet')), ['sonnet', 'sonnet[1m]', 'claude-sonnet-5-5', 'claude-sonnet-5-5[1m]', 'claude-sonnet-5', 'claude-sonnet-4-6']);
+  assert.deepStrictEqual(values(family(menu, 'Fable')), ['fable', 'fable[1m]', 'claude-fable-5-1', 'claude-fable-5-1[1m]', 'claude-fable-5']);
 });
 
 test('a model is named with its version where its name or description gives one', () => {

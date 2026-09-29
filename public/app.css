@@ -896,7 +896,12 @@ pre.code {
 .model-btn { display: inline-flex; align-items: center; gap: 8px; min-width: 150px; justify-content: space-between; text-align: left; }
 .model-btn-arrow { color: var(--muted); font-size: 11px; }
 .facts .model-btn { font-size: 12.5px; padding: 2px 6px; min-width: 0; }
+/* Shown as a popover (Deck.modelPicker): undo the browser's centered popover box; flyouts overflow it. */
+.model-menu[popover] { inset: auto; margin: 0; overflow: visible; color: var(--text); }
 .model-menu .hm-sub { min-width: 220px; }
+/* Specific versions, named by model ID. */
+.model-menu .hm-heading { padding: 8px 10px 3px; border-top: 1px solid var(--line-soft); margin-top: 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.model-menu .hm-pinned { font-family: var(--mono); font-size: 12px; }
 /* A family holding the current model: the check sits just before its arrow. */
 .model-menu .hm-check + .hm-arrow { margin-left: 8px; }
 .hm-sub.hm-sub-left { left: auto; right: 100%; }

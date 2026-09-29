@@ -65,17 +65,19 @@ function versionName(m, name) {
   return hit ? `${name} ${hit[1]}` : name;
 }
 
-// The model menu: a flyout per model family, each listing its variants.
-//   { families: [{ name, version, items: [{ value, label, hint }] }], extras: [{ value, label, hint }] }
+// The model menu: a flyout per model family, each listing its variants: first the ones that
+// follow the newest version (the alias, its 1M variant, opusplan), then the specific versions
+// (pinned: true), named by model ID, newest first as Claude Code lists them.
+//   { families: [{ name, version, items: [{ value, label, hint, pinned }] }], extras: [{ value, label, hint }] }
 // aliases: the aliases the CLI accepts. Without a list from Claude Code, the families come from
 // the aliases alone, without versions.
 function menu(models, aliases) {
   const families = [];
   const used = new Set();
-  const add = (fam, value, label, hint) => {
+  const add = (fam, value, label, hint, pinned = false) => {
     if (!value || used.has(value)) return;
     used.add(value);
-    fam.items.push({ value, label, hint });
+    fam.items.push({ value, label, hint, pinned });
   };
   // Group first: a family can be listed more than once (its 1M variant separately, say).
   const groups = new Map();
@@ -87,17 +89,23 @@ function menu(models, aliases) {
   }
   for (const [alias, list] of groups) {
     const name = alias.charAt(0).toUpperCase() + alias.slice(1);
-    const version = list.map((m) => versionName(m, name)).find((v) => v !== name) || name;
+    // The newest one: what the alias points at, else the first listed. Older versions follow it.
+    const lead = list.find((m) => m.value.replace(/\[1m\]$/, '') === alias) || list[0];
+    const version = [lead, ...list].map((m) => versionName(m, name)).find((v) => v !== name) || name;
     const fam = { name, version, items: [] };
     families.push(fam);
-    const pinned = (list.map((m) => m.resolvedModel || '').find((r) => r.startsWith('claude-')) || '').replace(/\[1m\]$/, '');
+    const pinned = /^claude-/.test(lead.resolvedModel || lead.value) ? (lead.resolvedModel || lead.value).replace(/\[1m\]$/, '') : '';
     const long = LONG_CONTEXT.includes(alias);
-    if (aliases.includes(alias)) add(fam, alias, version, `Always the latest ${name} (${alias})`);
+    if (aliases.includes(alias)) add(fam, alias, version, `Always the latest ${name}: moves to the next version when Claude Code does (${alias})`);
     if (long && aliases.includes(`${alias}[1m]`)) add(fam, `${alias}[1m]`, `${version} · 1M context`, `The latest ${name} with a 1M-token context window (${alias}[1m])`);
-    if (pinned) add(fam, pinned, `${version} only`, `Stays on this version when a newer ${name} comes out (${pinned})`);
-    if (pinned && long) add(fam, `${pinned}[1m]`, `${version} only · 1M context`, `${pinned}[1m]`);
     if (alias === 'opus' && aliases.includes('opusplan')) add(fam, 'opusplan', `${version} for planning`, 'Opus in plan mode, Sonnet otherwise (opusplan)');
-    for (const m of list) add(fam, m.value, m.value, m.description);
+    const stays = `stays on this version when a newer ${name} comes out`;
+    if (pinned) add(fam, pinned, pinned, `${version}; ${stays}`, true);
+    if (pinned && long) add(fam, `${pinned}[1m]`, `${pinned}[1m]`, `${version} with a 1M-token context window; ${stays}`, true);
+    for (const m of list) {
+      const own = versionName(m, name);
+      add(fam, m.value, m.value, [own !== name ? own : '', m.description].filter(Boolean).join(': '), /^claude-/.test(m.value));
+    }
   }
   // Aliases Claude Code didn't list a model for (or no list yet): their own family, no version.
   for (const a of aliases) {
