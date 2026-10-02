@@ -29,6 +29,16 @@ test('tool-call icons are off unless turned on', () => {
   assert.ok(css.includes(':root:not([data-tool-icons="on"]) details.msg-tool .ticon { display: none; }'), 'hidden unless the page turns them on');
 });
 
+test('every font is offered in Preferences, and only known fonts are accepted', () => {
+  const js = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  for (const id of prefs.FONTS) assert.ok(js.includes(`${/^[a-z]+$/.test(id) ? id : `'${id}'`}: {`), `FONT_CHOICES has ${id}`);
+  assert.strictEqual(prefs.load().fontText, 'default');
+  assert.strictEqual(prefs.load().fontLabels, 'default');
+  assert.strictEqual(prefs.save({ fontText: 'aptos', fontLabels: 'segoe' }).fontText, 'aptos');
+  assert.strictEqual(prefs.load().fontLabels, 'segoe');
+  assert.throws(() => prefs.save({ fontText: 'Comic Sans MS' }), /must be one of/);
+});
+
 test('theme preference accepts known themes only', () => {
   assert.strictEqual(prefs.save({ theme: 'nord' }).theme, 'nord');
   assert.throws(() => prefs.save({ theme: 'neon' }), /must be one of/);

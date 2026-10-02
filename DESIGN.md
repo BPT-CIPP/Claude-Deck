@@ -204,6 +204,8 @@ Weathered green enamel and warm cream, with signal lamps as the only saturated c
 
 **Character:** Windows' own DIN lettering engraved in capitals on plates, over a quiet system UI face. Only system faces load, by product rule (no remote fonts).
 
+**User choice:** Preferences → Appearance → Text font and Label font replace the body and plate stacks (`--font`, `--font-plate`) with another font that ships with Windows (`FONTS` in `src/prefs.js`, `FONT_CHOICES` in `public/app.js`). The sizes, weights, capitals and tracking above stay the same in any font; build against the variables, never a literal family.
+
 ### Hierarchy
 - **Title** (700, 14px, 1.5): session names, headings inside content, rename input. Headings are not larger, only bolder.
 - **Body** (400, 14px, 1.5): UI and lists. Row titles and your turns take weight 600.

@@ -43,6 +43,36 @@
     { key: 'ended', label: 'Ended' },
   ];
   const COLOR_NAMES = { slate: 'Slate', cyan: 'Cyan', amber: 'Amber', sage: 'Sage', rose: 'Rose', violet: 'Violet', sand: 'Sand' };
+  // Same ids as FONTS in src/prefs.js: fonts that ship with Windows, so nothing is downloaded.
+  // `face` is checked to tell whether this PC has it; 'default' is each role's own font.
+  const FONT_CHOICES = {
+    default: { label: 'Default', face: null, stack: null },
+    segoe: { label: 'Segoe UI', face: 'Segoe UI', stack: '"Segoe UI", system-ui, sans-serif' },
+    aptos: { label: 'Aptos', face: 'Aptos', stack: 'Aptos, "Segoe UI", sans-serif' },
+    calibri: { label: 'Calibri', face: 'Calibri', stack: 'Calibri, "Segoe UI", sans-serif' },
+    verdana: { label: 'Verdana', face: 'Verdana', stack: 'Verdana, "Segoe UI", sans-serif' },
+    tahoma: { label: 'Tahoma', face: 'Tahoma', stack: 'Tahoma, "Segoe UI", sans-serif' },
+    trebuchet: { label: 'Trebuchet MS', face: 'Trebuchet MS', stack: '"Trebuchet MS", "Segoe UI", sans-serif' },
+    georgia: { label: 'Georgia', face: 'Georgia', stack: 'Georgia, "Times New Roman", serif' },
+    bahnschrift: { label: 'Bahnschrift', face: 'Bahnschrift', stack: 'Bahnschrift, "Segoe UI", sans-serif' },
+    cascadia: { label: 'Cascadia Code', face: 'Cascadia Code', stack: '"Cascadia Code", "Cascadia Mono", Consolas, monospace' },
+    consolas: { label: 'Consolas', face: 'Consolas', stack: 'Consolas, "Cascadia Mono", monospace' },
+  };
+  const FONT_DEFAULTS = { fontText: 'Segoe UI Variable', fontLabels: 'Bahnschrift' };
+
+  // Whether this PC has a font: text set in it measures differently from the fallbacks.
+  const fontSeen = new Map();
+  function fontInstalled(face) {
+    if (!face) return true;
+    if (fontSeen.has(face)) return fontSeen.get(face);
+    const ctx = document.createElement('canvas').getContext('2d');
+    const sample = 'Claude Deck mmmmwwwwiiii 0123456789';
+    const width = (font) => { ctx.font = `20px ${font}`; return ctx.measureText(sample).width; };
+    const has = ['monospace', 'serif', 'sans-serif'].some((fallback) => width(`"${face}", ${fallback}`) !== width(fallback));
+    fontSeen.set(face, has);
+    return has;
+  }
+
   // Same ids as THEMES in src/prefs.js; each has a :root[data-theme] block in app.css.
   const THEME_GROUPS = [
     ['Standard', [['system', 'Match Windows'], ['dark', 'Dark'], ['light', 'Light']]],
@@ -413,8 +443,6 @@
     const activeItem = active && active.closest('.focus-item');
     const refocus = activeItem ? { key: activeItem.querySelector('[data-key]').dataset.key, del: active.classList.contains('fr-del') } : null;
     clear(list);
-    // Tokens by conversation this week lives in the header; it's pressed while the detail pane shows it.
-    $('#btn-week-usage').setAttribute('aria-pressed', String(S.selected === USAGE_KEY));
     const groups = visibleItems();
     if (!groups.some((g) => g.items.length)) {
       list.appendChild(h('p', { class: 'faint', style: { padding: '12px' } }, allItems().length ? 'No sessions match that filter.' : 'No sessions running.'));
@@ -2378,6 +2406,13 @@
     pop.appendChild(h('div', { class: 'upop-foot' },
       h('span', { class: 'faint small' }, u.fetchedAt ? `${u.status === 'stale' ? 'Last checked' : 'Checked'} ${when(u.fetchedAt)}` : ''),
       h('button', { type: 'button', class: 'ghost small', onclick: async () => { const s = await run("Couldn't check usage", () => api('POST', '/api/usage/refresh')); if (s) { S.usage = s; renderUsage(); } } }, 'Refresh')));
+    // Which conversations used the most, in the Sessions detail pane; this closes the dropdown.
+    pop.appendChild(h('button', {
+      type: 'button',
+      class: 'upop-week',
+      'aria-pressed': String(S.view === 'sessions' && S.selected === USAGE_KEY),
+      onclick: () => { pop.hidden = true; $('#usage').setAttribute('aria-expanded', 'false'); showDetails(USAGE_KEY); },
+    }, Deck.icon('bars', { size: 13 }), 'Most tokens this week'));
   }
 
   function wireUsage() {
@@ -3112,6 +3147,21 @@
     return h('div', { class: 'pref-row' }, h('div', { class: 'pl' }, label, hint ? h('small', null, hint) : null), h('div', { class: 'pc' }, controls));
   }
 
+  // A font picker with a line set in the chosen font. Fonts this PC doesn't have are listed but
+  // can't be picked.
+  function fontRow(key, label, hint, sample) {
+    const preview = h('span', { class: `font-preview${key === 'fontLabels' ? ' plate-text' : ''}` }, sample);
+    const show = (id) => { const c = FONT_CHOICES[id]; preview.style.fontFamily = c && c.stack ? c.stack : ''; };
+    const sel = h('select', { 'aria-label': label, onchange: (e) => { show(e.target.value); savePrefs({ [key]: e.target.value }); } },
+      Object.entries(FONT_CHOICES).map(([id, c]) => {
+        const have = fontInstalled(c.face);
+        return h('option', { value: id, selected: S.prefs[key] === id, disabled: !have && S.prefs[key] !== id },
+          id === 'default' ? `Default (${FONT_DEFAULTS[key]})` : have ? c.label : `${c.label} (not on this PC)`);
+      }));
+    show(S.prefs[key]);
+    return prefRow(label, hint, h('div', { class: 'font-pick' }, sel, preview));
+  }
+
   function toggle(key, label) {
     return h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: S.prefs[key], onchange: (e) => savePrefs({ [key]: e.target.checked }) }), label);
   }
@@ -3236,6 +3286,8 @@
       prefRow('Theme', null, h('select', { 'aria-label': 'Theme', onchange: (e) => savePrefs({ theme: e.target.value }) },
         THEME_GROUPS.map(([group, themes]) => h('optgroup', { label: group },
           themes.map(([v, t]) => h('option', { value: v, selected: p.theme === v }, t)))))),
+      fontRow('fontText', 'Text font', 'Messages, lists and controls', 'Claude finished the release notes and is waiting for your next prompt.'),
+      fontRow('fontLabels', 'Label font', 'The engraved capitals on plates and labels', 'Needs you · Model · Current cost'),
       prefRow('Tool calls', null, toggle('showToolIcons', 'Show an icon beside each tool call in a chat')),
       prefRow('/clear', 'Claude starts a new conversation either way; ↑ still recalls your earlier messages', toggle('clearChatOnClear', "Clear the chat's messages too, as Claude Code clears its screen"))));
 
@@ -3327,6 +3379,12 @@
 
   function applyTheme() {
     document.documentElement.dataset.theme = S.prefs.theme;
+    // The chosen fonts replace the text and label stacks (app.css --font and --font-plate).
+    for (const [key, prop] of [['fontText', '--font'], ['fontLabels', '--font-plate']]) {
+      const choice = FONT_CHOICES[S.prefs[key]];
+      if (choice && choice.stack) document.documentElement.style.setProperty(prop, choice.stack);
+      else document.documentElement.style.removeProperty(prop);
+    }
     // Tool-call emoji are drawn either way and shown by CSS, so the toggle applies to open chats at once.
     document.documentElement.dataset.toolIcons = S.prefs.showToolIcons ? 'on' : 'off';
   }
@@ -3540,7 +3598,6 @@
 
     $$('.nav-item').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
     $('#btn-new').addEventListener('click', () => openLaunch());
-    $('#btn-week-usage').addEventListener('click', () => select(USAGE_KEY));
     $('#session-filter').addEventListener('input', (e) => { S.filter = e.target.value.trim(); renderSessions(); });
     $('#history-search').addEventListener('input', () => { S.historyLimit = 150; renderHistory(); });
     $('#history-folder').addEventListener('change', () => { S.historyLimit = 150; renderHistory(); });

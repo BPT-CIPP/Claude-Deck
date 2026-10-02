@@ -22,6 +22,10 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   - Double-click a session's name (or press **F2**) to rename it where it sits.
   - **Ctrl+B** now narrows the session list to its lamps, for more reading room.
   - Icons are drawn instead of text symbols. All 15 themes keep working in the new layout.
+  - **Most tokens this week** moved into the plan-usage dropdown, as its own button at the bottom.
+- **Text font** and **Label font** in Claude Deck Preferences → Appearance: pick the font for
+  messages, lists and controls, and for the capitals on plates and labels, from fonts that come with
+  Windows (nothing is downloaded). A font this PC doesn't have is listed but can't be picked.
 - The README is up to date with 1.9: updating Claude Code, the slash command and model rows,
   dropped files, and the sign-in task fix.
 
