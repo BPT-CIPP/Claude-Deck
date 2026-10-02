@@ -483,7 +483,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--plate); width:
 }
 
 /* View plates: the current one is cream and runs into the page below, like a set route. */
-.nav-items { display: flex; align-items: stretch; gap: 2px; min-width: 0; }
+/* The tabs may give up width, the instruments may not: whatever happens, they never overlap. */
+.nav-items { display: flex; align-items: stretch; gap: 2px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
 .nav-item {
   display: flex;
   align-items: center;
@@ -522,7 +523,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--plate); width:
   border: 1.5px solid var(--bezel);
 }
 
-.shelf-instruments { display: flex; align-items: center; gap: 12px; margin-left: auto; min-width: 0; }
+.shelf-instruments { display: flex; align-items: center; gap: 12px; margin-left: auto; flex: none; }
 .shelf button { color: var(--frame-text); }
 .shelf button.ghost:hover { background: var(--frame-2); }
 .search-hint {
@@ -1285,10 +1286,21 @@ dialog.palette { width: min(660px, calc(100vw - 32px)); padding: 0; margin-top: 
 @keyframes route-set { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 
 /* ---- smaller windows ------------------------------------------------------------------------- */
-@media (max-width: 1100px) {
-  .usage .uitem .ubar { display: none; }
+/* Narrower windows drop the least useful words first; full names stay in the tooltips. */
+@media (max-width: 1500px) {
   .search-hint .search-text { display: none; }
   .conn #conn-text, .conn .conn-version { display: none; }
+}
+@media (max-width: 1360px) {
+  .nav-prefix { display: none; }
+  .usage .uitem .ubar { display: none; }
+}
+@media (max-width: 1040px) {
+  .brand-text { display: none; }
+  .search-hint kbd { display: none; }
+  .shelf { gap: 12px; }
+  .nav-item { padding: 0 10px; }
+  .new-session .btn-label { display: none; }
 }
 @media (max-width: 900px) {
   .app { grid-template-rows: auto minmax(0, 1fr); height: auto; min-height: 100vh; }

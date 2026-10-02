@@ -23,6 +23,9 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   - **Ctrl+B** now narrows the session list to its lamps, for more reading room.
   - Icons are drawn instead of text symbols. All 15 themes keep working in the new layout.
   - **Most tokens this week** moved into the plan-usage dropdown, as its own button at the bottom.
+  - In a narrower window the top bar gives up words, not space: first the Search and Live labels,
+    then "Claude Code" and "Claude Deck" before Settings and Preferences (and the usage bars), then
+    the name and the New session label. The view names never run into the buttons on the right.
 - **Text font** and **Label font** in Claude Deck Preferences → Appearance: pick the font for
   messages, lists and controls, and for the capitals on plates and labels, from fonts that come with
   Windows (nothing is downloaded). A font this PC doesn't have is listed but can't be picked.
