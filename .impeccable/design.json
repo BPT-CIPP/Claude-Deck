@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-29T00:00:00Z",
+  "title": "Design System: Claude Deck",
+  "extensions": {
+    "colorMeta": {
+      "frame": { "role": "primary", "displayName": "Frame Enamel Green", "canonical": "#44524b", "tonalRamp": ["#111512", "#1d2521", "#2b3630", "#3a4841", "#5b6b62", "#86948b", "#b6c1b8", "#e3e9e3"] },
+      "shelf-cream": { "role": "primary", "displayName": "Reading Shelf Cream", "canonical": "#f4f0e4", "tonalRamp": ["#26231a", "#4a4535", "#726a52", "#9c9273", "#c4bb9d", "#ddd6bf", "#ece7d6", "#f8f5ec"] },
+      "plate": { "role": "secondary", "displayName": "Engraved Black Plate", "canonical": "#1d2320", "tonalRamp": ["#0a0d0b", "#121614", "#1d2320", "#2a322e", "#3d4742", "#59645e", "#7f8a84", "#aab3ad"] },
+      "lamp-waiting": { "role": "tertiary", "displayName": "Waiting Amber", "canonical": "#e39a0b", "tonalRamp": ["#3d2900", "#684600", "#946400", "#c08006", "#e39a0b", "#efb33f", "#f5cd80", "#fbe8c2"] },
+      "lamp-working": { "role": "tertiary", "displayName": "Lunar White", "canonical": "#a9d0f5", "tonalRamp": ["#1d3348", "#33526f", "#4f739a", "#7099c4", "#a9d0f5", "#c3ddf8", "#dcebfb", "#f0f7fe"] },
+      "lamp-idle": { "role": "tertiary", "displayName": "Signal Green", "canonical": "#2d9a5d", "tonalRamp": ["#0b2b19", "#14472a", "#1e6a3f", "#2d9a5d", "#4fb97b", "#7fd0a0", "#b0e3c6", "#dcf3e6"] },
+      "danger": { "role": "tertiary", "displayName": "Stop Red", "canonical": "#b8322a", "tonalRamp": ["#3a0f0c", "#5e1a16", "#8a2620", "#b8322a", "#d05a52", "#e28a84", "#efb9b5", "#f8e0de"] },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#1f2421", "tonalRamp": ["#0c0e0d", "#1f2421", "#343b37", "#4f5650", "#626862", "#8b918c", "#b7bbb8", "#dfe1df"] }
+    },
+    "typographyMeta": {
+      "body": { "displayName": "Body", "purpose": "UI and lists at 14px; titles and row names take weight 600 or 700." },
+      "prose": { "displayName": "Prose", "purpose": "Assistant replies in the 560px column." },
+      "title": { "displayName": "Title", "purpose": "Session names and content headings; bolder, not larger." },
+      "meta": { "displayName": "Meta", "purpose": "12px status, sub-lines, readings, tool lines." },
+      "plate-label": { "displayName": "Plate label", "purpose": "Bahnschrift 600 capitals at font-stretch 87.5% on plates, fact labels and section labels." },
+      "mono": { "displayName": "Mono", "purpose": "Code, paths, ids, model ids, tool names, diffs." }
+    },
+    "shadows": [
+      { "name": "pop-day", "value": "0 10px 26px -8px rgba(40, 36, 24, 0.3), 0 2px 6px -2px rgba(40, 36, 24, 0.18)", "purpose": "Menus, popovers, toasts in the day world." },
+      { "name": "pop-dark", "value": "0 10px 28px -6px rgba(0, 0, 0, 0.55), 0 2px 6px -2px rgba(0, 0, 0, 0.4)", "purpose": "Menus, popovers, toasts in the dark world." }
+    ],
+    "motion": [
+      { "name": "ease", "value": "cubic-bezier(0.22, 0.8, 0.3, 1)", "purpose": "Every transition and animation; no bounce." },
+      { "name": "dur-fast", "value": "120ms", "purpose": "Hover, chevron turn, opacity reveals." },
+      { "name": "dur-normal", "value": "160ms", "purpose": "pop-in for menus and dialogs; route-set clip-path reveal." },
+      { "name": "needle", "value": "600ms", "purpose": "Instrument needle scaleX damping." },
+      { "name": "lamp-clock", "value": "500ms toggle (1 Hz flash)", "purpose": "Waiting lamps; steady with an inset notch under reduced motion." }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "1100px" },
+      { "name": "stacked", "value": "900px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Engraved Plate",
+      "kind": "custom",
+      "refersTo": "plate",
+      "description": "Black enamel plate with engraved capitals: view names, group labels, dialog titles.",
+      "html": "<span class=\"ds-plate\">Waiting</span>",
+      "css": ".ds-plate { display: inline-block; background: #1d2320; color: #f1ebd8; padding: 3px 9px; border-radius: 3px; font-family: Bahnschrift, 'Segoe UI Variable Display', 'Segoe UI', sans-serif; font-stretch: 87.5%; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button-default",
+      "description": "Quiet cream button for ordinary actions.",
+      "html": "<button class=\"ds-btn\">Rename</button>",
+      "css": ".ds-btn { font: 14px/1.4 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; color: #1f2421; background: #fbf8ef; border: 1px solid rgba(31,36,33,0.24); border-radius: 4px; padding: 5px 12px; cursor: pointer; transition: background-color 120ms cubic-bezier(0.22,0.8,0.3,1), border-color 120ms cubic-bezier(0.22,0.8,0.3,1); } .ds-btn:hover { background: #fffdf6; border-color: rgba(31,36,33,0.4); } .ds-btn:active { background: #ebe5d5; } .ds-btn:focus-visible { outline: 2px solid #2f6db5; outline-offset: 2px; }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The black plate: the one main action in a place.",
+      "html": "<button class=\"ds-btn-primary\">Send</button>",
+      "css": ".ds-btn-primary { font: 600 14px/1.4 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; color: #f1ebd8; background: #1d2320; border: 1px solid #1d2320; border-radius: 4px; padding: 5px 12px; cursor: pointer; transition: background-color 120ms cubic-bezier(0.22,0.8,0.3,1); } .ds-btn-primary:hover { background: color-mix(in srgb, #1d2320 86%, #f4f0e4); } .ds-btn-primary:active { background: color-mix(in srgb, #1d2320 76%, #f4f0e4); } .ds-btn-primary:focus-visible { outline: 2px solid #2f6db5; outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Panel-fill field with a strong hairline and inset focus ring.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Filter sessions\">",
+      "css": ".ds-input { font: 14px/1.5 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; color: #1f2421; background: #fbf8ef; border: 1px solid rgba(31,36,33,0.24); border-radius: 4px; padding: 6px 9px; transition: border-color 120ms cubic-bezier(0.22,0.8,0.3,1); } .ds-input::placeholder { color: #626862; opacity: 1; } .ds-input:focus-visible { outline: 2px solid #2f6db5; outline-offset: -1px; border-color: transparent; }"
+    },
+    {
+      "name": "View Plate (navigation)",
+      "kind": "nav",
+      "refersTo": "nav-item-current",
+      "description": "Shelf navigation; the current plate is cream and drops into the page.",
+      "html": "<div class=\"ds-shelf\"><button class=\"ds-nav\">History</button><button class=\"ds-nav\" aria-current=\"page\">Sessions</button></div>",
+      "css": ".ds-shelf { display: flex; gap: 2px; align-items: stretch; height: 44px; padding: 0 12px; background: #44524b; } .ds-nav { display: flex; align-items: center; margin-top: 8px; padding: 0 12px; border: 0; border-radius: 4px 4px 0 0; background: transparent; color: #d3d8c9; font-family: Bahnschrift, 'Segoe UI', sans-serif; font-stretch: 87.5%; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; } .ds-nav:hover { background: #4f5e56; color: #f3eedf; } .ds-nav[aria-current=\"page\"] { background: #f4f0e4; color: #1f2421; } .ds-nav:focus-visible { outline: 2px solid #2f6db5; outline-offset: -2px; }"
+    },
+    {
+      "name": "Track Row (setting the route)",
+      "kind": "custom",
+      "refersTo": "track-row-selected",
+      "description": "Session line on the frame; the selected one takes the shelf color and runs flush into it.",
+      "html": "<div class=\"ds-track\"><button class=\"ds-row\"><span class=\"ds-lamp waiting\"></span><span>Fix login bug</span></button><button class=\"ds-row\" aria-current=\"true\"><span class=\"ds-lamp working\"></span><span>Refactor parser</span></button></div>",
+      "css": ".ds-track { background: #44524b; padding: 8px 0 8px 8px; width: 260px; } .ds-row { display: flex; gap: 10px; align-items: center; width: 100%; text-align: left; border: 0; border-radius: 4px 0 0 4px; background: transparent; color: #f3eedf; padding: 7px 34px 7px 10px; font: 600 14px/1.5 'Segoe UI Variable Text', 'Segoe UI', sans-serif; cursor: pointer; } .ds-row:hover { background: #4f5e56; } .ds-row[aria-current=\"true\"] { background: #f4f0e4; color: #1f2421; animation: ds-route 160ms cubic-bezier(0.22,0.8,0.3,1); } .ds-row:focus-visible { outline: 2px solid #2f6db5; outline-offset: -2px; } .ds-lamp { width: 10px; height: 10px; box-sizing: content-box; border-radius: 50%; border: 2px solid #1b201d; background: #7c847e; flex: none; } .ds-lamp.waiting { background: #e39a0b; } .ds-lamp.working { background: #a9d0f5; } .ds-row[aria-current=\"true\"] .ds-lamp { outline: 2.5px solid #44524b; } @keyframes ds-route { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }"
+    },
+    {
+      "name": "Lamps",
+      "kind": "custom",
+      "refersTo": "lamp",
+      "description": "Status lenses in bezels: waiting, working, idle, ended.",
+      "html": "<span class=\"ds-l w\"></span> <span class=\"ds-l k\"></span> <span class=\"ds-l i\"></span> <span class=\"ds-l e\"></span>",
+      "css": ".ds-l { display: inline-block; width: 10px; height: 10px; box-sizing: content-box; border-radius: 50%; border: 2px solid #1b201d; margin-right: 6px; background: #7c847e; } .ds-l.w { background: #e39a0b; } .ds-l.k { background: #a9d0f5; } .ds-l.i { background: #2d9a5d; }"
+    },
+    {
+      "name": "Menu",
+      "kind": "custom",
+      "refersTo": "menu",
+      "description": "Floating list: 1px rule, 6px radius, soft offset shadow, pop-in.",
+      "html": "<div class=\"ds-menu\"><button class=\"ds-mi\">Rename</button><button class=\"ds-mi\">Copy id</button></div>",
+      "css": ".ds-menu { display: inline-flex; flex-direction: column; min-width: 200px; padding: 4px; background: #fbf8ef; color: #1f2421; border: 1px solid rgba(31,36,33,0.24); border-radius: 6px; box-shadow: 0 10px 26px -8px rgba(40,36,24,0.3), 0 2px 6px -2px rgba(40,36,24,0.18); animation: ds-pop 160ms cubic-bezier(0.22,0.8,0.3,1); } .ds-mi { text-align: left; border: 0; border-radius: 3px; background: none; color: inherit; padding: 6px 10px; font: 14px 'Segoe UI Variable Text', 'Segoe UI', sans-serif; cursor: pointer; } .ds-mi:hover, .ds-mi:focus-visible { background: #ebe5d5; outline: none; } @keyframes ds-pop { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }"
+    },
+    {
+      "name": "Instrument",
+      "kind": "custom",
+      "refersTo": "plate-label",
+      "description": "Engraved label beside a reading, with the last-turn change and a damped needle.",
+      "html": "<span class=\"ds-inst\"><span class=\"ds-il\">Context</span><span class=\"ds-bar\"><span class=\"ds-fill\"></span></span><span>42%</span><span class=\"ds-delta\">+3%</span></span>",
+      "css": ".ds-inst { display: inline-flex; align-items: center; gap: 8px; font: 600 12px 'Segoe UI Variable Text', 'Segoe UI', sans-serif; color: #1f2421; } .ds-il { font-family: Bahnschrift, 'Segoe UI', sans-serif; font-stretch: 87.5%; letter-spacing: 0.06em; text-transform: uppercase; color: #626862; } .ds-bar { display: inline-block; width: 44px; height: 5px; border-radius: 1px; background: rgba(31,36,33,0.22); overflow: hidden; } .ds-fill { display: block; width: 100%; height: 100%; background: #4f5650; transform-origin: left center; transform: scaleX(0.42); transition: transform 600ms cubic-bezier(0.22,0.8,0.3,1); } .ds-delta { color: #626862; font-weight: 500; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Signal Box",
+    "overview": "Claude Deck is one signal-box panel. A gray-green stove-enamel frame (the shelf across the top, the track panel down the left, the History list) surrounds a calm reading shelf. In the day world the shelf is cream enamel. In the dark world the roles swap: the frame is the lighter green and the shelf is the darker surface. Every session is a line with a lamp, and the line you pick \"sets a route\" into the reading shelf. It is a working tool that sits maximized on its own monitor and is glanced at all day, so the theming stays in the materials (enamel, engraved plates, lamps, hairline rules) and never becomes props such as levers, track drawings or bells.\n\nRank comes from four things only: weight, capitals, reversed plates and rules. There are two type sizes. There are no cards, gradients, glow or blur; structure is hairline rules and flat enamel planes, and depth exists only on things that float (menus, popovers, dialogs, toasts).\n\nThe system must survive 15 themes. Each theme supplies base colors; the frame, plates, bezel, lines and washes are mixed from them in one shared theme block, so the signal-box grammar holds in every palette.",
+    "keyCharacteristics": [
+      "Frame around a reading shelf; the selected row takes the shelf's color and runs flush into it.",
+      "Black enamel plates with engraved capitals name views, groups, dialogs and fact labels.",
+      "Status is a lamp in a dark bezel, never a colored card or badge.",
+      "Two sizes (14px, 12px), one reading column (560px, about 72ch).",
+      "Mechanical motion: 120-160ms, no bounce.",
+      "System fonts only, drawn SVG icons, one preserved 14x10 pixel mascot."
+    ],
+    "rules": [
+      { "name": "The Lamp-Only Status Rule", "body": "Status is shown by a lamp lens in a bezel (10px lens, 2px bezel). Amber, white, green and unlit belong to status; no other element borrows them as decoration.", "section": "colors" },
+      { "name": "The Derived Frame Rule", "body": "A theme sets base colors only. Frame, plates, bezel, lines and washes are color-mix results of those bases in the shared theme block; do not hand-set them per theme except where a theme must (high-contrast).", "section": "colors" },
+      { "name": "The Two Sizes Rule", "body": "14px and 12px. Rank comes from weight, capitals, reversed plates and rules, not from a third size.", "section": "typography" },
+      { "name": "The Engraved Capitals Rule", "body": "Capitals belong to short plate labels only; running text, buttons and values stay in sentence case.", "section": "typography" },
+      { "name": "The Your-Turn Rule", "body": "Your turns are weight 600 under a hairline rule with an engraved \"YOU\" label. No bubble, band or card.", "section": "typography" },
+      { "name": "The Flat Enamel Rule", "body": "Surfaces at rest have no shadow. A shadow means the surface floats above the page.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do rank with weight, capitals, reversed plates and hairline rules within the 14px and 12px sizes.",
+      "Do show status as a lamp in a bezel and mix any new wash from the status token with color-mix.",
+      "Do put the selected list item on the reading shelf's color, flush to the shelf.",
+      "Do use 120-160ms with cubic-bezier(0.22, 0.8, 0.3, 1); disable animation under reduced motion.",
+      "Do keep prose, turns, tool lines and the reply bar in the shared 560px column.",
+      "Do use Cascadia for code, paths, ids and model ids.",
+      "Do derive new theme surfaces from the theme's base colors in the shared block."
+    ],
+    "donts": [
+      "Don't use boxed stat cards, a left icon rail, glow, gradients, blur or glass.",
+      "Don't use bounce or spring easing.",
+      "Don't load remote fonts.",
+      "Don't use emoji or text glyphs as icons; draw them.",
+      "Don't use amber, white, green or unlit gray for anything but status.",
+      "Don't add railway props (levers, track drawings, bells) that get in the way of work.",
+      "Don't put engraved capitals on running text or button labels."
+    ]
+  }
+}

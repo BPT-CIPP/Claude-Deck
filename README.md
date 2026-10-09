@@ -40,7 +40,7 @@ also edits your Claude Code settings.
 | **Git** | to download and update Claude Deck | `winget install Git.Git` |
 | **GitHub CLI**, signed in | only for **Check for updates** (Git signs in to GitHub through it) | `winget install GitHub.cli`, then `gh auth login` |
 
-No administrator rights are needed on a standard Windows setup. Tested with Claude Code 2.1.281 and
+No administrator rights are needed on a standard Windows setup. Tested with Claude Code 2.1.284 and
 Node.js 24 on Windows 11. Newer Claude Code versions usually work; see
 [Troubleshooting](#troubleshooting) if something stops updating.
 
@@ -68,9 +68,11 @@ run the installer again from the new location.
 **About the sign-in task.** A scheduled task, not a Windows service, because the server has to run
 as you in your desktop session to use your Claude sign-in and open terminal tabs and Edge windows.
 It restarts the server if it crashes (giving up after 5 crashes in 10 minutes), and leaves it
-stopped if you stop it on purpose. Some managed PCs restrict scheduled tasks, and some security
-tools flag a new hidden PowerShell task at sign-in; tell your IT team before rolling Claude Deck out.
-You can skip the task entirely and just use the shortcut ([Troubleshooting](#troubleshooting)).
+stopped if you stop it on purpose. It runs with no window: PowerShell under Windows' own console
+host (`conhost.exe --headless`), since a hidden PowerShell window still shows as a Windows Terminal
+tab when Terminal is your default terminal app. Some managed PCs restrict scheduled tasks, and some
+security tools flag a new hidden PowerShell task at sign-in; tell your IT team before rolling Claude
+Deck out. You can skip the task entirely and just use the shortcut ([Troubleshooting](#troubleshooting)).
 
 ## Pin it to the taskbar
 
@@ -118,6 +120,15 @@ It names any file that's missing or different. Files that aren't part of Claude 
 `CLAUDE.local.md`) are ignored. A clone of `main` can be ahead of the latest release; to check one
 release exactly, `git checkout vX.Y.Z` first.
 
+### Updating Claude Code
+
+Claude Code updates itself in the background, and Claude Deck uses whichever version is installed.
+**Claude Deck Preferences → Claude Code** shows the version, whether it updates itself (it doesn't
+if `DISABLE_AUTOUPDATER` or `DISABLE_UPDATES` is set) and **Update Claude Code now**, which runs
+Claude Code's own `claude update` to check right away. Open chats keep the version they started
+with; resume them to use the new one. New models (a new Sonnet, say) appear in the model menus once
+Claude Code has updated.
+
 ## Uninstall
 
 From your Claude-Deck folder:
@@ -147,21 +158,23 @@ over.
 
 | Area | What you get |
 | --- | --- |
-| **Sessions** | The session list on the left, grouped by what each needs: *Needs you* (a permission prompt or question), *Working*, *Idle*, *Ended*. The selected session is in full on the right; an ended chat shows its conversation so far, even after Claude Deck restarts. The trash button on a row ends the session, or removes it once it has ended. *Most tokens this week*, at the top right beside the filter, lists the conversations that used the most (subagents included) since your plan's weekly limit reset, or in the last 7 days; **Show all** lists every one. |
-| **Chat** | Each reply appears whole once Claude has finished it, while a spinner (with Claude Code's playful verbs and the elapsed time) shows it's working. Tool calls expand to show their input and result. **Enter** sends, **Shift+Enter** adds a line, **/** lists the session's slash commands, at the start of a message or anywhere in it, as in Claude Code (one at the start runs as a command; one later in the message asks Claude to run it). `/clear` also clears the chat's messages, as Claude Code clears its screen (turn that off in **Claude Deck Preferences → Appearance**). While Claude works, **Enter** queues your message (marked *Queued* until Claude picks it up) and **Interrupt** stops Claude and sends it now. As in Claude Code's terminal, **↑** in an empty reply box takes queued messages back out of the queue to edit (images included), or otherwise brings back your previous messages, for example the one you just interrupted; **↓** steps forward again. Above the title: the status, how many subagents are running, the folder (copy it, or open it in Explorer) and the session ID. **▾** beside the title opens the session menu: **Rename**, **Tag color**, **Changes**, **Continue in terminal** and **Subagents**. One row below changes the model, effort, permission mode and plugins (taking effect from Claude's next step). The model menu has a flyout for each model, named with its version as your Claude Code reports it (*Sonnet 5.5 ▸*), listing its variants: first the latest (the alias, which moves to the next version when Claude Code does) and the latest with a 1M-token context, then under *Specific versions* each version by model ID (`claude-opus-5-5`, `claude-opus-4-8`, ...), which stays on that version. New models show up there once Claude Code is updated; it updates itself, and **Claude Deck Preferences → Claude Code → Update Claude Code now** checks right away. The row also shows *Context* (how full Claude's context window is, with **Compact** to summarize the conversation so far), *Current cost* and *Current total tokens* (both for the current conversation, which `/clear` starts afresh), with **End session** at the end. Each finished reply shows how long it took and the tokens it used, including how many were its subagents'. |
+| **Sessions** | The session list on the left, grouped by what each needs: *Needs you* (a permission prompt or question), *Working*, *Idle*, *Ended*. The selected session is in full on the right; an ended chat shows its conversation so far, even after Claude Deck restarts. The trash button on a row ends the session, or removes it once it has ended. |
+| **Chat** | Each reply appears whole once Claude has finished it, while a spinner (with Claude Code's playful verbs and the elapsed time) shows it's working. Tool calls expand to show their input and result. **Enter** sends and **Shift+Enter** adds a line. While Claude works, **Enter** queues your message (marked *Queued* until Claude picks it up) and **Interrupt** stops Claude and sends it now. As in Claude Code's terminal, **↑** in an empty reply box takes queued messages back out of the queue to edit (images included), or otherwise brings back your previous messages, for example the one you just interrupted; **↓** steps forward again. Above the title: the status, how many subagents are running, the folder (copy it, or open it in Explorer) and the session ID. **▾** beside the title opens the session menu: **Rename**, **Tag color**, **Changes**, **Continue in terminal** and **Subagents**. One row below changes the model, effort, permission mode and plugins (taking effect from Claude's next step), and shows *Context* (how full Claude's context window is, with **Compact** to summarize the conversation so far), *Current cost* and *Current total tokens* (both for the current conversation, which `/clear` starts afresh), with **End session** at the end. Each finished reply shows how long it took and the tokens it used, including how many were its subagents'. |
+| **Slash commands** | Type **/** anywhere in the reply box, as in Claude Code, to list the session's commands and skills; **Tab** or a click fills one in. A command at the start of a message runs as a command; one later in the message asks Claude to run it. `/clear` starts a new conversation and, as Claude Code clears its screen, also clears the chat's messages (queued messages stay, and **↑** still recalls your earlier ones). Turn that off under **Claude Deck Preferences → Appearance → /clear**. |
+| **Models** | The model menu (in a chat's header, New session and Claude Code Settings) has a flyout for each model, named with its version as your Claude Code reports it: *Opus 5.5 ▸*, *Sonnet 5.5 ▸*, *Fable 5.1 ▸*, *Haiku 4.5 ▸*. Each lists first the choices that follow the newest version: the latest (for example `sonnet`, which moves to the next Sonnet when Claude Code does), the latest with a 1M-token context, and for Opus, Opus while planning. Under *Specific versions* come the versions by model ID, newest first (`claude-opus-5-5`, `claude-opus-4-8`, …), which stay on that version; hover one for its name. **Other model ID…** takes any other. New models appear once Claude Code has updated ([Updating Claude Code](#updating-claude-code)). |
 | **Plugins** | **Plugins** in a chat's header lists Claude Code's plugins. *Installed* has a checkbox to turn each one on or off; *Marketplace* lists what your marketplaces offer, grouped by the categories the marketplace gives them (Database, Development, Productivity and so on), with search and **Install**. Changes apply to all your Claude Code sessions, as `/plugin` does, and the chat you're in picks them up right away. If a change would reset Claude's prompt cache mid-conversation (a plugin that adds tools), you're asked first. A plugin that installs by running a command shows you the command before anything runs. |
-| **Images and files** | Paste images with **Ctrl+V** or **Alt+V** (as in Claude Code), drop image files on the reply box, or use **Image**. Large images are scaled down to fit the API's limits. Drop any other file (a PDF, say, up to 40 MB) on the reply box and its path goes in your message, as dropping a file into Claude Code's terminal does; Claude reads it from a copy kept in Claude Deck's data folder, under `attachments\`. |
+| **Images and files** | Paste images with **Ctrl+V** or **Alt+V** (as in Claude Code), drop image files on the reply box, or use **Image**. Large images are scaled down to fit the API's limits. Drop any other file (a PDF, say, up to 40 MB) on the reply box and its path goes in your message at the cursor, as dropping a file into Claude Code's terminal does. Claude reads it from a copy kept in Claude Deck's data folder, under `attachments\`; the first time, Claude may ask permission to read outside the project folder. A file dropped anywhere else in the window is ignored. |
 | **Permission prompts** | *Allow once*, Claude's own suggestion (for example *Always allow Bash(npm test:\*) in this project*), or *Deny*, optionally telling Claude what to do instead. |
 | **Questions** | When Claude asks a multiple-choice question, pick one or more options or type your own answer. |
 | **Subagents** | When Claude starts a subagent, a panel opens above the conversation listing the subagents it started, from the moment each starts: type, model, time, current step, tool calls and tokens. Click one for everything it did, live: its instructions, every step with results, and token usage (input, output, cache). **Stop** ends a running one. **✕** closes the panel until another subagent starts; **Subagents** in the session menu opens it again. |
 | **Changes** | **Changes** in the session menu shows the files Claude changed in each turn, with line counts and diffs. **Restore to before this turn** puts those files back (it lists what it will do first), and **Undo** reverses the restore. The conversation itself isn't changed. |
 | **New session** | Where to run it (chat or terminal), folder (browse, pinned, recent), name, color, new or continue-latest, model, effort, permission mode, git worktree, extra folders, extra arguments and a first prompt. Shows the exact `claude` command. Save setups as presets. |
 | **History** | Every past conversation, searchable and filterable by folder. Preview it, then **Resume here**, **Resume in terminal** or **Fork a copy**. The trash button deletes a conversation you don't need (with **Undo**; open conversations can't be deleted). |
-| **Plan usage** | Next to *Sessions*: your current session and weekly limits, the same numbers as `/usage` in Claude Code. Click for every limit and reset time. |
+| **Plan usage** | On the bar across the top: your current session and weekly limits, the same numbers as `/usage` in Claude Code. Click for every limit and reset time. **Most tokens this week**, at the bottom of that dropdown, lists the conversations that used the most (subagents included) since your plan's weekly limit reset, or in the last 7 days; **Show all** lists every one. |
 | **Notifications** | A desktop notification (and optional chime) when a session needs you or finishes. The taskbar icon's mascot sweats while anything is working and gets an amber dot when a session needs you. |
 | **Claude Code Settings** | Edits your user, project and project-local `settings.json`, and your user and project `CLAUDE.md`, with a form for every setting, plus raw JSON. Every save backs up the previous file first, and a save is refused if Claude Code changed the file since you opened it. **Plugin marketplaces** lists where Claude Code finds plugins, and adds, updates or removes them. |
 | **Search everything** | **Ctrl+K**: jump to a session, resume a conversation or run a command. |
-| **Themes** | **Claude Deck Preferences → Appearance**: Match Windows, Dark and Light, plus twelve more (Claude, Midnight, Graphite, Nord, Dracula, Forest, Ocean, Solarized Dark, High Contrast, Sepia, Solarized Light, Rose). |
+| **Themes and fonts** | **Claude Deck Preferences → Appearance**: Match Windows, Dark and Light, plus twelve more (Claude, Midnight, Graphite, Nord, Dracula, Forest, Ocean, Solarized Dark, High Contrast, Sepia, Solarized Light, Rose). **Text font** (messages, lists and controls) and **Label font** (the capitals on plates and labels) pick from fonts that come with Windows; one this PC doesn't have is shown but can't be picked. |
 
 ## Keyboard shortcuts
 
@@ -180,7 +193,7 @@ Press **?** in Claude Deck for this list.
 | **Ctrl+K** | Search sessions, history and commands |
 | **/** | Filter |
 | **Alt+1** … **Alt+4** | Sessions, History, Claude Code Settings, Claude Deck Preferences |
-| **Ctrl+B** | Collapse or expand the sidebar |
+| **Ctrl+B** | Narrow the session list to its lamps, or widen it again |
 | **Ctrl+S** | Save Claude Code Settings |
 
 Ctrl+Tab and Ctrl+W work in the installed Claude Deck app window. In a plain Edge tab, Edge keeps
@@ -194,6 +207,10 @@ them for its own tabs.
   model runs). It reads your Claude sign-in token for that, never changes it, and sends it nowhere
   else. **Check for updates** fetches from GitHub with `git`, signed in through the GitHub CLI, only
   when you click it.
+- **Reading Claude Code's model list.** When there's no list yet for the installed Claude Code
+  version, Claude Deck starts Claude Code once in the background, reads the models it offers from
+  its startup handshake, and closes it. No prompt is sent, so no model runs, no MCP servers are
+  started, and Claude Code's non-essential network traffic is turned off for that run. **Update Claude Code now** runs Claude Code's own `claude update`, only when you click it.
 - **Your Claude plan only.** Claude Deck won't start a session if Claude Code is set up to bill an
   Anthropic API account or a cloud provider instead of your plan: an `ANTHROPIC_API_KEY` or similar,
   an `apiKeyHelper`, or a Bedrock or Vertex switch. It looks in Claude Deck's own environment and
@@ -206,7 +223,8 @@ them for its own tabs.
 - **Local only.** The server listens on `127.0.0.1:47821` (or another free port) and requires a
   per-install token, so other web pages and other PCs can't use it.
 - **Claude Deck's data** is in `%LOCALAPPDATA%\ClaudeDeck`: preferences, open chats, settings
-  backups, undo copies and its trash.
+  backups, undo copies, its trash, Claude Code's model list, and copies of files you dropped on a
+  chat (`attachments\`).
 - **Claude Code's files** (`%USERPROFILE%\.claude`) are changed only when you save in the settings
   editor (after a backup) or delete a conversation from History (moved to Claude Deck's trash, kept
   for 30 days). **Restore to before this turn** changes your project files, after saving their
@@ -230,6 +248,15 @@ installed somewhere unusual, set its location under **Claude Deck Preferences �
 **The sign-in task couldn't be created, or your security tool flags it.** Claude Deck works without
 it: start it with the **Start Claude Deck** shortcut, and leave **Start with Windows** off. To create
 only the shortcuts: `powershell -ExecutionPolicy Bypass -File .\Start-ClaudeDeck.ps1 -InstallShortcut`.
+
+**A PowerShell or Windows Terminal window keeps printing "Claude Deck is already running".** That's
+the sign-in task's supervisor, from before 1.9.0, when it could show a window. Closing it is safe.
+Turn **Start with Windows** off and on again (**Claude Deck Preferences → Taskbar app**), or run
+`powershell -ExecutionPolicy Bypass -File .\Start-ClaudeDeck.ps1 -InstallStartup`, to update the
+task so it runs with no window.
+
+**A new model isn't in the model menu.** The menu lists what your Claude Code offers. Update Claude
+Code (**Claude Deck Preferences → Claude Code → Update Claude Code now**), then open the menu again.
 
 **The window says "Claude Deck isn't running".** Start it with the **Start Claude Deck** shortcut,
 then choose **Try again**. To see the server's own messages, run
@@ -269,6 +296,8 @@ Claude Code doesn't document, and an update may have changed them. Chats aren't 
   here** stops them there and continues the conversation as a chat.
 - **After a restart**, images in earlier messages show as "1 image attached", the Subagents list
   starts fresh, and **Changes** is empty for turns from before Claude Deck started tracking them.
+- **Dropped files aren't cleaned up.** The copies under `%LOCALAPPDATA%\ClaudeDeck\attachments`
+  stay until you delete them.
 
 ## Contributing
 

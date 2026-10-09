@@ -11,6 +11,15 @@
 # Personal Claude Code notes for this repo (account, auth, local workflow); see CLAUDE.md
 CLAUDE.local.md
 
+# Impeccable (the design skill): its product record, design record, surface brief and detector
+# config are committed; its working files (screenshots, decision pages, hook cache) stay local.
+.impeccable/review/
+.impeccable/questions/
+.impeccable/mocks/
+.impeccable/build/
+.impeccable/hook.cache.json
+.impeccable/config.local.json
+
 # Dependencies (there are none, but npm creates this if someone runs npm install)
 node_modules/
 
