@@ -55,6 +55,13 @@ function describe(meta) {
 
 
 class Live extends EventEmitter {
+  // An ended session's time is when its conversation was last active, from Claude Code's
+  // transcript, as History shows it. Claude Deck's own clock starts again whenever the server does,
+  // so an ended chat restored at start-up would otherwise read "just now". No transcript: the clock.
+  static endedSince(state, meta, since) {
+    return state === 'exited' && meta && meta.updatedAt ? meta.updatedAt : since;
+  }
+
   constructor({ registry, history, chats }) {
     super();
     this.registry = registry;
@@ -167,7 +174,7 @@ class Live extends EventEmitter {
         state,
         status,
         waitingFor: rec && rec.status === 'waiting' ? rec.waitingFor || 'input needed' : null,
-        statusSince: rec ? rec.statusUpdatedAt || rec.updatedAt || null : tab ? tab.updatedAt : entry.launchedAt,
+        statusSince: Live.endedSince(state, meta, rec ? rec.statusUpdatedAt || rec.updatedAt || null : tab ? tab.updatedAt : entry.launchedAt),
         sessionId,
         claudePid: tab ? tab.claudePid : null,
         exitCode: tab ? tab.exitCode : null,
@@ -194,6 +201,7 @@ class Live extends EventEmitter {
           model: c.chatModel || d.model,
           costUSD: c.chatCost ?? d.costUSD,
           userTurns: d.userTurns,
+          statusSince: Live.endedSince(c.state, meta, c.statusSince),
           transcriptStamp: c.sessionId ? this.history.stamp(c.sessionId) : null,
         };
         sessions.push(view);

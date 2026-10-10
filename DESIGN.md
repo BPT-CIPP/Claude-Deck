@@ -217,7 +217,7 @@ Weathered green enamel and warm cream, with signal lamps as the only saturated c
 ### Named Rules
 **The Two Sizes Rule.** 14px and 12px. Rank comes from weight, capitals, reversed plates and rules, not from a third size.
 **The Engraved Capitals Rule.** Capitals belong to short plate labels only; running text, buttons and values stay in sentence case.
-**The Your-Turn Rule.** Your turns are weight 600 under a hairline rule with an engraved "YOU" label. No bubble, band or card.
+**The Your-Turn Rule.** Your turns are weight 600 under a hairline rule with an engraved "YOU" label. No bubble, band or card. The first thing Claude does after your turn (a reply, a tool line, a question or the spinner) gets the same engraved "CLAUDE" label under a softer rule. A long paste in your turn is its placeholder, `[Pasted text #1 +123 lines]`, on a quiet chip that opens the text under a left rule.
 
 ## Layout
 

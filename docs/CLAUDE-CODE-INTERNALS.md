@@ -37,6 +37,8 @@ the native installer's `%USERPROFILE%\.local\bin\claude.exe`. An npm global inst
 ✅ From `claude --help`: `--session-id`, `--resume <id>`, `--continue`, `--fork-session`, `--model`,
 `--effort`, `--permission-mode`, `--add-dir`, `--worktree`, plus, for chats,
 `--output-format stream-json --verbose --input-format stream-json --permission-prompt-tool stdio`.
+Going back to an earlier message also uses `--resume-session-at <entry uuid>` (see "Rewinding the
+conversation").
 
 ✅ Model aliases, from the alias table inside `claude.exe`: `opus`, `sonnet`, `haiku`, `fable`,
 `best`, `opus[1m]`, `sonnet[1m]`, `fable[1m]`, `opusplan`. Any full model ID also works.
@@ -293,6 +295,145 @@ response carries `held: true` and `cache_impact`, and a second reload without th
 Verified through Claude Deck: installing a test plugin whose `.mcp.json` starts a one-tool MCP
 server was held after the chat's first turn, and applied when forced. A plugin that adds only a
 slash command was never held, before or after a turn.
+
+## MCP servers
+
+All checked with 2.1.284 against the mock, with a throwaway `CLAUDE_CONFIG_DIR` and `--mcp-config`
+naming two stdio servers run by `node.exe`: a one-tool server, and one whose script doesn't exist.
+
+✅ **`system/init`** carries `mcp_servers: [{name, status, source}]`, each turn. `initialize`'s
+response has no MCP field.
+
+✅ **`control_request` `mcp_status`** answers `{mcpServers: [{name, status, serverInfo?: {name,
+version}, error?, config, scope, source, tools?: [{name, annotations}]}]}`. `status` is `connected`,
+`pending`, `failed`, `needs-auth` or `disabled` (the field description inside `claude.exe` lists
+these, plus an internal `error_code` on some failures). Servers connect in the background: right
+after `initialize` both were `pending`; 3 s later one was `connected` (with `serverInfo` and
+`tools`) and the other `failed` with `error: "Connection closed"`. `config` is the server's whole
+definition (`{type: 'stdio', command, args}` here; it can hold `env` or `headers` with keys), so
+Claude Deck never passes it to the page. Answered locally, with no API request.
+
+✅ **`mcp_toggle` `{serverName, enabled}`** turns a server off (`status: 'disabled'`, no `tools` or
+`serverInfo`) or back on (it reconnects), answering an empty success. It's remembered: Claude Code
+writes the name into `projects[<folder>].disabledMcpServers` in its `.claude.json`, and a new
+process in the same folder started with that server `disabled`; turning it on took it out again,
+as `/mcp` does. Other sessions already running in that folder keep their state. An unknown name is
+an error response: `Server not found: <name>`.
+
+✅ **`mcp_reconnect` `{serverName}`** answers an empty success once the server is connected, or an
+error response with the reason (`Connection closed` for the server that can't start).
+
+⚠️ **Signing in** (`needs-auth`): `mcp_authenticate`; see "Terminal features in stream-json". Claude
+Deck opens the address it answers with and watches `mcp_status` until the server connects.
+
+## Pasted text
+
+⚠️ How Claude Code's prompt takes a long paste, read from the code inside `claude.exe` 2.1.284 (it's
+terminal behavior, so there's no stream-json message to probe). Line endings become `\n` and tabs
+four spaces. A paste longer than 800 characters, or with more line breaks than `min(rows - 10, 2)`
+(2 in any usual terminal), goes in as `[Pasted text #<n> +<line breaks> lines]`, or
+`[Pasted text #<n>]` with none, and the text is kept beside the prompt and put back in its place on
+submit. `<n>` is one more than the highest number in the prompt. Pasting the same text again while
+its placeholder is there expands it in place, and "paste again to expand" shows for 8 s after a
+paste of 100,000 characters or fewer. The 800 is the likeliest of several minified constants named
+the same; the rest are as written. Claude Deck's reply box does the same (`public/pasted-text.js`)
+and sends the full text: nothing about it reaches Claude Code. Where each paste sits in the message is kept with Claude Deck's own copy of it, so the conversation and **↑** can show the placeholders again; Claude Code's transcript has only the full text, so a conversation reloaded from it shows the text in full.
+
+## Terminal features in stream-json
+
+The `/`-command list aside, Claude Code's terminal has keys and modes that stream-json doesn't run
+for a client. Claude Deck rebuilds each from the request or message below. Unless marked, all were
+probed with 2.1.284 against the mock in a throwaway `CLAUDE_CONFIG_DIR`, with prompts that run no
+shell command, and then driven through Claude Deck's own page in `npm run sandbox`.
+
+✅ **Thinking** arrives as its own `assistant` message, `content: [{type: 'thinking', thinking,
+signature}]`, before the reply's text (with or without `--include-partial-messages`).
+
+✅ **Tool results.** The `user` message carrying a `tool_result` also has `tool_use_result`, the
+tool's own output. An `Edit`: `{filePath, oldString, newString, originalFile, structuredPatch:
+[{oldStart, oldLines, newStart, newLines, lines: ['-old', '+new', ' context']}], userModified,
+replaceAll}`, the diff Claude Code draws. A `Write`: `{type: 'create'|'update', filePath, content,
+structuredPatch}` (⚠️ the `create` shape is from the code, not probed). A `Read`: `{type: 'text',
+file: {filePath, content, numLines, startLine, totalLines}}`.
+
+✅ **To-do list.** The tools are off in stream-json: `TodoWrite` and `TaskCreate` came back
+"No such tool available: … is disabled for this session", even with `CLAUDE_CODE_ENABLE_TASKS=1`,
+and neither is in `system/init`'s `tools`. Across 30 days of one PC's transcripts (72 from Claude
+Deck, 23 from the terminal), neither was ever called, so the switch isn't only stream-json's. ⚠️
+From the code: `TodoWrite` `{todos: [{content, status: pending|in_progress|completed,
+activeForm}]}`; `TaskCreate` `{subject, description, activeForm?}` answers "Task #<id> created
+successfully"; `TaskUpdate` `{taskId, status?: …|deleted, subject?, activeForm?}`. Claude Code
+builds its list from those calls, and so does Claude Deck, so the list shows whenever the tools are
+on.
+
+✅ **Plan approval.** `ExitPlanMode` asks with `can_use_tool` `{tool_name: 'ExitPlanMode', input:
+{plan}, requires_user_interaction: true}` and no `permission_suggestions`. Allowing with
+`updatedPermissions: [{type: 'setMode', mode: 'acceptEdits'|'default', destination: 'session'}]`
+leaves plan mode for that mode (the next `system/init` reports it); allowing without it stays in
+plan mode. The result names the plan file Claude Code saved: `<config>/plans/<slug>.md`.
+
+✅ **`file_suggestions` `{query}`** (the `@` list) answers `{suggestions: [{path}], cwd}`, paths
+relative to `cwd`, folders ending in a separator. In a git repository the first query came back
+empty while the index built, and the next (3 s later) in 3 ms with ranked results: `chat` →
+`src/chat.js`, `test/chat.test.js`, …; `pub/app` → `public/app.css`, `public/app.js`. In a folder
+that isn't a repository an empty query lists the top level, and fuzzy queries returned nothing in
+the probe but matched in the sandbox's project folder (`@` → `edit-me.txt`).
+
+✅ **`side_question` `{question}`** (`/btw`) answers `{response, synthetic: false}`, with a
+`system/control_request_progress` `{status: 'started'}` first. It makes one API request and adds
+nothing to the conversation or transcript.
+
+✅ **`background_tasks`** `{tool_use_id?}` (Ctrl+B) answers `{}`. The waiting task gets
+`task_updated` `{patch: {is_backgrounded: true}}`, its tool call returns "Async agent launched
+successfully" so the turn carries on, and `system/background_tasks_changed` `{tasks: [{task_id,
+task_type, description}]}` lists what's in the background, again (empty) when it finishes.
+
+✅ **Messages that start no turn.** A `user` message with `shouldQuery: false` is appended to the
+transcript without an API request; the next message that does query sends it along (that request's
+last user turn had 3 text blocks). Each still gets `command_lifecycle` queued/started/completed and
+a `result`, with no `assistant` message. This is how the terminal's `!` shell mode feeds Claude:
+`<bash-input>cmd</bash-input>` and `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>`
+(the tags, from the code inside `claude.exe`). Claude Deck runs the command itself, in Windows
+PowerShell (`src/shell-mode.js`), and sends both in one such message.
+
+✅ **Message ids.** The `uuid` on a `user` message Claude Deck sends becomes that entry's `uuid` in
+the transcript, so a message in the chat can be found there.
+
+⚠️ **Prompt suggestions.** Schema only: `prompt_suggestion` `{suggestion, uuid, session_id}`,
+"emitted after each turn when promptSuggestions is enabled" (an `initialize` option). None arrived
+in probes, with the option and with `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=1`: the code turns them
+off for non-interactive sessions behind a server-side flag the mock can't set. Claude Deck asks for
+them and shows any that arrive; the person's own `promptSuggestionEnabled` setting still decides.
+
+✅ **Fast mode.** `initialize` and every `result` report `fast_mode_state` (`off`, `cooldown`,
+`on`) and `fast_mode_disabled_reason` (`sdk_opt_in_required` before opting in). `apply_flag_settings`
+`{settings: {fastMode: true}}` turns it on (the next result says `on`). It's billed as extra usage
+on top of the plan (one of the reasons it can be refused is `extra_usage_disabled`), so Claude Deck
+allows it only with *Allow API billing*.
+
+⚠️ **`mcp_authenticate` `{serverName, redirectUri?}`.** From the code: `{authUrl,
+requiresUserAction: true, callbackExpected: true, redirectScheme, state, callbackPort?}` for a server
+using OAuth, where Claude Code listens for the browser's return itself, and `{authUrl,
+requiresUserAction: true, callbackExpected: false}` for a claude.ai connector, connected on
+claude.ai. Probed: a stdio server answers the error `Server type "stdio" does not support OAuth
+authentication`; an unknown name, `Server not found: <name>`.
+
+## Rewinding the conversation
+
+✅ Claude Code's Esc Esc has no stream-json request. `--resume <id> --resume-session-at <uuid>
+--fork-session` starts a new session holding the transcript up to and including the entry with
+that `uuid`, and leaves the original file untouched. To go back to before a message, use its
+entry's `parentUuid` (the entry before it); `null` means it was the first, so start a new
+conversation. Probed: the fork's prompts were the ones before the chosen message plus the new one.
+
+## Prompt history
+
+✅ `~/.claude/history.jsonl` is what the terminal's ↑ and Ctrl+R read: one line per prompt, oldest
+first, `{display, pastedContents, timestamp, project, sessionId}`. A long paste shows in `display`
+as its placeholder. Its `pastedContents[id]` is `{id, type: 'text', content}` or, for bigger ones,
+`{id, type, contentHash}`, whose text is `~/.claude/paste-cache/<contentHash>.txt` until Claude Code
+prunes it (20 of 26 recent pastes on one PC were hash-only, and most of those files were gone).
+Read only (`src/prompt-history.js`).
 
 ## Subagents and background tasks
 

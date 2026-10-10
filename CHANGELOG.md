@@ -6,6 +6,58 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.11.0] - 2026-10-09
+
+### Added
+- **MCP servers** in a chat's header, beside Plugins: how many of the chat's MCP servers are
+  connected, and a list like `/mcp`'s with each one's status (connected with its tools and version,
+  connecting, failed and why, needs sign-in, off) and where it's set up. Turn a server off or on
+  (Claude Code remembers it for the folder, as `/mcp` does), or reconnect one that failed. A
+  server's settings, which can hold keys, never reach the page.
+- **Long pastes collapse**, as in Claude Code: text over 800 characters or with more than two line
+  breaks goes in the reply box as `[Pasted text #1 +123 lines]`, and the full text is sent in its
+  place. Paste the same text again straight after to expand it in the box. In the conversation your
+  message shows the placeholder too; click it to show the text. **↑** and taking back a queued
+  message bring the placeholders back, as in Claude Code.
+- A **Claude** label marks where Claude's side starts after each of your messages (over its reply,
+  first tool or the working spinner), matching the **You** label on yours.
+- **More of Claude Code's terminal, in chats:**
+  - **Edits show their diff** under the tool line, with line numbers, as the terminal draws them.
+  - **Thinking** shows as a collapsed line you can open.
+  - **Plans:** at the end of plan mode, Claude's plan is shown in full with *Yes, and make the edits
+    without asking*, *Yes, and ask before each edit*, or *Keep planning* with what to change.
+  - **Shift+Tab** in the reply box steps through ask before edits, accept edits and plan mode.
+  - **@** lists files in the chat's folder as you type, from Claude Code's own file index.
+  - **!command** runs a command right away in PowerShell, in the chat's folder; Claude sees it and its
+    output with your next message, as the terminal's shell mode does.
+  - **/btw question** asks Claude something aside: the answer shows above the reply box and stays
+    out of the conversation.
+  - **Ctrl+B** sends what Claude is waiting on (a long command or a subagent) to the background so
+    it carries on; what's running in the background is listed above the reply box, with Stop.
+  - **Esc Esc** (or *Go back to an earlier message…* in the session menu) takes the conversation
+    back to before one of your messages, optionally putting files back too, and puts that message
+    back in the reply box. The conversation as it was stays in History.
+  - **Ctrl+R** searches your earlier prompts, this folder's first, from Claude Code's own prompt
+    history (pastes included, where Claude Code still keeps them).
+  - Claude Code's **suggested next prompt**, when it offers one, shows in the empty reply box;
+    **Tab** takes it.
+  - **MCP servers** that need it can be signed in to from the MCP servers dropdown.
+  - **Fast mode** can be turned on in a chat's header. It's billed as extra usage on top of your
+    plan, so it needs *Allow API billing*.
+  - **Claude's to-do list** shows above the reply box while it works. Claude Code currently turns
+    its to-do tools off outside the terminal (and, on the PC this was built on, in the terminal too),
+    so this shows once Claude Code turns them on.
+
+### Fixed
+- Every ended session in the Sessions list read "just now" after the server restarted, because its
+  time was taken from when Claude Deck loaded it. An ended session's time is now when its
+  conversation was last active, from Claude Code's transcript, the same time History shows.
+- Replies showed Markdown as plain text apart from code, inline code and bold, so headings, tables,
+  lists and quotes looked nothing like they do in Claude Code's terminal. Replies (and subagents'
+  results) now lay out headings, bulleted and numbered lists (nested, with code inside), tables
+  (with column alignment), quotes, rules, italics, strikethrough and links. Web links open in a new
+  window; a link to a file shows its text, with the path on hover.
+
 ## [1.10.0] - 2026-09-29
 
 ### Changed
@@ -297,6 +349,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.11.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.9.1...v1.10.0
 [1.9.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.8.1...v1.9.0

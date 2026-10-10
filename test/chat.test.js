@@ -95,6 +95,213 @@ test('effort changes for the running session, and back to the default', async ()
   }
 });
 
+test('MCP servers are listed, turned off and on, and reconnected through Claude', async () => {
+  const c = mgr.create({ cwd });
+  const sum = () => mgr.summary(mgr.chats.get(c.id));
+  try {
+    await waitFor(() => sum().mcp && sum().mcp.length === 2, 'MCP servers after start-up');
+    assert.deepStrictEqual(sum().mcp, [{ name: 'docs', status: 'connected' }, { name: 'broken', status: 'failed' }]);
+    const { servers } = await mgr.mcpStatus(c.id);
+    assert.deepStrictEqual(servers[0], { name: 'docs', status: 'connected', error: null, scope: 'user', source: 'user', version: '1.0.0', tools: ['search', 'read_page'] });
+    assert.strictEqual(servers[1].error, 'Connection closed');
+    assert.ok(!JSON.stringify(servers).includes('not-for-the-page'), "a server's config stays on the server");
+    const off = await mgr.setMcpEnabled(c.id, 'docs', false);
+    assert.strictEqual(off.servers[0].status, 'disabled');
+    assert.strictEqual(off.servers[0].tools, null);
+    assert.strictEqual(sum().mcp[0].status, 'disabled');
+    assert.strictEqual([...mgr.detail(c.id).items].reverse().find((i) => i.kind === 'note').text, 'MCP server docs is off.');
+    assert.strictEqual((await mgr.setMcpEnabled(c.id, 'docs', true)).servers[0].status, 'connected');
+    await assert.rejects(mgr.setMcpEnabled(c.id, 'nope', false), /Server not found: nope/);
+    await assert.rejects(mgr.setMcpEnabled(c.id, '', false), /Which MCP server/);
+    assert.strictEqual((await mgr.reconnectMcp(c.id, 'docs')).servers[0].status, 'connected');
+    await assert.rejects(mgr.reconnectMcp(c.id, 'broken'), { message: 'Connection closed' });
+  } finally {
+    await mgr.end(c.id);
+  }
+});
+
+test("long pastes are kept with your message, shown as placeholders in its preview, and come back with it out of the queue", async () => {
+  const c = mgr.create({ cwd });
+  const its = () => mgr.detail(c.id).items;
+  const block = 'one\ntwo\nthree\nfour';
+  try {
+    await waitFor(() => mgr.summary(mgr.chats.get(c.id)).status === 'idle', 'chat ready');
+    mgr.send(c.id, { text: `look: ${block} thanks`, pasted: [[6, 6 + block.length]] });
+    await waitFor(() => its().some((i) => i.kind === 'result'), 'reply');
+    const user = its().find((i) => i.kind === 'user');
+    assert.deepStrictEqual(user.pasted, [[6, 24]]);
+    // Claude gets the whole text.
+    assert.strictEqual([...its()].reverse().find((i) => i.kind === 'assistant').text, `Echo: look: ${block} thanks`);
+    assert.strictEqual(mgr.summary(mgr.chats.get(c.id)).lastPrompt, 'look: [Pasted text #1 +3 lines] thanks');
+    // Positions that don't fit the text are dropped, and the message shows in full.
+    for (const bad of [[[6, 99]], [[5, 3]], [[0, 2], [1, 3]], 'nope', [[0.5, 2]]]) {
+      mgr.send(c.id, { text: 'short', pasted: bad });
+      assert.strictEqual([...its()].reverse().find((i) => i.kind === 'user').pasted, undefined, JSON.stringify(bad));
+    }
+    // Queued, then taken back: the positions come back too.
+    await waitFor(() => its().filter((i) => i.kind === 'result').length === 6 && mgr.summary(mgr.chats.get(c.id)).status === 'idle', 'the short messages answered');
+    mgr.send(c.id, 'please slow');
+    await waitFor(() => mgr.summary(mgr.chats.get(c.id)).status === 'busy', 'busy');
+    mgr.send(c.id, { text: `again ${block}`, pasted: [[6, 6 + block.length]] });
+    const { messages } = await mgr.unqueue(c.id);
+    assert.deepStrictEqual(messages.map((m) => m.pasted), [[[6, 24]]]);
+  } finally {
+    await mgr.end(c.id);
+  }
+});
+
+// A chat of its own for each of the terminal features below.
+async function withChat(fn, manager = mgr) {
+  const c = manager.create({ cwd });
+  const its = () => manager.detail(c.id).items;
+  const sum = () => manager.summary(manager.chats.get(c.id));
+  const replies = () => its().filter((i) => i.kind === 'result').length;
+  const last = (kind) => [...its()].reverse().find((i) => i.kind === kind);
+  const say = async (text) => {
+    const before = replies();
+    manager.send(c.id, text);
+    await waitFor(() => replies() > before, `reply to "${text}"`);
+  };
+  try {
+    await waitFor(() => sum().status === 'idle', 'chat ready');
+    await fn({ id: c.id, its, sum, last, say });
+  } finally {
+    await manager.end(c.id);
+  }
+}
+
+test("thinking, edits' diffs and the to-do list come through as Claude Code shows them", () => withChat(async ({ id, sum, last, say, its }) => {
+  await say('show thinking');
+  assert.strictEqual(last('thinking').text, 'Let me think about this for a moment.');
+  await say('make an edit');
+  const edit = its().findLast((i) => i.kind === 'tool' && i.name === 'Edit');
+  assert.deepStrictEqual(edit.diff.hunks, [{ oldStart: 1, newStart: 1, lines: ['-I like apples.', '+I like oranges.', ' And pears.'] }]);
+  assert.match(edit.diff.file, /edit-me\.txt$/);
+  await say('keep a todo');
+  assert.deepStrictEqual(sum().todos.map((t) => [t.content, t.status]), [['Read the code', 'completed'], ['Write the fix', 'in_progress'], ['Run the tests', 'pending']]);
+  assert.strictEqual(sum().todos[1].activeForm, 'Writing the fix');
+  await say('track tasks');
+  assert.deepStrictEqual(sum().todos.map((t) => [t.content, t.status]), [['Write the tests', 'completed'], ['Ship it', 'pending']]);
+  // /clear empties the chat too, so wait on the list itself.
+  mgr.send(id, '/clear');
+  await waitFor(() => sum().todos === null, 'the list cleared with the conversation');
+}));
+
+test('a plan is approved with how Claude carries on, or sent back to keep planning', () => withChat(async ({ id, sum, last, its }) => {
+  mgr.send(id, 'plan it');
+  await waitFor(() => last('plan') && last('plan').status === 'pending', 'the plan');
+  assert.strictEqual(last('plan').plan, '## Plan\n\n1. Read `app.js`\n2. Add the **menu**');
+  mgr.respond(id, last('plan').requestId, { action: 'deny', message: 'Add tests too' });
+  await waitFor(() => /Still planning/.test((last('assistant') || {}).text || ''), 'kept planning');
+  assert.strictEqual(last('assistant').text, 'Still planning: Add tests too');
+  assert.strictEqual(last('plan').outcome, 'Kept planning: Add tests too');
+  const before = its().filter((i) => i.kind === 'plan').length;
+  mgr.send(id, 'plan it');
+  await waitFor(() => its().filter((i) => i.kind === 'plan').length > before && last('plan').status === 'pending', 'the plan again');
+  mgr.respond(id, last('plan').requestId, { action: 'allow', mode: 'acceptEdits' });
+  await waitFor(() => /Plan approved/.test((last('assistant') || {}).text || ''), 'approved');
+  assert.strictEqual(last('assistant').text, 'Plan approved; mode acceptEdits.');
+  assert.strictEqual(sum().permissionMode, 'acceptEdits');
+}));
+
+test('@ file suggestions, /btw side questions and MCP sign-in go through Claude Code', () => withChat(async ({ id, its }) => {
+  assert.deepStrictEqual((await mgr.fileSuggestions(id, 'src/')).suggestions, ['src/app.js', 'src/server.js', 'src/']);
+  const before = its().length;
+  assert.deepStrictEqual(await mgr.sideQuestion(id, '  what is this?  '), { question: 'what is this?', answer: 'Aside: what is this?' });
+  assert.strictEqual(its().length, before, 'a side question stays out of the conversation');
+  await assert.rejects(mgr.sideQuestion(id, ' '), /Type a question/);
+  assert.deepStrictEqual(await mgr.authenticateMcp(id, 'broken'), { authUrl: 'https://auth.example.com/authorize?server=broken', requiresUserAction: true, callbackExpected: true });
+  await assert.rejects(mgr.authenticateMcp(id, 'nope'), /Server not found: nope/);
+}));
+
+test('fast mode needs Allow API billing, since it bills extra usage', () => withChat(async ({ id, sum, say }) => {
+  assert.deepStrictEqual(sum().fast, { state: 'off', reason: 'sdk_opt_in_required' });
+  await assert.rejects(mgr.setFastMode(id, true), /Allow API billing/);
+  prefs.save({ allowApiBilling: true });
+  try {
+    await mgr.setFastMode(id, true);
+    await say('hello');
+    assert.strictEqual(sum().fast.state, 'on');
+    await mgr.setFastMode(id, false);
+    assert.strictEqual(sum().fast.state, 'off');
+  } finally {
+    prefs.save({ allowApiBilling: false });
+  }
+  // Turning it off never needs the preference.
+  await mgr.setFastMode(id, false);
+}));
+
+test("Claude Code's suggested next prompt is kept until you send something", () => withChat(async ({ id, sum, say }) => {
+  await say('hello');
+  assert.strictEqual(sum().suggestion, 'Run the tests');
+  mgr.send(id, 'something else');
+  assert.strictEqual(sum().suggestion, null);
+}));
+
+test('Ctrl+B sends what Claude is waiting on to the background, and it can still be stopped', () => withChat(async ({ id, sum, last }) => {
+  mgr.send(id, 'delegate wait');
+  await waitFor(() => sum().foregroundTasks === 1, 'a task Claude waits for');
+  await mgr.background(id);
+  await waitFor(() => sum().foregroundTasks === 0 && sum().bgTasks.length === 1, 'backgrounded');
+  assert.strictEqual(sum().bgTasks[0].description, 'Wait check');
+  await waitFor(() => (last('assistant') || {}).text === 'Carrying on while it runs.', 'the turn carries on');
+  await waitFor(() => sum().bgTasks.length === 0, 'the background task finishing');
+}));
+
+test('!command runs in PowerShell, and Claude gets it and its output with your next message', { skip: process.platform !== 'win32' }, () => withChat(async ({ id, its, last, say }) => {
+  const results = () => its().filter((i) => i.kind === 'result').length;
+  const before = results();
+  assert.deepStrictEqual(await mgr.runShell(id, 'Write-Output "hello-shell"'), { exitCode: 0 });
+  const item = last('shell');
+  assert.deepStrictEqual({ command: item.command, stdout: item.stdout, stderr: item.stderr, running: item.running }, { command: 'Write-Output "hello-shell"', stdout: 'hello-shell', stderr: '', running: false });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.strictEqual(results(), before, 'no reply, so no result line');
+  await say('what did it print?');
+  assert.strictEqual(last('assistant').text, 'Echo: what did it print? [with: <bash-input>Write-Output "hello-shell"</bash-input> <bash-stdout>hello-shell</bash-stdout><bash-stderr></bash-stderr>]');
+  // A failing command: its error as PowerShell prints it, and the exit code.
+  const failed = await mgr.runShell(id, 'Get-Item C:\\no-such-folder-here');
+  assert.strictEqual(failed.exitCode, 1);
+  assert.match(last('shell').stderr, /Cannot find path 'C:\\no-such-folder-here'/);
+  await assert.rejects(mgr.runShell(id, '   '), /Type a command/);
+}));
+
+test('going back to before a message starts Claude again from the transcript up to there, as a new session', async () => {
+  const transcript = path.join(box.root, 'rewind.jsonl');
+  const history = { refresh: async () => {}, fileFor: () => transcript, get: () => null, stamp: () => null };
+  const m2 = new ChatManager({ history });
+  await withChat(async ({ id, its, last, say }) => {
+    await say('first message');
+    m2.send(id, { text: 'paste: one\ntwo\nthree\nfour', pasted: [[7, 25]] });
+    await waitFor(() => its().filter((i) => i.kind === 'result').length === 2, 'second reply');
+    const [first, second] = its().filter((i) => i.kind === 'user');
+    // As Claude Code writes the transcript: each entry's parent is the one before it.
+    const middle = 'aaaaaaaa-1111-4111-8111-111111111111';
+    fs.writeFileSync(transcript, [{ uuid: first.commandUuid, parentUuid: null }, { uuid: middle, parentUuid: first.commandUuid }, { uuid: second.commandUuid, parentUuid: middle }].map((e) => JSON.stringify(e)).join('\n'));
+    assert.deepStrictEqual(await m2.rewind(id, second.commandUuid), { text: 'paste: one\ntwo\nthree\nfour', pasted: [[7, 25]] });
+    assert.deepStrictEqual(its().filter((i) => i.kind === 'user').map((i) => i.text), ['first message']);
+    assert.match(last('note').text, /Went back to before your message/);
+    await waitFor(() => m2.summary(m2.chats.get(id)).state === 'running', 'Claude started again');
+    await say('show args');
+    const args = JSON.parse(last('assistant').text.replace(/^Args: /, ''));
+    assert.ok(args.includes('--fork-session'));
+    assert.strictEqual(args[args.indexOf('--resume-session-at') + 1], middle);
+    await assert.rejects(m2.rewind(id, 'bbbbbbbb-1111-4111-8111-111111111111'), /no longer in this chat/);
+  }, m2);
+});
+
+test("an MCP server's status from init updates the chat's list", () => {
+  // A stand-in for a running chat; init marks a chat busy, so the demo chat is left alone.
+  const chat = mgr._blank({ id: 'mcp-init', cwd });
+  Object.assign(chat, { proc: {}, state: 'running' });
+  mgr.chats.set(chat.id, chat);
+  try {
+    mgr._onMessage(chat, { type: 'system', subtype: 'init', mcp_servers: [{ name: 'docs', status: 'needs-auth', source: 'claudeai' }] });
+    assert.deepStrictEqual(mgr.summary(chat).mcp, [{ name: 'docs', status: 'needs-auth' }]);
+  } finally {
+    mgr.chats.delete(chat.id);
+  }
+});
+
 const near = (a, b) => Math.abs(a - b) < 1e-9;
 
 test('the current cost and tokens start again after /clear', async () => {

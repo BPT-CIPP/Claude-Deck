@@ -839,8 +839,82 @@ html.lamps-dim .lamp.waiting { background: color-mix(in srgb, var(--waiting) 55%
   text-transform: uppercase;
   color: var(--faint);
 }
+/* An edit's change under its tool line, as Claude Code shows it: line numbers, removed and added lines. */
+.tool-with-diff { margin: 0 0 8px; }
+.tool-with-diff > details.msg-tool { margin-bottom: 0; }
+.msg-diff { border: 1px solid var(--line); border-top: 0; border-radius: 0 0 4px 4px; font-size: var(--fs-s); overflow: hidden; }
+.diff-head { padding: 4px 10px; color: var(--muted); border-bottom: 1px solid var(--line-soft); }
+.diff-head .dstat { margin-left: 8px; }
+.diff-body { font-family: var(--mono); line-height: 1.5; max-height: 360px; overflow: auto; }
+.diff-line { display: grid; grid-template-columns: 4ch 2ch 1fr; white-space: pre; min-width: max-content; }
+.diff-line.add { background: var(--diff-add-wash); }
+.diff-line.del { background: var(--diff-del-wash); }
+.diff-line.add .diff-sign { color: var(--diff-add); }
+.diff-line.del .diff-sign { color: var(--diff-del); }
+.diff-num { color: var(--faint); text-align: right; padding-right: 8px; user-select: none; }
+.diff-sign { user-select: none; }
+.diff-gap { color: var(--faint); padding-left: 4ch; user-select: none; }
+.msg-thinking .tname { font-family: var(--font); font-style: italic; color: var(--muted); font-weight: 400; }
+.thinking-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); font-style: italic; padding: 4px 4px 8px; }
+/* ! commands: yours, so they sit like your turn's text, with the output below. */
+.msg-shell { margin: 0 0 14px; }
+.shell-cmd { display: flex; gap: 8px; align-items: center; font-family: var(--mono); font-size: var(--fs-s); font-weight: 600; }
+.shell-bang { color: var(--focus-ring); }
+.shell-text { overflow-wrap: anywhere; }
+.msg-shell pre.code { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; margin: 4px 0 0; padding: 8px 10px; background: var(--panel); border-radius: 3px; font-size: var(--fs-s); }
+.msg-shell .shell-err { color: var(--danger); }
+.plan-body { border-left: 2px solid var(--line-strong); padding-left: 12px; }
+.plan-body .prose { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 6px; line-height: 1.6; }
+/* Going back to an earlier message: your messages, newest first. */
+.rw-list { max-height: 45vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; margin: 8px 0 12px; }
+.rw-row { display: flex; gap: 10px; align-items: baseline; padding: 7px 10px; cursor: pointer; border-bottom: 1px solid var(--line-soft); }
+.rw-row:last-child { border-bottom: 0; }
+.rw-row:hover { background: var(--panel-2); }
+.rw-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Claude: the same engraved label over the first thing Claude does after your turn, under a softer rule. */
+.turn-claude {
+  border-top: 1px solid var(--line-soft);
+  padding-top: 8px;
+  margin: 0 0 4px;
+  font-family: var(--font-plate);
+  font-stretch: 87.5%;
+  font-size: var(--fs-s);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+/* A long paste in your turn: its placeholder, as Claude Code shows it, opens to show the text. */
+.paste-chip { font: inherit; font-weight: 600; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); border-radius: 3px; padding: 0 6px; cursor: pointer; }
+.paste-chip:hover, .paste-chip[aria-expanded="true"] { color: var(--text); border-color: var(--line-strong); }
+.paste-body { display: block; font-weight: 400; margin: 4px 0 6px; padding-left: 10px; border-left: 2px solid var(--line-strong); max-height: 24em; overflow-y: auto; }
+.paste-body[hidden] { display: none; }
 .msg-assistant .prose { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 8px; line-height: 1.6; }
 .msg-assistant code { background: var(--panel-2); border-radius: 3px; padding: 1px 4px; font-size: 0.9em; }
+
+/* Markdown in replies (public/markdown.js). Headings rank by weight and rules, not size. */
+.md-h { font-weight: 700; line-height: 1.5; margin: 18px 0 6px; }
+.md-h:first-child { margin-top: 0; }
+.md-h1 { padding-bottom: 4px; border-bottom: 1px solid var(--line-strong); }
+.md-h2 { padding-bottom: 3px; border-bottom: 1px solid var(--line); }
+.md-h5, .md-h6 { font-weight: 600; color: var(--muted); }
+.md-list { margin: 0 0 8px; padding-left: 24px; line-height: 1.6; }
+.md-list .md-list { margin: 2px 0 0; }
+.md-list li + li { margin-top: 2px; }
+.md-list li > .prose { margin: 0; }
+.md-list li > .prose + * { margin-top: 6px; }
+.md-list li::marker { color: var(--muted); }
+.md-quote { margin: 0 0 8px; padding: 0 0 0 12px; border-left: 2px solid var(--line-strong); color: var(--muted); }
+.md-quote > :last-child { margin-bottom: 0; }
+.md-rule { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
+.md-link { text-decoration: underline dotted; text-underline-offset: 2px; }
+.md-table-wrap { overflow-x: auto; margin: 4px 0 14px; }
+.md-table { border-collapse: collapse; line-height: 1.5; }
+.md-table th, .md-table td { padding: 6px 12px 6px 0; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); overflow-wrap: break-word; min-width: 8ch; }
+.md-table th { font-weight: 600; border-bottom-color: var(--line-strong); }
+.md-table th + th, .md-table td + td { padding-left: 12px; }
+.md-table tr:last-child td { border-bottom: 0; }
 
 .code-block-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; margin: 8px 0 14px; overflow: hidden; }
 .code-block-head { display: flex; justify-content: space-between; align-items: center; padding: 3px 6px 3px 12px; border-bottom: 1px solid var(--line-soft); font-size: var(--fs-s); color: var(--faint); font-family: var(--mono); }
@@ -934,6 +1008,7 @@ pre.code.small { font-size: var(--fs-s); max-height: 280px; overflow: auto; whit
 .composer-buttons { display: flex; gap: 8px; }
 .composer-buttons button { padding: 8px 16px; }
 .composer-hint { font-size: var(--fs-s); color: var(--faint); margin: 7px auto 0; max-width: var(--column); }
+.composer-hint-paste { font-size: var(--fs-s); color: var(--muted); font-weight: 600; margin: 7px auto 0; max-width: var(--column); }
 .composer-ended { display: flex; gap: 12px; align-items: center; margin: 0 auto 8px; max-width: var(--column); color: var(--muted); font-size: var(--fs-s); }
 .composer.dropping { outline: 2px dashed var(--focus-ring); outline-offset: -6px; }
 
@@ -954,6 +1029,41 @@ pre.code.small { font-size: var(--fs-s); max-height: 280px; overflow: auto; whit
 .slash-item:hover, .slash-item[aria-selected="true"] { background: var(--panel-2); }
 .slash-name { font-family: var(--mono); font-size: var(--fs-s); font-weight: 600; white-space: nowrap; }
 .slash-desc { color: var(--muted); font-size: var(--fs-s); margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* @ files: the path is the item; its icon says file or folder. */
+.slash-file { align-items: center; color: var(--text); }
+.slash-file svg { flex: none; color: var(--muted); }
+.slash-file .slash-name { overflow: hidden; text-overflow: ellipsis; }
+
+/* Claude Code's terminal features around the reply box (Ctrl+R, /btw, the to-do list, ! shell mode). */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.side-label { font-family: var(--font-plate); font-stretch: 87.5%; font-size: var(--fs-s); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-right: 8px; }
+.work-panel, .side-answer, .prompt-search { max-width: var(--column); margin: 0 auto 10px; }
+.work-panel { display: flex; flex-direction: column; gap: 6px; }
+.wp-head { display: flex; align-items: baseline; margin-bottom: 2px; }
+.wp-row { display: flex; align-items: center; gap: 10px; justify-content: space-between; font-size: var(--fs-s); }
+.todo-list { border-left: 2px solid var(--line-strong); padding-left: 10px; }
+.todo { display: flex; gap: 8px; align-items: center; font-size: var(--fs-s); line-height: 1.6; color: var(--muted); }
+.todo-box { width: 12px; height: 12px; border: 1px solid var(--line-strong); border-radius: 2px; display: inline-flex; align-items: center; justify-content: center; flex: none; color: var(--text); }
+.todo.completed .todo-text { text-decoration: line-through; color: var(--faint); }
+.todo.in_progress { color: var(--text); font-weight: 600; }
+.todo.in_progress .todo-box { border-color: var(--text); }
+.side-answer { border: 1px solid var(--line-strong); border-radius: 4px; padding: 10px 12px; background: var(--panel); max-height: 40vh; overflow-y: auto; }
+.side-q { display: flex; align-items: baseline; gap: 4px; font-weight: 600; margin-bottom: 6px; }
+.side-close { margin-left: auto; }
+.side-a .prose { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 6px; line-height: 1.6; }
+.side-answer > p { margin: 4px 0 0; }
+.prompt-search { position: absolute; bottom: calc(100% + 4px); left: max(32px, calc((100% - var(--column)) / 2)); width: min(580px, calc(100% - 64px)); background: var(--surface-overlay); border: 1px solid var(--line-strong); border-radius: 6px; box-shadow: var(--shadow-pop); padding: 8px; z-index: 26; animation: pop-in var(--dur-normal) var(--ease); }
+.ps-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+.prompt-search input { width: 100%; }
+.ps-list { max-height: 40vh; overflow-y: auto; margin-top: 6px; }
+.ps-item { display: flex; gap: 10px; width: 100%; text-align: left; border: 0; background: transparent; padding: 6px 8px; border-radius: 3px; align-items: baseline; }
+.ps-item:hover, .ps-item[aria-selected="true"] { background: var(--panel-2); }
+.ps-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ps-item .faint { flex: none; }
+.ps-empty { margin: 6px 8px; }
+/* ! at the start of a message: shell mode, marked as Claude Code marks it. */
+.composer.shell-mode .composer-input { border-color: var(--focus-ring); font-family: var(--mono); }
+.fast-toggle { font-size: var(--fs-s); gap: 6px; }
 
 /* ---- menus ----------------------------------------------------------------------------------- */
 .hm-menu {
@@ -993,7 +1103,7 @@ pre.code.small { font-size: var(--fs-s); max-height: 280px; overflow: auto; whit
 .model-menu .hm-check + .hm-arrow { margin-left: 8px; }
 
 /* Plugins menu (chat header) */
-.plugin-btn { font-weight: 600; }
+.plugin-btn, .mcp-btn { font-weight: 600; }
 .plugin-pop { position: fixed; z-index: 30; width: min(440px, calc(100vw - 16px)); max-height: min(70vh, 620px); overflow-y: auto; background: var(--surface-overlay); color: var(--text); border: 1px solid var(--line-strong); border-radius: 6px; box-shadow: var(--shadow-pop); padding: 6px; animation: pop-in var(--dur-normal) var(--ease); }
 .pp-head { display: flex; flex-direction: column; gap: 2px; padding: 4px 8px 8px; border-bottom: 1px solid var(--line); }
 .pp-section { color: var(--faint); padding: 12px 8px 4px; }
@@ -1015,6 +1125,11 @@ label.pp-row { cursor: pointer; }
 .plugin-pop .pp-search { display: block; width: calc(100% - 16px); margin: 4px 8px 6px; }
 .pp-empty { margin: 4px 8px 8px; font-size: var(--fs-s); }
 .pp-foot { border-top: 1px solid var(--line); margin-top: 6px; padding: 8px 8px 2px; }
+/* MCP servers menu (chat header): the plugins menu's rows, with a Reconnect beside the switch. */
+.mcp-controls { display: flex; align-items: center; gap: 8px; }
+.mcp-state .mcp-status { font-weight: 600; color: var(--text); }
+.mcp-failed .mcp-status, .mcp-needs-auth .mcp-status { color: var(--danger); }
+.mcp-disabled .mcp-status { color: var(--faint); }
 .pp-command { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: var(--fs-s); background: var(--panel-2); border-radius: 3px; padding: 8px 10px; margin: 10px 0 0; max-height: 200px; overflow-y: auto; }
 
 /* Plugin marketplaces (Claude Code Settings) */
