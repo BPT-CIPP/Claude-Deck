@@ -15,6 +15,9 @@
 //   "please delegate"  -> Agent tool call (the subagent then runs Bash)
 //   "please delegate slow" -> a subagent whose reply takes 6s (try stopping it)
 //   "please delegate foreground" -> a subagent Claude waits for; it runs the 3s Bash call
+//   "please delegate wait" -> a subagent Claude waits for, which only waits 6s (no shell; try Ctrl+B)
+//   "please plan"      -> ExitPlanMode with a short plan   "please todo" -> TodoWrite with 3 items
+//   "please tasks"     -> TaskCreate, then TaskUpdate     "please edit" -> Read, then Edit (edit-me.txt)
 //   "please use tool <Name>" -> a call to that tool (unknown ones come back as errors)
 //   "please stream" / "please stream thinking" -> a reply streamed in small pieces (after thinking)
 //   a prompt with images -> "I can see N images (types)"
@@ -40,6 +43,33 @@ function latestPrompt(msgs) {
   return parts.filter((t) => !t.trim().startsWith('# Environment')).join(' ') || parts.join(' ');
 }
 
+// The person's prompt for the current turn: the latest user message with text of its own (tool
+// results come back as user messages too).
+function turnPrompt(msgs) {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role !== 'user') continue;
+    const c = Array.isArray(msgs[i].content) ? msgs[i].content : [{ type: 'text', text: String(msgs[i].content || '') }];
+    const text = c.filter((b) => b.type === 'text' && !String(b.text).trim().startsWith('<')).map((b) => b.text).join(' ');
+    if (text.trim()) return text;
+  }
+  return '';
+}
+
+function lastToolName(msgs) {
+  const a = [...msgs].reverse().find((m) => m.role === 'assistant' && Array.isArray(m.content));
+  const use = a ? [...a.content].reverse().find((b) => b.type === 'tool_use') : null;
+  return use ? use.name : null;
+}
+
+// The file "please edit" reads and then edits; made fresh for each edit.
+function editFile() {
+  const fs = require('fs');
+  const path = require('path');
+  const file = path.join(writeDir, 'edit-me.txt');
+  if (!fs.existsSync(file) || !fs.readFileSync(file, 'utf8').includes('apples')) fs.writeFileSync(file, 'I like apples.\nAnd pears.\n');
+  return file;
+}
+
 function reply(body) {
   const msgs = body.messages || [];
   const lastUser = [...msgs].reverse().find((m) => m.role === 'user') || {};
@@ -48,6 +78,15 @@ function reply(body) {
   const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
   const text = latestPrompt(msgs);
   const tool = (name, input) => ({ kind: 'tool', block: { type: 'tool_use', id: `toolu_mock_${++n}`, name, input } });
+  // Multi-step scripts: the next call depends on the turn's prompt and the tool that just ran.
+  if (toolResult) {
+    const prompt = turnPrompt(msgs);
+    const lastTool = lastToolName(msgs);
+    const t = typeof toolResult.content === 'string' ? toolResult.content : JSON.stringify(toolResult.content);
+    const created = /Task #(\S+) created/.exec(t);
+    if (/please edit/i.test(prompt) && lastTool === 'Read') return tool('Edit', { file_path: editFile(), old_string: 'apples', new_string: 'oranges' });
+    if (/please tasks/i.test(prompt) && created) return tool('TaskUpdate', { taskId: created[1], status: 'in_progress' });
+  }
   if (toolResult) {
     const t = typeof toolResult.content === 'string' ? toolResult.content : JSON.stringify(toolResult.content);
     return { kind: 'text', text: `Tool result seen: ${t.slice(0, 160)}` };
@@ -70,8 +109,16 @@ function reply(body) {
     if (/please write/i.test(text)) return tool('Write', { file_path: `${writeDir}\\mock-${n + 1}.txt`, content: 'written by the mock API\n' });
     if (/please ask/i.test(text)) return tool('AskUserQuestion', { questions: [{ question: 'Which color?', header: 'Color', options: [{ label: 'Red', description: 'warm' }, { label: 'Blue', description: 'cool' }], multiSelect: false }] });
     if (/please slow/i.test(text)) return { kind: 'text', text: 'Slow reply finished.', delayMs: 6000 };
+    // Plan approval, the to-do list (TodoWrite, and TaskCreate then TaskUpdate), and an edit
+    // (Read, then Edit, as Claude Code requires). None of these runs a shell command.
+    if (/please plan/i.test(text)) return tool('ExitPlanMode', { plan: '## Plan\n\n1. Read `app.js`\n2. Add the **menu**\n3. Run the tests' });
+    if (/please todo/i.test(text)) return tool('TodoWrite', { todos: [{ content: 'Read the code', status: 'completed', activeForm: 'Reading the code' }, { content: 'Write the fix', status: 'in_progress', activeForm: 'Writing the fix' }, { content: 'Run the tests', status: 'pending', activeForm: 'Running the tests' }] });
+    if (/please tasks/i.test(text)) return tool('TaskCreate', { subject: 'Write the tests', description: 'Cover the new menu', activeForm: 'Writing the tests' });
+    if (/please edit/i.test(text)) return tool('Read', { file_path: editFile() });
     // Starts a subagent whose own first request says "please run", so it makes a tool call too.
     const agentTool = body.tools.find((t) => t.name === 'Agent' || t.name === 'Task');
+    // Claude waits for this one, which only waits (no shell): for backgrounding it (Ctrl+B).
+    if (/please delegate wait/i.test(text) && agentTool) return tool(agentTool.name, { description: 'Wait check', prompt: 'please slow reply for the check', subagent_type: 'general-purpose', run_in_background: false });
     // Claude waits for this one (run_in_background: false) instead of carrying on.
     if (/please delegate foreground/i.test(text) && agentTool) return tool(agentTool.name, { description: 'Foreground check', prompt: 'please run slow for the check', subagent_type: 'general-purpose', run_in_background: false });
     if (/please delegate slow/i.test(text) && agentTool) return tool(agentTool.name, { description: 'Slow check', prompt: 'please slow reply for the check', subagent_type: 'general-purpose' });

@@ -20,6 +20,7 @@ const folders = require('./folders');
 const appInstall = require('./app-install');
 const { UsageMonitor } = require('./usage');
 const { PluginManager } = require('./plugins');
+const promptHistory = require('./prompt-history');
 const { HistoryIndex, readTranscript, UUID_RE } = require('./history');
 const { Registry } = require('./registry');
 const { Launcher, normalizeOptions, buildClaudeArgs, displayCommand, preflight, requireClaude, EFFORTS, PERMISSION_MODES, COLORS, MODEL_ALIASES } = require('./launcher');
@@ -409,7 +410,7 @@ async function main() {
     // otherwise a message sent while Claude works is queued.
     'POST /api/chats/:id/send': async (req, p) => {
       const b = await readBody(req);
-      const message = { text: b.text, images: b.images };
+      const message = { text: b.text, images: b.images, pasted: b.pasted };
       return b.interrupt === true ? chats.sendInterrupting(p.id, message) : chats.send(p.id, message);
     },
     'GET /api/chats/:id/tasks/:taskId': (req, p) => chats.taskDetail(p.id, p.taskId),
@@ -427,6 +428,28 @@ async function main() {
     'POST /api/chats/:id/model': async (req, p) => chats.setModel(p.id, (await readBody(req)).model),
     'POST /api/chats/:id/effort': async (req, p) => chats.setEffort(p.id, (await readBody(req)).effort),
     'POST /api/chats/:id/mode': async (req, p) => chats.setPermissionMode(p.id, (await readBody(req)).mode),
+    // The chat's MCP servers, through its own Claude Code (like /mcp): { name, enabled } turns one
+    // on or off, { name } reconnects one.
+    'GET /api/chats/:id/mcp': (req, p) => chats.mcpStatus(p.id),
+    'POST /api/chats/:id/mcp/enabled': async (req, p) => {
+      const b = await readBody(req);
+      return chats.setMcpEnabled(p.id, b.name, b.enabled === true);
+    },
+    'POST /api/chats/:id/mcp/reconnect': async (req, p) => chats.reconnectMcp(p.id, (await readBody(req)).name),
+    // { name } -> { authUrl, callbackExpected }: the page opens authUrl to sign in.
+    'POST /api/chats/:id/mcp/authenticate': async (req, p) => chats.authenticateMcp(p.id, (await readBody(req)).name),
+    // Claude Code's terminal features in the reply box: @ files, !command, /btw, Ctrl+B, Esc Esc.
+    'GET /api/chats/:id/files': (req, p, url) => chats.fileSuggestions(p.id, url.searchParams.get('q') || ''),
+    'POST /api/chats/:id/shell': async (req, p) => chats.runShell(p.id, (await readBody(req)).command),
+    'POST /api/chats/:id/side': async (req, p) => chats.sideQuestion(p.id, (await readBody(req)).question),
+    'POST /api/chats/:id/background': (req, p) => chats.background(p.id),
+    'POST /api/chats/:id/rewind': async (req, p) => {
+      const b = await readBody(req);
+      return chats.rewind(p.id, b.messageId, { files: b.files === true });
+    },
+    'POST /api/chats/:id/fast': async (req, p) => chats.setFastMode(p.id, (await readBody(req)).on === true),
+    // Ctrl+R: your earlier prompts, from Claude Code's own prompt history (src/prompt-history.js).
+    'GET /api/prompt-history': (req, p, url) => promptHistory.search(url.searchParams.get('q') || '', url.searchParams.get('cwd') || ''),
     // { keep? }: keep leaves the chat in the session list as ended (Ctrl+W's first press).
     'POST /api/chats/:id/end': async (req, p) => {
       await chats.end(p.id, { keep: (await readBody(req)).keep === true });

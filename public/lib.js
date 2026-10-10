@@ -189,62 +189,59 @@
     setTimeout(() => el.remove(), life + 400);
   };
 
-  // Plain-text rendering with fenced code blocks, inline code and bold. Builds nodes, never HTML.
+  // Claude's Markdown as the terminal shows it (public/markdown.js reads it): headings, lists,
+  // quotes, tables, rules and code, with inline code, bold, italics and links. Builds nodes, never
+  // HTML. Headings are bolder, not larger (DESIGN.md's two sizes).
   Deck.richText = function richText(text) {
+    const h = Deck.h;
     const frag = document.createDocumentFragment();
-    const str = String(text);
-    // Any language name (c++, objective-c), and Windows line endings after it.
-    const regex = /```([^\s`]*)[ \t]*\r?\n([\s\S]*?)```/g;
-    let lastIndex = 0;
-    let match;
 
-    function addProse(chunk) {
-      if (!chunk) return;
-      const p = Deck.h('div', { class: 'prose' });
-      const tokens = chunk.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/);
-      for (const t of tokens) {
-        if (!t) continue;
-        if (t.startsWith('`') && t.endsWith('`') && t.length > 2) p.appendChild(Deck.h('code', null, t.slice(1, -1)));
-        else if (t.startsWith('**') && t.endsWith('**') && t.length > 4) p.appendChild(Deck.h('strong', null, t.slice(2, -2)));
-        else p.appendChild(document.createTextNode(t));
+    const inline = (nodes) => nodes.map((n) => {
+      if (n.type === 'text') return n.text;
+      if (n.type === 'code') return h('code', null, n.text);
+      if (n.type === 'strong' || n.type === 'em' || n.type === 'del') return h(n.type, null, inline(n.children));
+      // A link to anything but a web address (a file, say) shows its text, with the target on hover.
+      if (n.type === 'link') return n.href ? h('a', { href: n.href, target: '_blank', rel: 'noopener noreferrer', title: n.url }, inline(n.children)) : h('span', { class: 'md-link', title: n.url }, inline(n.children));
+      return null;
+    });
+
+    function codeBlock(b) {
+      // A reply cut off inside a code block has no closing fence: no Copy, as it isn't all there.
+      const copyBtn = b.open ? null : h('button', { class: 'code-block-copy', title: 'Copy code' }, 'Copy');
+      if (copyBtn) {
+        copyBtn.addEventListener('click', async () => {
+          await Deck.copy(b.code, 'Code copied');
+          copyBtn.textContent = 'Copied';
+          setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1800);
+        });
       }
-      frag.appendChild(p);
+      return h('div', { class: 'code-block-wrap' },
+        h('div', { class: 'code-block-head' }, h('span', { class: 'lang-tag' }, b.lang || 'code'), copyBtn),
+        h('pre', { class: 'code' }, b.code));
     }
 
-    while ((match = regex.exec(str)) !== null) {
-      if (match.index > lastIndex) {
-        addProse(str.slice(lastIndex, match.index));
+    function block(b) {
+      switch (b.type) {
+        case 'paragraph': return h('div', { class: 'prose' }, inline(b.inline));
+        case 'heading': return h('div', { class: `md-h md-h${b.level}`, role: 'heading', 'aria-level': String(Math.min(6, b.level + 2)) }, inline(b.inline));
+        case 'code': return codeBlock(b);
+        case 'rule': return h('hr', { class: 'md-rule' });
+        case 'quote': return h('blockquote', { class: 'md-quote' }, b.blocks.map(block));
+        case 'list': return h(b.ordered ? 'ol' : 'ul', { class: 'md-list', start: b.ordered && b.start !== 1 ? String(b.start) : null },
+          b.items.map((item) => h('li', null, item.map(block))));
+        case 'table': {
+          const cell = (tag, content, k) => h(tag, { style: b.align[k] ? { textAlign: b.align[k] } : null }, inline(content));
+          return h('div', { class: 'md-table-wrap' }, h('table', { class: 'md-table' },
+            h('thead', null, h('tr', null, b.head.map((c, k) => cell('th', c, k)))),
+            b.rows.length ? h('tbody', null, b.rows.map((row) => h('tr', null, row.map((c, k) => cell('td', c, k))))) : null));
+        }
+        default: return null;
       }
-      const lang = match[1] || 'code';
-      const code = match[2].replace(/\r?\n$/, '');
-      const copyBtn = Deck.h('button', { class: 'code-block-copy', title: 'Copy code' }, 'Copy');
-      copyBtn.addEventListener('click', async () => {
-        await Deck.copy(code, 'Code copied');
-        copyBtn.textContent = 'Copied';
-        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1800);
-      });
-      const block = Deck.h('div', { class: 'code-block-wrap' },
-        Deck.h('div', { class: 'code-block-head' },
-          Deck.h('span', { class: 'lang-tag' }, lang),
-          copyBtn),
-        Deck.h('pre', { class: 'code' }, code));
-      frag.appendChild(block);
-      lastIndex = regex.lastIndex;
     }
 
-    if (lastIndex < str.length) {
-      const rest = str.slice(lastIndex);
-      const unclosed = rest.match(/```([^\s`]*)[ \t]*\r?\n?([\s\S]*)$/);
-      if (unclosed && unclosed.index === 0) {
-        const lang = unclosed[1] || 'code';
-        const code = unclosed[2];
-        const block = Deck.h('div', { class: 'code-block-wrap' },
-          Deck.h('div', { class: 'code-block-head' }, Deck.h('span', { class: 'lang-tag' }, lang)),
-          Deck.h('pre', { class: 'code' }, code));
-        frag.appendChild(block);
-      } else {
-        addProse(rest);
-      }
+    for (const b of Deck.markdown.parse(text)) {
+      const el = block(b);
+      if (el) frag.appendChild(el);
     }
     return frag;
   };

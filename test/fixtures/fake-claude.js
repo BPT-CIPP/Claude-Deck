@@ -10,7 +10,8 @@
 // (and can be interrupted), "delegate" / "delegate slow" / "delegate foreground" start subagents,
 // "run slow" runs a shell command reported as a task, "which effort" reports the effort level;
 // "/clear" and "/compact" behave like the real local commands; anything else is echoed back.
-// Answers reload_plugins from the plugin state below, and get_context_usage.
+// Answers reload_plugins from the plugin state below, get_context_usage, and the MCP requests
+// (mcp_status, mcp_toggle, mcp_reconnect) for two made-up servers.
 //
 // Plugin mode (plugin ...): Claude Code's plugin and marketplace commands (see pluginMode).
 
@@ -109,6 +110,27 @@ function streamMode() {
   let effort = flagValue('--effort');
   // The plugins this session loaded, as the real CLI keeps them until a reload.
   let sessionPlugins = enabledPlugins(loadPluginState());
+  // MCP servers, shaped like the real CLI's mcp_status (2.1.284). docs connects; broken never does.
+  const docsTools = [{ name: 'search', annotations: {} }, { name: 'read_page', annotations: {} }];
+  const mcpServers = [
+    { name: 'docs', status: 'connected', serverInfo: { name: 'docs-server', version: '1.0.0' }, config: { type: 'stdio', command: 'node', args: ['docs.js'], env: { DOCS_TOKEN: 'not-for-the-page' } }, scope: 'user', source: 'user', tools: docsTools },
+    { name: 'broken', status: 'failed', error: 'Connection closed', config: { type: 'stdio', command: 'node', args: ['missing.js'] }, scope: 'project', source: 'project' },
+  ];
+  // Like the real CLI: an unknown name is an error; off is "disabled", with no tools or server info.
+  function mcpControl(request) {
+    const s = mcpServers.find((x) => x.name === request.serverName);
+    if (!s) return { error: `Server not found: ${request.serverName}` };
+    if (request.subtype === 'mcp_toggle') {
+      if (!request.enabled) {
+        Object.assign(s, { status: 'disabled' });
+        delete s.tools;
+        delete s.serverInfo;
+      } else if (s.name === 'docs') Object.assign(s, { status: 'connected', serverInfo: { name: 'docs-server', version: '1.0.0' }, tools: docsTools });
+      else Object.assign(s, { status: 'failed', error: 'Connection closed' });
+      return {};
+    }
+    return s.name === 'docs' ? {} : { error: 'Connection closed' };
+  }
 
   // Like the real CLI (2.1.281): a reload sees a settings change only once the session has
   // re-read its settings, about a second after the change (here: once the file is 400ms old).
@@ -131,7 +153,7 @@ function streamMode() {
     };
   }
 
-  const init = () => out({ type: 'system', subtype: 'init', session_id: sessionId, model: flagValue('--model') || 'claude-fake', permissionMode: flagValue('--permission-mode') || 'default', cwd: process.cwd() });
+  const init = () => out({ type: 'system', subtype: 'init', session_id: sessionId, model: flagValue('--model') || 'claude-fake', permissionMode, cwd: process.cwd(), mcp_servers: mcpServers.map((s) => ({ name: s.name, status: s.status, source: s.source })) });
   const text = (t) => {
     out({ type: 'stream_event', event: { type: 'message_start' }, parent_tool_use_id: null, session_id: sessionId });
     out({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: t } }, parent_tool_use_id: null, session_id: sessionId });
@@ -147,7 +169,9 @@ function streamMode() {
     }
     const usage = charge ? { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0 } : { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
     const modelUsage = cost ? { 'claude-fake': { ...tokens, costUSD: cost, contextWindow: 200000 } } : {};
-    out({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: cost, usage, modelUsage, duration_ms: 5, session_id: sessionId, queued_turn_count: 0, ...extra });
+    out({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: cost, usage, modelUsage, duration_ms: 5, session_id: sessionId, queued_turn_count: 0, fast_mode_state: fastMode ? 'on' : 'off', ...extra });
+    // Like the real CLI with promptSuggestions (schema in 2.1.284): a guess at the next prompt.
+    if (suggestions && charge) out({ type: 'prompt_suggestion', suggestion: 'Run the tests', uuid: crypto.randomUUID(), session_id: sessionId });
   };
   const ask = (request) => new Promise((resolve) => {
     const id = crypto.randomUUID();
@@ -159,7 +183,13 @@ function streamMode() {
     out({ type: 'assistant', message: { id: `msg_${++n}`, role: 'assistant', content: [{ type: 'tool_use', id, name, input }] }, parent_tool_use_id: null, session_id: sessionId });
     return id;
   };
-  const toolResult = (id, content, isError) => out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: isError || undefined }] }, parent_tool_use_id: null, session_id: sessionId });
+  const toolResult = (id, content, isError, toolUseResult) => out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: isError || undefined }] }, ...(toolUseResult ? { tool_use_result: toolUseResult } : {}), parent_tool_use_id: null, session_id: sessionId });
+  // Messages sent with shouldQuery: false (shell mode's output) wait here for the next turn.
+  let earlier = [];
+  let suggestions = false; // initialize's promptSuggestions
+  let fastMode = false;
+  let backgroundNow = null; // Ctrl+B (background_tasks) for the foreground task running now
+  let permissionMode = flagValue('--permission-mode') || 'default';
 
   const stopTask = new Map(); // task_id -> stop()
   const queuedUuids = new Set(); // messages waiting for their turn
@@ -233,7 +263,39 @@ function streamMode() {
     return result();
   }
 
-  async function handle(prompt, images) {
+  // A subagent Claude waits for (is_backgrounded false) that Ctrl+B can send to the background,
+  // as the real CLI does (2.1.284): task_updated is_backgrounded, background_tasks_changed, and the
+  // tool call returns at once so the turn carries on.
+  async function delegateWait() {
+    const input = { description: 'Wait check', prompt: 'wait', subagent_type: 'general-purpose', run_in_background: false };
+    const id = toolUse('Agent', input);
+    const taskId = `a${crypto.randomBytes(8).toString('hex')}`;
+    const sys = (o) => out({ type: 'system', session_id: sessionId, ...o });
+    sys({ subtype: 'task_started', task_id: taskId, tool_use_id: id, description: input.description, subagent_type: input.subagent_type, is_backgrounded: false, task_type: 'local_agent', prompt: input.prompt });
+    const backgrounded = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), 3000);
+      backgroundNow = () => { clearTimeout(timer); resolve(true); };
+    });
+    backgroundNow = null;
+    const done = () => {
+      sys({ subtype: 'task_updated', task_id: taskId, patch: { status: 'completed', end_time: Date.now() } });
+      sys({ subtype: 'task_notification', task_id: taskId, tool_use_id: id, status: 'completed', summary: 'Waited.', usage: { total_tokens: 20, tool_uses: 0, duration_ms: 3000 } });
+    };
+    if (!backgrounded) {
+      done();
+      toolResult(id, 'Waited.');
+      text('The helper finished.');
+      return result();
+    }
+    sys({ subtype: 'background_tasks_changed', tasks: [{ task_id: taskId, task_type: 'local_agent', description: input.description }] });
+    sys({ subtype: 'task_updated', task_id: taskId, patch: { is_backgrounded: true } });
+    toolResult(id, [{ type: 'text', text: 'Async agent launched successfully.' }]);
+    text('Carrying on while it runs.');
+    setTimeout(() => { sys({ subtype: 'background_tasks_changed', tasks: [] }); done(); }, 800);
+    return result();
+  }
+
+  async function handle(prompt, images, before = []) {
     // Local commands, in the message shapes the real CLI uses (2.1.281).
     if (prompt.trim() === '/clear') {
       out({ type: 'conversation_reset', new_conversation_id: crypto.randomUUID(), trigger: 'clear', session_id: sessionId });
@@ -261,6 +323,54 @@ function streamMode() {
       text(`Saw ${images.length} image${images.length === 1 ? '' : 's'} (${images.join(', ')})${prompt.trim() ? ` with: ${prompt.trim()}` : ''}.`);
       return result();
     }
+    // Shapes from the real CLI (2.1.284): thinking as its own assistant message; an edit's result
+    // with tool_use_result.structuredPatch; TodoWrite; TaskCreate's "Task #N created successfully";
+    // ExitPlanMode asking with requires_user_interaction, and its setMode update.
+    if (/show thinking/i.test(prompt)) {
+      out({ type: 'assistant', message: { id: `msg_${++n}`, role: 'assistant', model: 'claude-fake', content: [{ type: 'thinking', thinking: 'Let me think about this for a moment.', signature: 'fake' }] }, parent_tool_use_id: null, session_id: sessionId });
+      text('Thought it through.');
+      return result();
+    }
+    if (/make an edit/i.test(prompt)) {
+      const file = path.join(process.cwd(), 'edit-me.txt');
+      const id = toolUse('Edit', { file_path: file, old_string: 'apples', new_string: 'oranges', replace_all: false });
+      toolResult(id, `The file ${file} has been updated successfully.`, false, { filePath: file, oldString: 'apples', newString: 'oranges', originalFile: 'I like apples.\nAnd pears.\n', structuredPatch: [{ oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, lines: ['-I like apples.', '+I like oranges.', ' And pears.'] }], userModified: false, replaceAll: false });
+      text('Edited.');
+      return result();
+    }
+    if (/keep a todo/i.test(prompt)) {
+      const id = toolUse('TodoWrite', { todos: [{ content: 'Read the code', status: 'completed', activeForm: 'Reading the code' }, { content: 'Write the fix', status: 'in_progress', activeForm: 'Writing the fix' }, { content: 'Run the tests', status: 'pending', activeForm: 'Running the tests' }] });
+      toolResult(id, 'Todos have been modified successfully.');
+      text('Listed the steps.');
+      return result();
+    }
+    if (/track tasks/i.test(prompt)) {
+      toolResult(toolUse('TaskCreate', { subject: 'Write the tests', description: 'Cover it', activeForm: 'Writing the tests' }), 'Task #1 created successfully: Write the tests');
+      toolResult(toolUse('TaskCreate', { subject: 'Ship it', description: 'Release', activeForm: 'Shipping it' }), 'Task #2 created successfully: Ship it');
+      toolResult(toolUse('TaskUpdate', { taskId: '1', status: 'completed' }), 'Updated task #1 status');
+      text('Tracking two tasks.');
+      return result();
+    }
+    if (/plan it/i.test(prompt)) {
+      const input = { plan: '## Plan\n\n1. Read `app.js`\n2. Add the **menu**' };
+      const id = toolUse('ExitPlanMode', input);
+      const r = await ask({ subtype: 'can_use_tool', tool_name: 'ExitPlanMode', display_name: 'ExitPlanMode', input, tool_use_id: id, requires_user_interaction: true });
+      if (r.behavior === 'allow') {
+        const set = (r.updatedPermissions || []).find((u) => u.type === 'setMode');
+        if (set) permissionMode = set.mode;
+        toolResult(id, 'User has approved exiting plan mode. You can now proceed.');
+        text(`Plan approved; mode ${permissionMode}.`);
+      } else {
+        toolResult(id, r.message, true);
+        text(`Still planning: ${r.message}`);
+      }
+      return result();
+    }
+    if (/show args/i.test(prompt)) {
+      text(`Args: ${JSON.stringify(args)}`);
+      return result();
+    }
+    if (/delegate wait/i.test(prompt)) return delegateWait();
     if (/delegate foreground/i.test(prompt)) return delegateForeground();
     if (/delegate/i.test(prompt)) return delegate(prompt);
     // A shell command slow enough that the real CLI reports it as a task (task_type local_bash).
@@ -307,7 +417,8 @@ function streamMode() {
       text(`Effort: ${effort || 'default'}`);
       return result();
     }
-    text(`Echo: ${prompt}`);
+    // Like the real CLI: what was sent with shouldQuery false goes with this message.
+    text(`Echo: ${prompt}${before.length ? ` [with: ${before.join(' ')}]` : ''}`);
     return result();
   }
 
@@ -333,7 +444,24 @@ function streamMode() {
         if (sub === 'stop_task' && stopTask.has(m.request.task_id)) stopTask.get(m.request.task_id)();
         // Like the real CLI: effortLevel changes the session's effort; null goes back to the default.
         if (sub === 'apply_flag_settings' && m.request.settings && 'effortLevel' in m.request.settings) effort = m.request.settings.effortLevel;
-        let response = sub === 'initialize' ? { commands: [{ name: 'compact', description: 'Summarize the conversation', argumentHint: '' }, ...pluginCommands(sessionPlugins)], models: FAKE_MODELS } : {};
+        if (sub === 'apply_flag_settings' && m.request.settings && 'fastMode' in m.request.settings) fastMode = m.request.settings.fastMode === true;
+        if (sub === 'initialize') suggestions = m.request.promptSuggestions === true;
+        if (sub === 'set_permission_mode') permissionMode = m.request.mode;
+        if (sub === 'background_tasks' && backgroundNow) backgroundNow();
+        let response = sub === 'initialize' ? { commands: [{ name: 'compact', description: 'Summarize the conversation', argumentHint: '' }, ...pluginCommands(sessionPlugins)], models: FAKE_MODELS, fast_mode_state: 'off', fast_mode_disabled_reason: 'sdk_opt_in_required' } : {};
+        // Shapes from the real CLI (2.1.284).
+        if (sub === 'file_suggestions') {
+          const q = String(m.request.query || '').toLowerCase();
+          response = { suggestions: ['src/app.js', 'src/server.js', 'README.md', 'src/'].filter((p) => p.toLowerCase().includes(q)).map((p) => ({ path: p })), cwd: process.cwd() };
+        }
+        if (sub === 'side_question') response = { response: `Aside: ${m.request.question}`, synthetic: false };
+        if (sub === 'mcp_authenticate') {
+          if (!mcpServers.some((s) => s.name === m.request.serverName)) {
+            out({ type: 'control_response', response: { subtype: 'error', request_id: m.request_id, error: `Server not found: ${m.request.serverName}` } });
+            continue;
+          }
+          response = { authUrl: `https://auth.example.com/authorize?server=${encodeURIComponent(m.request.serverName)}`, requiresUserAction: true, callbackExpected: true, redirectScheme: 'localhost', callbackPort: 51234 };
+        }
         if (sub === 'reload_plugins') response = reloadPlugins(m.request, cost > 0);
         // Like the real CLI (2.1.281), with detail "summary": answered locally.
         if (sub === 'get_context_usage') response = { totalTokens: context, maxTokens: 200000, percentage: Math.round((context / 200000) * 100), categories: [], apiUsage: null };
@@ -360,6 +488,14 @@ function streamMode() {
           }
           response = { cancelled: waitingInLine };
         }
+        if (sub === 'mcp_status') response = { mcpServers };
+        if (sub === 'mcp_toggle' || sub === 'mcp_reconnect') {
+          const r = mcpControl(m.request);
+          if (r.error) {
+            out({ type: 'control_response', response: { subtype: 'error', request_id: m.request_id, error: r.error } });
+            continue;
+          }
+        }
         // Like the real CLI: no system/init until the first user message arrives.
         out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response } });
       } else if (m.type === 'control_response') {
@@ -381,7 +517,16 @@ function streamMode() {
           if (cancelledUuids.has(m.uuid)) return; // taken back before its turn
           queuedUuids.delete(m.uuid);
           lifecycle('started');
-          await handle(prompt, images);
+          // Like the real CLI (2.1.284): shouldQuery false adds it without a reply (a result
+          // still arrives), and it goes along with the next message that does get one.
+          if (m.shouldQuery === false) {
+            earlier.push(prompt);
+            result({ num_turns: 0 }, false);
+          } else {
+            const before = earlier;
+            earlier = [];
+            await handle(prompt, images, before);
+          }
           lifecycle('completed');
         });
       }

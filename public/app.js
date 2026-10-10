@@ -28,6 +28,8 @@
     chat: null, // the chat shown in the focus view: { id, loaded, items: Map, past, commands, buffer }
     drafts: {},
     attachments: {}, // chat id -> images waiting to be sent
+    pastes: {}, // chat id -> { texts: { id: text }, last: id }: long pastes shown as [Pasted text #id]
+    openPastes: new Set(), // "chat id:item n:paste id" of pastes shown in full in the conversation
     sending: {}, // chat id -> true while a message is on its way
     showTasks: {}, // chat id -> subagents panel open
     tasksSeen: {}, // chat id -> how many subagents it had when last shown, to open the panel for new ones
@@ -501,6 +503,7 @@
     if (changes && !(isTerminal(it) && it.state === 'failed')) items.push(changes);
     if (isChat(it)) {
       if (it.sessionId) items.push({ label: 'Continue in terminal', title: 'Continue this conversation in a Windows Terminal tab', run: () => continueInTerminal(it) });
+      if (it.state !== 'exited') items.push({ label: 'Go back to an earlier message…', title: 'Claude forgets everything from one of your messages on, and the message comes back to the reply box (Esc Esc)', run: () => { if (S.rewindHere && S.rewindHere.chatId === it.id) S.rewindHere.run(); } });
       items.push({ label: S.showTasks[it.id] ? 'Hide subagents' : it.taskCount ? `Subagents (${it.taskCount})` : 'Subagents', title: 'Subagents Claude started in this chat', run: () => setTasksPanel(it.id, !S.showTasks[it.id]) });
     } else {
       if (isTerminal(it) && it.state !== 'failed' && it.sessionId) items.push({ label: 'Continue here', title: 'Close the tab and continue this conversation here', run: () => continueHere(it) });
@@ -614,7 +617,8 @@
     // Cost and tokens read like the context meter: the value, and what the latest turn added.
     const reading = (value, change) => (value === null || value === undefined || value === '' ? null : h('span', { class: 'reading' }, value, change));
     const costNow = money(it.costUSD);
-    const controls = [fact('Model', modelFact), fact('Effort', effortFact), fact('Permissions', modeFact), isChat(it) ? fact('Plugins', pluginsButton(it)) : null,
+    const controls = [fact('Model', modelFact), fact('Effort', effortFact), isChat(it) && it.fast ? fact('Fast mode', fastToggle(it)) : null, fact('Permissions', modeFact), isChat(it) ? fact('Plugins', pluginsButton(it)) : null,
+      isChat(it) && it.state !== 'exited' ? fact('MCP servers', mcpButton(it)) : null,
       contextFact(it),
       fact('Current cost', reading(costNow, costNow ? turnChange(it, 'cost', it.costUSD, money) : null)),
       fact('Current total tokens', reading(tokensFact(it.tokens), turnChange(it, 'tokens', tokenSum(it.tokens), tokenText)))].filter(Boolean);
@@ -665,6 +669,19 @@
       it.kind === 'external' ? h('p', { class: 'faint', style: { margin: '6px 0 0' } }, 'Started outside Claude Deck. Choose Continue here to reply to it from the dashboard.') : null,
       it.state === 'failed' && it.launchError ? h('p', { class: 'error' }, it.launchError) : null,
       controls.length ? h('div', { class: 'head-controls' }, h('dl', { class: 'facts' }, controls)) : h('div', { class: 'head-gap' }));
+  }
+
+  // Fast mode, as Claude Code's /fast: faster replies, billed as extra usage on top of the plan, so
+  // it can only be turned on with Allow API billing (Claude Deck Preferences → Billing).
+  function fastToggle(it) {
+    const on = it.fast.state === 'on' || it.fast.state === 'cooldown';
+    const allowed = on || S.prefs.allowApiBilling;
+    const title = !allowed
+      ? 'Fast mode is billed as extra usage, on top of your plan. Turn on Allow API billing in Claude Deck Preferences to use it.'
+      : it.fast.state === 'cooldown' ? 'Fast mode is cooling down after a rate limit; replies use the normal speed for now.' : 'Faster replies, billed as extra usage on top of your plan';
+    return h('label', { class: 'check fast-toggle', title },
+      h('input', { type: 'checkbox', checked: on, disabled: !allowed, 'aria-label': 'Fast mode', onchange: (e) => run("Couldn't change fast mode", () => api('POST', `/api/chats/${it.id}/fast`, { on: e.target.checked })) }),
+      it.fast.state === 'cooldown' ? 'Cooling down' : on ? 'On' : 'Off');
   }
 
   // ---- cost, tokens and context (chat header) ------------------------------------------------
@@ -835,6 +852,7 @@
   function togglePluginsMenu(it, btn) {
     if (plugins.pop && plugins.pop.chatId === it.id) { closePluginsMenu(); return; }
     closePluginsMenu();
+    closeMcpMenu();
     const el = h('div', { class: 'plugin-pop', role: 'dialog', 'aria-label': 'Plugins' });
     el.addEventListener('click', (e) => e.stopPropagation());
     el.addEventListener('scroll', hidePluginCard);
@@ -989,6 +1007,158 @@
     if (b && b.isConnected) b.focus();
   }, true);
 
+  // ---- MCP servers menu (chat header) --------------------------------------------------------
+  // The chat's MCP servers, as /mcp lists them, through its own Claude Code (src/chat.js). Turning
+  // one off is remembered for the folder, like /mcp. Lives on <body>, like the plugins menu.
+  const mcp = { pop: null };
+  const MCP_POLL_MS = 2000;
+  const MCP_STATUS = { connected: 'Connected', pending: 'Connecting…', failed: 'Failed', 'needs-auth': 'Needs sign-in', disabled: 'Off' };
+  const MCP_SCOPE = { claudeai: 'claude.ai', user: 'user', project: 'project', local: 'local', plugin: 'plugin', managed: 'managed', enterprise: 'managed', dynamic: 'this session' };
+
+  function mcpSummary(list) {
+    if (!list) return 'Checking…';
+    if (!list.length) return 'None set up';
+    return `${list.filter((s) => s.status === 'connected').length} of ${list.length} connected`;
+  }
+
+  function mcpButton(it) {
+    const btn = h('button', {
+      type: 'button',
+      class: 'ghost small mcp-btn',
+      'aria-haspopup': 'dialog',
+      'aria-expanded': String(Boolean(mcp.pop && mcp.pop.chatId === it.id)),
+      title: 'The MCP servers this chat can use: see their status, turn them on or off, or reconnect one (like /mcp)',
+      onclick: (e) => { e.stopPropagation(); toggleMcpMenu(it, btn); },
+    }, mcpSummary(it.mcp), Deck.icon('down', { size: 12 }));
+    if (mcp.pop && mcp.pop.chatId === it.id) mcp.pop.btn = btn;
+    return btn;
+  }
+
+  function closeMcpMenu() {
+    const p = mcp.pop;
+    if (!p) return;
+    clearTimeout(p.timer);
+    p.el.remove();
+    if (p.btn) p.btn.setAttribute('aria-expanded', 'false');
+    mcp.pop = null;
+  }
+
+  function toggleMcpMenu(it, btn) {
+    if (mcp.pop && mcp.pop.chatId === it.id) { closeMcpMenu(); return; }
+    closeMcpMenu();
+    closePluginsMenu();
+    const el = h('div', { class: 'plugin-pop', role: 'dialog', 'aria-label': 'MCP servers' });
+    el.addEventListener('click', (e) => e.stopPropagation());
+    document.body.appendChild(el);
+    mcp.pop = { el, btn, chatId: it.id, servers: null, busy: new Set(), error: null, timer: null };
+    btn.setAttribute('aria-expanded', 'true');
+    renderMcpMenu();
+    const r = btn.getBoundingClientRect();
+    el.style.top = `${Math.round(r.bottom + 6)}px`;
+    el.style.left = `${Math.round(Math.max(8, Math.min(r.left, window.innerWidth - el.offsetWidth - 8)))}px`;
+    refreshMcp();
+  }
+
+  // Reads the list again while the menu is open and a server is still connecting.
+  async function refreshMcp() {
+    const p = mcp.pop;
+    if (!p) return;
+    clearTimeout(p.timer);
+    try {
+      p.servers = (await api('GET', `/api/chats/${p.chatId}/mcp`)).servers;
+      p.error = null;
+    } catch (err) {
+      p.error = err.message;
+    }
+    if (mcp.pop !== p) return;
+    renderMcpMenu();
+    const waiting = p.watchUntil && Date.now() < p.watchUntil && p.servers && p.servers.some((s) => s.status === 'needs-auth');
+    if (p.servers && (waiting || p.servers.some((s) => s.status === 'pending'))) p.timer = setTimeout(refreshMcp, MCP_POLL_MS);
+  }
+
+  function mcpDetail(s) {
+    if (s.status === 'connected') {
+      const n = s.tools ? s.tools.length : 0;
+      return [`${n} tool${n === 1 ? '' : 's'}`, s.version ? `version ${s.version}` : null].filter(Boolean).join(' · ');
+    }
+    if (s.status === 'failed') return s.error || "Couldn't connect.";
+    if (s.status === 'needs-auth') return 'Sign in to use it.';
+    return null;
+  }
+
+  // Signing in, as /mcp does: Claude Code gives the address to open, and finishes the sign-in when
+  // the browser comes back to it (a claude.ai connector is connected on claude.ai instead). The
+  // list keeps checking for a few minutes, until the server connects.
+  const MCP_SIGN_IN_WAIT_MS = 3 * 60 * 1000;
+  async function signInMcp(s) {
+    const p = mcp.pop;
+    if (!p) return;
+    const res = await run(`Couldn't start signing in to ${s.name}`, () => api('POST', `/api/chats/${p.chatId}/mcp/authenticate`, { name: s.name }));
+    if (!res) return;
+    if (res.authUrl) window.open(res.authUrl, '_blank', 'noopener');
+    if (res.authUrl && res.callbackExpected) toast(`Finish signing in to ${s.name} in the browser window. This list updates when it connects.`, 'info', { label: 'OK', run: () => {}, ms: 10000 });
+    else if (res.authUrl) toast(`Connect ${s.name} on claude.ai in the window that opened, then reconnect it here.`, 'info', { label: 'OK', run: () => {}, ms: 10000 });
+    else toast(`${s.name} is signed in.`);
+    if (mcp.pop === p) {
+      p.watchUntil = Date.now() + MCP_SIGN_IN_WAIT_MS;
+      refreshMcp();
+    }
+  }
+
+  function renderMcpMenu() {
+    const p = mcp.pop;
+    if (!p) return;
+    const el = clear(p.el);
+    el.appendChild(h('div', { class: 'pp-head' },
+      h('strong', null, 'MCP servers'),
+      h('small', { class: 'faint' }, 'Turning a server off applies to new sessions in this folder too, as /mcp does.')));
+    if (p.error) el.appendChild(h('p', { class: 'error pp-empty' }, p.error));
+    if (!p.servers) {
+      if (!p.error) el.appendChild(h('p', { class: 'faint pp-empty' }, 'Loading…'));
+      return;
+    }
+    if (!p.servers.length) el.appendChild(h('p', { class: 'faint pp-empty' }, 'This chat has no MCP servers. Add them with claude mcp add, in settings, or with a plugin.'));
+    for (const s of p.servers) {
+      const busy = p.busy.has(s.name);
+      const where = MCP_SCOPE[s.source] || MCP_SCOPE[s.scope] || s.source || s.scope;
+      const detail = mcpDetail(s);
+      const canReconnect = s.status === 'failed';
+      el.appendChild(h('div', { class: 'pp-row', title: s.tools && s.tools.length ? `Tools: ${s.tools.join(', ')}` : null },
+        h('span', { class: 'pp-name' }, s.name, where ? h('small', { class: 'faint' }, where) : null),
+        h('span', { class: `pp-desc mcp-state mcp-${s.status}` }, h('span', { class: 'mcp-status' }, busy ? 'Working…' : MCP_STATUS[s.status] || s.status), detail ? ` · ${detail}` : null),
+        h('span', { class: 'pp-control mcp-controls' },
+          canReconnect ? h('button', { type: 'button', class: 'ghost small', disabled: busy, onclick: () => reconnectMcp(s) }, 'Reconnect') : null,
+          s.status === 'needs-auth' ? h('button', { type: 'button', class: 'ghost small', disabled: busy, onclick: () => signInMcp(s) }, 'Sign in') : null,
+          h('input', { type: 'checkbox', checked: s.status !== 'disabled', disabled: busy, 'aria-label': `Turn ${s.name} on`, onchange: (e) => setMcpEnabled(s, e.target.checked) }))));
+    }
+  }
+
+  async function mcpChange(s, what) {
+    const p = mcp.pop;
+    if (!p) return;
+    p.busy.add(s.name);
+    renderMcpMenu();
+    const res = await what(p.chatId);
+    p.busy.delete(s.name);
+    if (mcp.pop !== p) return;
+    if (res) p.servers = res.servers;
+    renderMcpMenu();
+    refreshMcp();
+  }
+
+  const setMcpEnabled = (s, on) => mcpChange(s, (chatId) => run(`Couldn't turn ${on ? 'on' : 'off'} ${s.name}`, () => api('POST', `/api/chats/${chatId}/mcp/enabled`, { name: s.name, enabled: on })));
+  const reconnectMcp = (s) => mcpChange(s, (chatId) => run(`Couldn't reconnect ${s.name}`, () => api('POST', `/api/chats/${chatId}/mcp/reconnect`, { name: s.name })));
+
+  document.addEventListener('click', closeMcpMenu);
+  window.addEventListener('resize', closeMcpMenu);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !mcp.pop) return;
+    e.stopPropagation();
+    const b = mcp.pop.btn;
+    closeMcpMenu();
+    if (b && b.isConnected) b.focus();
+  }, true);
+
   const sinceText = (t) => `for ${ago(t).replace('just now', 'a moment')}`;
 
   // Only rebuild the header when something it shows changed, so dropdowns aren't reset mid-use.
@@ -996,7 +1166,7 @@
   function headSignature(it) {
     return JSON.stringify([it.key, it.state, it.status, it.waitingFor, heading(it), it.title, it.name, it.model, it.requestedModel, it.requestedEffort, it.permissionMode,
       it.costUSD, it.tokens, it.context, it.sessionId, it.color, it.gitBranch, it.cwd, it.exitCode, it.note, it.userTurns, it.statusSince,
-      it.runningTasks, it.taskCount, Boolean(S.showTasks[it.id]), Boolean(S.showChanges[it.key])]);
+      it.runningTasks, it.taskCount, it.mcp, it.fast, Boolean(S.showTasks[it.id]), Boolean(S.showChanges[it.key])]);
   }
 
   // Someone is using one of the header's controls (typing a model ID, a dropdown open): rebuilding
@@ -1143,6 +1313,7 @@
     }
     if (items.length >= 150) inner.appendChild(h('p', { class: 'convo-note' }, 'Showing the most recent part of the conversation.'));
     for (const m of items) inner.appendChild(transcriptNode(m));
+    markClaudeTurns(inner);
     if (first || atBottom) box.scrollTop = box.scrollHeight;
   }
 
@@ -1618,6 +1789,31 @@
     return Deck.icon(TOOL_ICONS[n] || (word ? word[1] : 'plug'), { size: 13 });
   }
 
+  // Your message with each long paste as Claude Code shows it, "[Pasted text #1 +123 lines]": click
+  // one to show its text (it stays open when the message is redrawn).
+  function pastedPieces(it) {
+    return Deck.pastedText.pieces(it.text, it.pasted).map((p) => {
+      if (!p.id) return p.text;
+      const key = `${S.chat ? S.chat.id : ''}:${it.n}:${p.id}`;
+      const body = h('span', { class: 'paste-body', hidden: !S.openPastes.has(key) }, p.text);
+      const chip = h('button', {
+        type: 'button',
+        class: 'paste-chip',
+        'aria-expanded': String(S.openPastes.has(key)),
+        title: S.openPastes.has(key) ? 'Hide the pasted text' : 'Show the pasted text',
+        onclick: () => {
+          const open = body.hidden;
+          body.hidden = !open;
+          chip.setAttribute('aria-expanded', String(open));
+          chip.title = open ? 'Hide the pasted text' : 'Show the pasted text';
+          if (open) S.openPastes.add(key);
+          else S.openPastes.delete(key);
+        },
+      }, p.label);
+      return [chip, body];
+    });
+  }
+
   function chatNode(it) {
     const n = String(it.n);
     switch (it.kind) {
@@ -1629,7 +1825,7 @@
         else if (it.undelivered) node.appendChild(h('span', { class: 'msg-tag ended', title: 'The chat ended before Claude read this message' }, 'Not delivered'));
         if (it.images && it.images.length) node.appendChild(h('div', { class: 'msg-images' }, it.images.map((src) => h('img', { src, alt: 'Attached image', class: 'msg-thumb' }))));
         else if (it.imageCount) node.appendChild(h('div', { class: 'faint small' }, `${it.imageCount} image${it.imageCount === 1 ? '' : 's'} attached`));
-        if (it.text && it.text.trim()) node.appendChild(h('div', { class: 'msg-text' }, it.text));
+        if (it.text && it.text.trim()) node.appendChild(h('div', { class: 'msg-text' }, it.pasted ? pastedPieces(it) : it.text));
         return node;
       }
       case 'assistant': {
@@ -1639,12 +1835,23 @@
       }
       case 'tool': {
         const state = it.result === undefined ? h('span', { class: 'tstate' }, 'running') : it.isError ? h('span', { class: 'tstate err' }, 'failed') : null;
-        return h('details', { class: `msg-tool${it.isError ? ' err' : ''}`, dataset: { n } },
+        const tool = h('details', { class: `msg-tool${it.isError ? ' err' : ''}`, dataset: it.diff ? null : { n } },
           h('summary', null, h('span', { class: 'ticon', 'aria-hidden': 'true' }, toolIcon(it.name)), h('span', { class: 'tname' }, it.name), it.detail ? h('span', { class: 'tdetail', title: it.detail }, it.detail) : null, state),
           h('div', { class: 'tool-body' },
             h('div', { class: 'faint small' }, 'Input'), h('pre', { class: 'code small' }, it.input),
             it.result !== undefined ? [h('div', { class: 'faint small' }, it.isError ? 'Error' : 'Result'), h('pre', { class: 'code small' }, it.result || '(empty)')] : null));
+        // An edit shows its change under the line, as Claude Code shows it.
+        return it.diff ? h('div', { class: 'tool-with-diff', dataset: { n } }, tool, diffView(it.diff)) : tool;
       }
+      case 'thinking':
+        // Collapsed, as Claude Code shows thinking until Ctrl+O.
+        return h('details', { class: 'msg-tool msg-thinking', dataset: { n } },
+          h('summary', null, h('span', { class: 'tname' }, 'Thinking')),
+          h('div', { class: 'thinking-text' }, it.text));
+      case 'shell':
+        return shellNode(it);
+      case 'plan':
+        return planCard(it);
       case 'permission':
         return permissionCard(it);
       case 'question':
@@ -1661,6 +1868,65 @@
       default:
         return h('span', { dataset: { n }, hidden: true });
     }
+  }
+
+  // An edit's change, as Claude Code shows it under the tool line: removed lines and added lines
+  // with their line numbers, a gap between the parts of the file that changed.
+  function diffView(d) {
+    const rows = [];
+    let adds = 0;
+    let dels = 0;
+    for (const hunk of d.hunks) {
+      if (rows.length) rows.push(h('div', { class: 'diff-gap', 'aria-hidden': 'true' }, '⋯'));
+      let oldN = hunk.oldStart;
+      let newN = hunk.newStart;
+      for (const line of hunk.lines) {
+        const sign = line[0];
+        const kind = sign === '+' ? 'add' : sign === '-' ? 'del' : 'ctx';
+        let num;
+        if (kind === 'add') { num = newN++; adds++; } else if (kind === 'del') { num = oldN++; dels++; } else { num = newN++; oldN++; }
+        rows.push(h('div', { class: `diff-line ${kind}` },
+          h('span', { class: 'diff-num' }, String(num)),
+          h('span', { class: 'diff-sign', 'aria-label': kind === 'add' ? 'added' : kind === 'del' ? 'removed' : null }, kind === 'ctx' ? ' ' : sign),
+          h('span', { class: 'diff-text' }, line.slice(1))));
+      }
+    }
+    const what = d.created ? `Created ${shortPath(d.file || '', 2)}` : `Updated ${shortPath(d.file || '', 2)}`;
+    return h('div', { class: 'msg-diff' },
+      h('div', { class: 'diff-head' }, what, h('span', { class: 'dstat' }, adds ? h('span', { class: 'plus' }, ` +${adds}`) : null, dels ? h('span', { class: 'minus' }, ` −${dels}`) : null), d.truncated ? h('span', { class: 'faint' }, ' (first 400 lines)') : null),
+      h('div', { class: 'diff-body' }, rows));
+  }
+
+  // "!command": what ran in PowerShell and what it printed, as Claude Code shows shell mode.
+  function shellNode(it) {
+    const state = it.running ? h('span', { class: 'tstate' }, 'running') : it.exitCode ? h('span', { class: 'tstate err' }, `exit code ${it.exitCode}`) : null;
+    return h('div', { class: 'msg-shell', dataset: { n: String(it.n) } },
+      h('div', { class: 'shell-cmd' }, h('span', { class: 'shell-bang', 'aria-label': 'Shell command' }, '!'), h('span', { class: 'shell-text' }, it.command), state),
+      it.stdout ? h('pre', { class: 'code small shell-out' }, it.stdout) : null,
+      it.stderr ? h('pre', { class: 'code small shell-err' }, it.stderr) : null);
+  }
+
+  // The end of plan mode, as Claude Code asks it: the plan in full, then go ahead (Claude making its
+  // edits without asking, or asking before each), or keep planning with what to change.
+  function planCard(it) {
+    const pending = it.status === 'pending';
+    const chatId = S.chat && S.chat.id;
+    const body = h('div', { class: 'plan-body' });
+    body.appendChild(richText(it.plan || '(No plan text.)'));
+    const card = h('div', { class: `req plan-card${pending ? ' pending' : ''}`, dataset: { n: String(it.n) } },
+      h('div', { class: 'req-head' }, h('span', { class: `lamp ${pending ? 'waiting' : 'ended'}` }), h('strong', null, pending ? 'Claude has a plan. Go ahead?' : `Plan: ${it.outcome || it.status}`)),
+      pending ? body : h('details', null, h('summary', { class: 'faint small' }, 'Show the plan'), body));
+    if (pending) {
+      const msg = h('input', { type: 'text', placeholder: 'Or tell Claude what to change, and keep planning', 'aria-label': 'What to change in the plan' });
+      const keep = () => answer(chatId, it.requestId, { action: 'deny', message: msg.value });
+      msg.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); keep(); } });
+      card.appendChild(h('div', { class: 'req-actions' },
+        h('button', { class: 'primary small', onclick: () => answer(chatId, it.requestId, { action: 'allow', mode: 'acceptEdits' }) }, 'Yes, and make the edits without asking'),
+        h('button', { class: 'small', onclick: () => answer(chatId, it.requestId, { action: 'allow', mode: 'default' }) }, 'Yes, and ask before each edit'),
+        h('button', { class: 'ghost small', onclick: keep }, 'Keep planning')));
+      card.appendChild(msg);
+    }
+    return card;
   }
 
   function permissionCard(it) {
@@ -1736,6 +2002,29 @@
     return card;
   }
 
+  // "Claude" over the first thing Claude does after each of your turns (a reply, a tool, a question
+  // or the working spinner), as "You" marks yours. Run again whenever the conversation changes:
+  // what comes first after your turn can change as messages arrive or the spinner hides.
+  function markClaudeTurns(list) {
+    if (!list) return;
+    const keep = new Set();
+    let want = false;
+    for (const el of [...list.children]) {
+      // Notes are Claude Deck's, and a ! command's output is yours, not Claude's.
+      if (el.classList.contains('turn-claude') || el.hidden || el.classList.contains('msg-note') || el.classList.contains('msg-shell')) continue;
+      if (el.classList.contains('msg-user')) { want = true; continue; }
+      if (!want) continue;
+      want = false;
+      let mark = el.previousElementSibling;
+      if (!mark || !mark.classList.contains('turn-claude')) {
+        mark = h('div', { class: 'turn-claude' }, 'Claude');
+        list.insertBefore(mark, el);
+      }
+      keep.add(mark);
+    }
+    for (const m of list.querySelectorAll(':scope > .turn-claude')) if (!keep.has(m)) m.remove();
+  }
+
   function renderChat(scrollToEnd) {
     const box = $('#focus-detail .convo');
     if (!box || !S.chat) return;
@@ -1744,6 +2033,7 @@
       inner.appendChild(h('p', { class: 'convo-note' }, 'Earlier in this conversation'));
       const past = h('div', { class: 'past' });
       for (const m of S.chat.past) past.appendChild(transcriptNode(m));
+      markClaudeTurns(past);
       inner.appendChild(past);
       inner.appendChild(h('hr', { class: 'past-rule' }));
     }
@@ -1752,6 +2042,7 @@
     for (const it of items) inner.appendChild(chatNode(it));
     inner.appendChild(h('div', { class: 'chat-spinner', hidden: true, 'aria-hidden': 'true' },
       h('span', { class: 'spin-glyph' }), h('span', { class: 'spin-verb' }), h('span', { class: 'spin-time faint' })));
+    markClaudeTurns(inner);
     if (scrollToEnd) box.scrollTop = box.scrollHeight;
   }
 
@@ -1777,7 +2068,10 @@
     spin.timer = null;
     spin.chatId = null;
     const el = $('#focus-detail .chat-spinner');
-    if (el) el.hidden = true;
+    if (el && !el.hidden) {
+      el.hidden = true;
+      markClaudeTurns(el.parentElement);
+    }
   }
 
   function spinTick() {
@@ -1794,7 +2088,10 @@
     write('.spin-glyph', SPIN_STILL.matches ? '✻' : SPIN_GLYPHS[spin.frame]);
     write('.spin-verb', spin.verb);
     write('.spin-time', `(${duration(Date.now() - spin.since)})`);
-    if (el.hidden) el.hidden = false;
+    if (el.hidden) {
+      el.hidden = false;
+      markClaudeTurns(el.parentElement);
+    }
     if (stick) box.scrollTop = box.scrollHeight;
   }
 
@@ -1825,13 +2122,17 @@
     const node = chatNode(item);
     const existing = inner.querySelector(`[data-n="${item.n}"]`);
     if (existing) {
-      // Keep an expanded tool call expanded when its result arrives.
-      if (existing.tagName === 'DETAILS' && existing.open && node.tagName === 'DETAILS') node.open = true;
+      // Keep an expanded tool call expanded when its result arrives (an edit's comes with its diff).
+      const details = (el) => (el.tagName === 'DETAILS' ? el : el.querySelector(':scope > details'));
+      const was = details(existing);
+      const now = details(node);
+      if (was && now && was.open) now.open = true;
       existing.replaceWith(node);
     } else {
       // New messages go above the working spinner, which stays last.
       inner.insertBefore(node, inner.querySelector('.chat-spinner'));
     }
+    markClaudeTurns(inner);
     if (stick || item.kind === 'user') box.scrollTop = box.scrollHeight;
   }
 
@@ -1840,17 +2141,19 @@
     if (res) toast('Stopping…');
   }
 
-  // Your earlier messages in the open chat, newest first, for ↑ in the reply box. Queued ones are
-  // left out: ↑ takes those back out of the queue instead.
+  // Your earlier messages in the open chat, newest first, for ↑ in the reply box: { text, pasted }
+  // (where its long pastes are, to show them as placeholders again). Queued ones are left out: ↑
+  // takes those back out of the queue instead.
   function sentMessages() {
     if (!S.chat) return [];
-    const live = [...S.chat.items.values()].filter((x) => x.kind === 'user' && !x.withdrawn && !x.queued).sort((a, b) => b.n - a.n).map((x) => x.text);
-    const past = (S.chat.past || []).filter((x) => x.kind === 'user').map((x) => x.text).reverse();
+    const live = [...S.chat.items.values()].filter((x) => x.kind === 'user' && !x.withdrawn && !x.queued).sort((a, b) => b.n - a.n).map((x) => ({ text: x.text, pasted: x.pasted }));
+    const past = (S.chat.past || []).filter((x) => x.kind === 'user').map((x) => ({ text: x.text })).reverse();
     // From before a /clear that emptied the chat.
-    const earlier = [...(S.chat.earlierPrompts || [])].reverse();
+    const earlier = [...(S.chat.earlierPrompts || [])].reverse().map((t) => ({ text: t }));
     const out = [];
-    for (const t of [...live, ...past, ...earlier]) {
-      if (t && t.trim() && !/^\[\d+ images?\]$/.test(t) && out[out.length - 1] !== t) out.push(t);
+    for (const m of [...live, ...past, ...earlier]) {
+      const t = m.text;
+      if (t && t.trim() && !/^\[\d+ images?\]$/.test(t) && (!out.length || out[out.length - 1].text !== t)) out.push(m);
     }
     return out;
   }
@@ -1881,35 +2184,77 @@
       if (!m || /^\S/.test(ta.value.slice(at))) return null;
       return { start: m.index + m[1].length, end: at, query: m[2] };
     };
+    // @ at the cursor, as in Claude Code: files in the chat's folder, from Claude Code's own file
+    // index (file_suggestions). The index builds on first use, so an empty first answer is asked
+    // again once.
+    const atWord = () => {
+      if (ta.selectionStart !== ta.selectionEnd) return null;
+      const at = ta.selectionStart;
+      const m = /(^|\s)@("[^"]*|\S*)$/.exec(ta.value.slice(0, at));
+      if (!m || /^\S/.test(ta.value.slice(at))) return null;
+      return { start: m.index + m[1].length, end: at, query: m[2].replace(/^"/, '') };
+    };
+    const atFiles = { query: null, list: [], timer: null, warmed: false };
+    const fetchFiles = (q) => {
+      clearTimeout(atFiles.timer);
+      atFiles.timer = setTimeout(async () => {
+        let list;
+        try { list = (await api('GET', `/api/chats/${it.id}/files?q=${encodeURIComponent(q)}`)).suggestions; } catch { return; }
+        if (!list.length && !atFiles.warmed) {
+          atFiles.warmed = true;
+          atFiles.timer = setTimeout(() => fetchFiles(q), FILE_INDEX_WAIT_MS);
+          return;
+        }
+        atFiles.warmed = true;
+        Object.assign(atFiles, { query: q, list });
+        drawSlash();
+      }, FILE_QUERY_DELAY_MS);
+    };
+    // A path with spaces goes in quoted, as Claude Code writes it: @"My Folder/file.txt".
+    const atText = (p) => (/\s/.test(p) ? `@"${p}"` : `@${p}`);
     const drawSlash = () => {
       // Not while ↑ steps through earlier messages: the list would take the next ↑.
       const w = browsing() ? null : slashWord();
+      const a = w || browsing() ? null : atWord();
       const commands = (S.chat && S.chat.commands) || [];
-      slashItems = w ? commands.filter((c) => c.name.toLowerCase().startsWith(w.query.toLowerCase())).slice(0, 8) : [];
+      if (w) {
+        slashItems = commands.filter((c) => c.name.toLowerCase().startsWith(w.query.toLowerCase())).slice(0, 8)
+          .map((c) => ({ word: `/${c.name} `, label: `/${c.name}`, hint: c.argumentHint, desc: c.description }));
+      } else if (a) {
+        if (atFiles.query !== a.query) fetchFiles(a.query);
+        // A folder ends with a separator and keeps the list open, to go on into it.
+        slashItems = atFiles.query === a.query ? atFiles.list.slice(0, 8).map((p) => ({ word: /[\\/]$/.test(p) ? atText(p) : `${atText(p)} `, label: p, file: true })) : [];
+      } else {
+        slashItems = [];
+      }
       slashIndex = Math.min(slashIndex, Math.max(0, slashItems.length - 1));
       clear(slash);
       slash.hidden = !slashItems.length;
       slashItems.forEach((c, i) => {
-        slash.appendChild(h('button', { type: 'button', class: 'slash-item', role: 'option', 'aria-selected': String(i === slashIndex), onmousedown: (e) => { e.preventDefault(); pick(i); } },
-          h('span', { class: 'slash-name' }, `/${c.name}`), c.argumentHint ? h('span', { class: 'faint' }, ` ${c.argumentHint}`) : null, h('span', { class: 'slash-desc' }, c.description)));
+        slash.appendChild(h('button', { type: 'button', class: `slash-item${c.file ? ' slash-file' : ''}`, role: 'option', 'aria-selected': String(i === slashIndex), onmousedown: (e) => { e.preventDefault(); pick(i); } },
+          c.file ? Deck.icon(/[\\/]$/.test(c.label) ? 'folder' : 'file', { size: 13 }) : null,
+          h('span', { class: 'slash-name' }, c.label), c.hint ? h('span', { class: 'faint' }, ` ${c.hint}`) : null, c.desc ? h('span', { class: 'slash-desc' }, c.desc) : null));
       });
     };
     const pick = (i) => {
       const c = slashItems[i];
-      const w = slashWord();
+      const w = slashWord() || atWord();
       if (!c || !w) return;
       // Only the word being typed is replaced; the rest of the message stays.
-      const word = `/${c.name} `;
       const rest = ta.value.slice(w.end).replace(/^ /, '');
-      ta.value = ta.value.slice(0, w.start) + word + rest;
-      ta.setSelectionRange(w.start + word.length, w.start + word.length);
+      ta.value = ta.value.slice(0, w.start) + c.word + rest;
+      ta.setSelectionRange(w.start + c.word.length, w.start + c.word.length);
       S.drafts[it.id] = ta.value;
       autosize();
       drawSlash();
       ta.focus();
     };
-    // Attached images waiting to be sent, kept per chat so switching chats doesn't lose them.
+    // Attached images waiting to be sent, and long pastes shown as placeholders, kept per chat so
+    // switching chats doesn't lose them.
     S.attachments[it.id] = S.attachments[it.id] || [];
+    const pasted = Deck.pastedText;
+    S.pastes[it.id] = S.pastes[it.id] || { texts: {}, last: null };
+    const pastes = S.pastes[it.id];
     const tray = h('div', { class: 'attach-tray', hidden: true });
     const drawTray = () => {
       const list = S.attachments[it.id];
@@ -1968,6 +2313,14 @@
       drawSlash();
       ta.setSelectionRange(text.length, text.length);
     };
+    // A sent message back in the box, its long pastes as placeholders again, as Claude Code's ↑ does.
+    const showSent = (m) => {
+      const { value, texts } = pasted.collapse(m.text, m.pasted);
+      pastes.texts = texts;
+      pastes.last = null;
+      show(value);
+      return value;
+    };
     const onFirstLine = () => ta.selectionStart === ta.selectionEnd && !ta.value.slice(0, ta.selectionStart).includes('\n');
     const onLastLine = () => ta.selectionStart === ta.selectionEnd && !ta.value.slice(ta.selectionEnd).includes('\n');
     const browsing = () => Boolean(recall && ta.value === recall.shown);
@@ -1977,7 +2330,15 @@
         if (hasQueued()) {
           const res = await run("Couldn't take the queued messages back", () => api('POST', `/api/chats/${it.id}/unqueue`));
           if (res && res.messages.length) {
-            show(res.messages.map((m) => m.text).filter((t) => t && t.trim()).join('\n\n'));
+            // One after another in the box, each one's pastes moved along with it.
+            let text = '';
+            const ranges = [];
+            for (const m of res.messages.filter((x) => x.text && x.text.trim())) {
+              if (text) text += '\n\n';
+              for (const [start, end] of m.pasted || []) ranges.push([start + text.length, end + text.length]);
+              text += m.text;
+            }
+            showSent({ text, pasted: ranges });
             for (const m of res.messages) {
               for (const img of m.images) {
                 S.attachments[it.id].push({ name: 'Image', bytes: Math.round(img.data.length * 0.75), mediaType: img.mediaType, data: img.data, thumb: img.thumb || `data:${img.mediaType};base64,${img.data}` });
@@ -1989,23 +2350,115 @@
           }
           // Claude had already picked them up; carry on to earlier messages.
         }
-        recall = { list: sentMessages(), index: -1, draft: ta.value, shown: null };
+        recall = { list: sentMessages(), index: -1, draft: ta.value, draftPastes: pastes.texts, shown: null };
       }
       if (recall.index + 1 >= recall.list.length) return;
       recall.index++;
-      recall.shown = recall.list[recall.index];
-      show(recall.shown);
+      recall.shown = showSent(recall.list[recall.index]);
     };
     const recallNewer = () => {
       if (recall.index <= 0) {
-        const draft = recall.draft;
+        const { draft, draftPastes } = recall;
         recall = null;
+        pastes.texts = draftPastes;
+        pastes.last = null;
         show(draft);
         return;
       }
       recall.index--;
-      recall.shown = recall.list[recall.index];
-      show(recall.shown);
+      recall.shown = showSent(recall.list[recall.index]);
+    };
+
+    // Long pastes, as in Claude Code: the box shows "[Pasted text #1 +123 lines]" and the text is
+    // sent in its place (public/pasted-text.js). Pasting the same text again straight after expands
+    // it where it is. Typing goes through the browser's own editing, so Ctrl+Z still undoes it.
+    const replaceRange = (start, end, text) => {
+      ta.focus();
+      ta.setSelectionRange(start, end);
+      if (!document.execCommand('insertText', false, text)) {
+        ta.setRangeText(text, start, end, 'end');
+        ta.dispatchEvent(new Event('input'));
+      }
+    };
+    // Shown for a few seconds in place of the usual hint, which updateComposer keeps up to date.
+    const hint = h('div', { class: 'composer-hint' }, 'Enter sends. Shift+Enter adds a line. Type / for commands. Ctrl+V or Alt+V pastes an image. Esc goes to the session list.');
+    const pasteHint = h('div', { class: 'composer-hint-paste', role: 'status', hidden: true });
+    let hintTimer = null;
+    // sticky: stays until taken down (shell mode's note, while the message starts with !).
+    const flashHint = (text, sticky = false) => {
+      pasteHint.textContent = text;
+      pasteHint.hidden = false;
+      hint.hidden = true;
+      clearTimeout(hintTimer);
+      if (sticky) pasteHint.dataset.sticky = '1';
+      else {
+        delete pasteHint.dataset.sticky;
+        hintTimer = setTimeout(() => { pasteHint.hidden = true; hint.hidden = false; }, PASTE_HINT_MS);
+      }
+    };
+    const pasteText = (raw) => {
+      const text = pasted.normalize(raw);
+      const again = pastes.last !== null && pastes.texts[pastes.last] === text ? pasted.find(ta.value, pastes.last) : null;
+      if (again) {
+        delete pastes.texts[pastes.last];
+        pastes.last = null;
+        replaceRange(again.start, again.end, text);
+        return true;
+      }
+      if (!pasted.collapses(text)) return false;
+      const id = pasted.nextId(ta.value);
+      pastes.texts[id] = text;
+      pastes.last = id;
+      replaceRange(ta.selectionStart, ta.selectionEnd, pasted.placeholder(id, text));
+      if (text.length <= PASTE_EXPAND_MAX) flashHint('Paste again to expand it in the reply box.');
+      return true;
+    };
+
+    // Clears what was just used from the box (and its pastes), leaving anything typed meanwhile.
+    const takeOut = (text) => {
+      const rest = ta.value.startsWith(text) ? ta.value.slice(text.length).replace(/^\s+/, '') : ta.value;
+      ta.value = rest;
+      if (rest) S.drafts[it.id] = rest;
+      else delete S.drafts[it.id];
+      const kept = new Set(pasted.idsIn(rest).map(String));
+      for (const id of Object.keys(pastes.texts)) if (!kept.has(id)) delete pastes.texts[id];
+      if (!kept.has(String(pastes.last))) pastes.last = null;
+      autosize();
+      drawSlash();
+      drawMode();
+    };
+
+    // "!command": runs it now, in PowerShell, without Claude; Claude sees it and its output with
+    // your next message (src/shell-mode.js), as Claude Code's shell mode does.
+    const runShell = async (text) => {
+      const command = pasted.expand(text.replace(/^\s*!/, ''), pastes.texts).text.trim();
+      if (!command) { toast('Type a command after the !.'); return; }
+      S.sending[it.id] = true;
+      takeOut(text);
+      try {
+        await run("Couldn't run the command", () => api('POST', `/api/chats/${it.id}/shell`, { command }));
+      } finally {
+        delete S.sending[it.id];
+      }
+    };
+
+    // "/btw question": asked aside, answered here, and kept out of the conversation, as Claude
+    // Code's /btw does.
+    const aside = h('div', { class: 'side-answer', role: 'status', hidden: true });
+    const closeAside = () => { aside.hidden = true; clear(aside); };
+    const askAside = async (text, question) => {
+      takeOut(text);
+      clear(aside).append(h('div', { class: 'side-q' }, h('span', { class: 'side-label' }, 'By the way'), question), h('p', { class: 'faint' }, 'Asking…'));
+      aside.hidden = false;
+      const res = await run("Couldn't ask the side question", () => api('POST', `/api/chats/${it.id}/side`, { question }));
+      if (!res) { closeAside(); return; }
+      const answer = h('div', { class: 'side-a' });
+      answer.appendChild(richText(res.answer || 'No answer.'));
+      clear(aside).append(
+        h('div', { class: 'side-q' }, h('span', { class: 'side-label' }, 'By the way'), res.question,
+          h('button', { type: 'button', class: 'ghost icon small side-close', title: 'Dismiss (Esc)', 'aria-label': 'Dismiss the answer', onclick: () => { closeAside(); ta.focus(); } }, Deck.icon('close', { size: 12 }))),
+        answer,
+        h('p', { class: 'faint small' }, 'Not part of the conversation; Claude won\'t remember it.'));
     };
 
     const submit = async (interrupt) => {
@@ -2018,39 +2471,50 @@
         if (interrupt) stopTurn(it);
         return;
       }
+      if (!list.length && /^\s*!/.test(text)) { runShell(text); return; }
+      const btw = /^\s*\/btw\s+([\s\S]+)$/.exec(text);
+      if (!list.length && btw) { askAside(text, pasted.expand(btw[1], pastes.texts).text.trim()); return; }
       const images = list.map((a) => ({ mediaType: a.mediaType, data: a.data, thumb: a.thumb }));
       S.sending[it.id] = true;
       let res;
       try {
-        res = await run("Couldn't send", () => api('POST', `/api/chats/${it.id}/send`, { text, images, interrupt: interrupt === true }));
+        const sent = pasted.expand(text, pastes.texts);
+        res = await run("Couldn't send", () => api('POST', `/api/chats/${it.id}/send`, { text: sent.text, pasted: sent.ranges, images, interrupt: interrupt === true }));
       } finally {
         delete S.sending[it.id];
       }
       if (res) {
         // Only what was sent is cleared. Sending can wait on Claude (after Interrupt, say), and
-        // anything typed or attached meanwhile stays.
-        const rest = ta.value.startsWith(text) ? ta.value.slice(text.length).replace(/^\s+/, '') : ta.value;
-        ta.value = rest;
-        if (rest) S.drafts[it.id] = rest;
-        else delete S.drafts[it.id];
+        // anything typed or attached meanwhile stays (with its pastes).
+        takeOut(text);
         S.attachments[it.id] = (S.attachments[it.id] || []).filter((a) => !list.includes(a));
         drawTray();
-        autosize();
-        drawSlash();
       }
     };
 
-    ta.addEventListener('input', () => { S.drafts[it.id] = ta.value; autosize(); drawSlash(); });
+    // A message starting with ! is a shell command, as in Claude Code: the box says so.
+    const drawMode = () => {
+      const shell = /^\s*!/.test(ta.value);
+      box.classList.toggle('shell-mode', shell);
+      if (shell) flashHint('Shell mode: Enter runs this in PowerShell, in the chat\'s folder. Claude sees it and its output with your next message.', true);
+      else if (pasteHint.dataset.sticky) { pasteHint.hidden = true; hint.hidden = false; delete pasteHint.dataset.sticky; }
+    };
+
+    ta.addEventListener('input', () => { S.drafts[it.id] = ta.value; autosize(); drawSlash(); drawMode(); });
     // The command list follows the cursor: it opens or closes as the cursor moves onto or off a /word.
     ta.addEventListener('click', drawSlash);
     ta.addEventListener('keyup', (e) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) drawSlash(); });
-    // Ctrl+V: pasted images come in with the paste event (no permission needed).
+    // Ctrl+V: pasted images come in with the paste event (no permission needed); long text goes in
+    // as a placeholder.
     ta.addEventListener('paste', (e) => {
       const files = [...(e.clipboardData ? e.clipboardData.items : [])].filter((x) => x.kind === 'file' && x.type.startsWith('image/')).map((x) => x.getAsFile()).filter(Boolean);
       if (files.length) {
         e.preventDefault();
         addFiles(files);
+        return;
       }
+      const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+      if (text && pasteText(text)) e.preventDefault();
     });
     ta.addEventListener('keydown', (e) => {
       if (!slash.hidden) {
@@ -2060,6 +2524,33 @@
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); slash.hidden = true; return; }
       }
       const plainKey = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && !e.isComposing;
+      const ctrlOnly = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey;
+      const now = findItem(`d:${it.id}`) || it;
+      // Shift+Tab, as in Claude Code: the next permission mode (ask before edits, accept edits, plan).
+      if (e.key === 'Tab' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        cycleMode(now);
+        return;
+      }
+      // Tab in an empty box takes Claude Code's suggested next prompt.
+      if (plainKey && e.key === 'Tab' && !ta.value && now.suggestion) {
+        e.preventDefault();
+        show(now.suggestion);
+        return;
+      }
+      // Ctrl+B, as in Claude Code: what Claude is waiting on carries on in the background, and Claude
+      // carries on. With nothing to background, Ctrl+B is the page's own (narrowing the session list).
+      if (ctrlOnly && e.key.toLowerCase() === 'b' && now.foregroundTasks > 0) {
+        e.preventDefault();
+        backgroundTasks(it);
+        return;
+      }
+      // Ctrl+R, as in Claude Code: search your earlier prompts.
+      if (ctrlOnly && e.key.toLowerCase() === 'r') {
+        e.preventDefault();
+        openPromptSearch();
+        return;
+      }
       if (plainKey && e.key === 'ArrowUp' && onFirstLine() && (browsing() || (!ta.value && !S.attachments[it.id].length))) {
         e.preventDefault();
         recallOlder();
@@ -2079,13 +2570,88 @@
         // A held-down Enter repeats; only the first press sends.
         e.preventDefault();
         if (!e.repeat) submit(false);
+      } else if (e.key === 'Escape' && !aside.hidden) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeAside();
       } else if (e.key === 'Escape' && !ta.value) {
         e.preventDefault();
         e.stopPropagation();
-        focusSessionList();
+        // Twice, quickly, as Claude Code's Esc Esc: go back to an earlier message. Once: to the
+        // session list (a moment later, to tell the two apart).
+        if (escTimer) {
+          clearTimeout(escTimer);
+          escTimer = null;
+          rewindHere();
+          return;
+        }
+        escTimer = setTimeout(() => { escTimer = null; focusSessionList(); }, DOUBLE_ESC_MS);
       }
     });
     setTimeout(autosize, 0);
+
+    // Esc Esc, or the session menu's "Go back to an earlier message": the chosen message comes back
+    // into the box, to change and send again.
+    let escTimer = null;
+    const rewindHere = async () => {
+      const back = await openRewind(it);
+      if (back) showSent(back);
+      ta.focus();
+    };
+    S.rewindHere = { chatId: it.id, run: rewindHere };
+
+    // Ctrl+R: your earlier prompts, from Claude Code's own prompt history; this folder's first.
+    const search = h('div', { class: 'prompt-search', hidden: true });
+    const openPromptSearch = () => {
+      let results = [];
+      let index = 0;
+      let timer = null;
+      const input = h('input', { type: 'search', placeholder: 'Search your earlier prompts', 'aria-label': 'Search your earlier prompts', spellcheck: 'false' });
+      const list = h('div', { class: 'ps-list', role: 'listbox' });
+      const close = () => { clearTimeout(timer); search.hidden = true; clear(search); ta.focus(); };
+      const use = (r) => {
+        // A paste whose text Claude Code no longer keeps is left out, rather than sent as its label.
+        let text = r.text;
+        const texts = {};
+        let missing = 0;
+        for (const [id, body] of Object.entries(r.pastes || {})) {
+          if (typeof body === 'string') texts[id] = body;
+          else {
+            missing++;
+            text = text.replace(new RegExp(`\\[Pasted text #${id}(?: \\+\\d+ lines)?\\]`), '');
+          }
+        }
+        close();
+        pastes.texts = texts;
+        pastes.last = null;
+        show(text);
+        if (missing) toast(`${missing === 1 ? 'A paste in that prompt isn\'t' : 'Pastes in that prompt aren\'t'} saved anymore, so ${missing === 1 ? 'it was' : 'they were'} left out.`);
+      };
+      const draw = () => {
+        clear(list);
+        if (!results.length) list.appendChild(h('p', { class: 'faint small ps-empty' }, input.value.trim() ? 'No earlier prompts match.' : 'No earlier prompts yet.'));
+        results.forEach((r, i) => list.appendChild(h('button', { type: 'button', class: 'ps-item', role: 'option', 'aria-selected': String(i === index), title: r.folder || '', onmousedown: (e) => { e.preventDefault(); use(r); } },
+          h('span', { class: 'ps-text' }, r.text.replace(/\s+/g, ' ')),
+          h('span', { class: 'faint small' }, `${r.folder && it.cwd && r.folder.toLowerCase() === it.cwd.toLowerCase() ? '' : `${shortPath(r.folder || '', 1)} · `}${r.ts ? ago(r.ts) : ''}`))));
+      };
+      const load = async () => {
+        try { results = await api('GET', `/api/prompt-history?q=${encodeURIComponent(input.value)}&cwd=${encodeURIComponent(it.cwd || '')}`); } catch (err) { results = []; toast(err.message, 'error'); }
+        index = 0;
+        draw();
+      };
+      input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(load, 120); });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+        else if (e.key === 'ArrowDown' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r')) { e.preventDefault(); index = Math.min(results.length - 1, index + 1); draw(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); index = Math.max(0, index - 1); draw(); }
+        else if (e.key === 'Enter') { e.preventDefault(); if (results[index]) use(results[index]); }
+      });
+      input.addEventListener('blur', () => setTimeout(() => { if (!search.contains(document.activeElement)) { search.hidden = true; clear(search); } }, 150));
+      clear(search).append(h('div', { class: 'ps-head' }, h('span', { class: 'side-label' }, 'Earlier prompts'), h('span', { class: 'faint small' }, 'Ctrl+R or ↓ for the next, Enter to use it, Esc to close')), input, list);
+      search.hidden = false;
+      input.focus();
+      load();
+    };
 
     const picker = h('input', { type: 'file', accept: IMAGE_TYPES.join(','), multiple: true, hidden: true });
     picker.addEventListener('change', () => { addFiles([...picker.files]); picker.value = ''; });
@@ -2096,11 +2662,15 @@
       h('span', null, 'This chat has ended.'),
       h('button', { type: 'button', class: 'primary small', onclick: () => resumeChat(it) }, 'Resume'));
     const box = h('div', { class: 'composer', dataset: { chat: it.id } },
+      h('div', { class: 'work-panel', hidden: true }),
+      aside,
+      search,
       slash,
       ended,
       tray,
       h('div', { class: 'composer-row' }, ta, h('div', { class: 'composer-buttons' }, attachBtn, sendBtn, interruptBtn), picker),
-      h('div', { class: 'composer-hint' }, 'Enter sends. Shift+Enter adds a line. Type / for commands. Ctrl+V or Alt+V pastes an image. Esc goes to the session list.'));
+      hint,
+      pasteHint);
     // Drop files anywhere on the reply box: images are attached, anything else goes in by path.
     // Every dropped file is handled here; left to Edge, it would open the file in place of Claude Deck.
     box.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); box.classList.add('dropping'); } });
@@ -2120,11 +2690,100 @@
     return box;
   }
 
+  // Shift+Tab in the reply box: the next permission mode, in Claude Code's order.
+  async function cycleMode(it) {
+    if (it.state === 'exited') return;
+    const at = MODE_CYCLE.indexOf(it.permissionMode || 'default');
+    const mode = MODE_CYCLE[(at + 1) % MODE_CYCLE.length];
+    const res = await run("Couldn't change the permission mode", () => api('POST', `/api/chats/${it.id}/mode`, { mode }));
+    if (res) toast(`${MODE_NAMES[mode]} (Shift+Tab for the next)`);
+  }
+
+  // Ctrl+B: what Claude is waiting on (a long command, a subagent) carries on in the background.
+  async function backgroundTasks(it) {
+    const res = await run("Couldn't move it to the background", () => api('POST', `/api/chats/${it.id}/background`));
+    if (res) toast('Running in the background. Claude carries on.');
+  }
+
+  // Esc Esc: pick one of your messages in this chat to go back to before, as Claude Code's rewind
+  // does; Claude starts again from there (a new session, so the conversation as it was stays in
+  // History). Resolves the message to put back in the reply box, or null.
+  function openRewind(it) {
+    const live = findItem(`d:${it.id}`) || it;
+    const mine = S.chat && S.chat.id === it.id
+      ? [...S.chat.items.values()].filter((x) => x.kind === 'user' && x.commandUuid && !x.queued && !x.withdrawn && x.text && x.text.trim()).sort((a, b) => b.n - a.n)
+      : [];
+    if (live.state === 'exited') { toast('This chat has ended. Resume it first.'); return Promise.resolve(null); }
+    if (live.status === 'busy') { toast('Claude is working. Interrupt it first, then go back.'); return Promise.resolve(null); }
+    if (!mine.length) { toast('Nothing to go back to yet: none of your messages in this chat can be rewound.'); return Promise.resolve(null); }
+    return new Promise((resolve) => {
+      let chosen = mine[0].commandUuid;
+      const rows = mine.map((m, i) => h('label', { class: 'rw-row' },
+        h('input', { type: 'radio', name: 'rewind-to', value: m.commandUuid, checked: i === 0, onchange: () => { chosen = m.commandUuid; } }),
+        h('span', { class: 'rw-text' }, Deck.pastedText.collapse(m.text, m.pasted).value.replace(/\s+/g, ' ')),
+        h('span', { class: 'faint small' }, ago(m.ts))));
+      const files = h('input', { type: 'checkbox' });
+      const dlg = h('dialog', { class: 'dialog' },
+        h('form', { method: 'dialog' },
+          h('h2', null, 'Go back to before which message?'),
+          h('p', { class: 'muted' }, 'Claude forgets everything from that message on, and the message comes back to the reply box to change. The conversation as it was stays in History.'),
+          h('div', { class: 'rw-list' }, rows),
+          h('label', { class: 'check' }, files, 'Also put files back as they were before that message'),
+          h('div', { class: 'dialog-actions' },
+            h('button', { value: 'cancel', class: 'ghost' }, 'Cancel'),
+            h('button', { value: 'ok', class: 'primary', autofocus: true }, 'Go back'))));
+      dlg.addEventListener('close', async () => {
+        dlg.remove();
+        if (dlg.returnValue !== 'ok') { resolve(null); return; }
+        const res = await run("Couldn't go back", () => api('POST', `/api/chats/${it.id}/rewind`, { messageId: chosen, files: files.checked }));
+        resolve(res || null);
+      });
+      document.body.appendChild(dlg);
+      dlg.showModal();
+    });
+  }
+
+  // Above the reply box: Claude's to-do list (as Claude Code shows it while it works), what's
+  // running in the background, and Ctrl+B while Claude waits on something.
+  function renderWorkPanel(el, it) {
+    if (!el) return;
+    const todos = Array.isArray(it.todos) && it.todos.some((t) => t.status !== 'completed') ? it.todos : [];
+    const bg = it.state !== 'exited' ? it.bgTasks || [] : [];
+    const fg = it.status === 'busy' ? it.foregroundTasks || 0 : 0;
+    const sig = JSON.stringify([todos, bg, fg]);
+    if (el.dataset.sig === sig) return;
+    el.dataset.sig = sig;
+    clear(el);
+    el.hidden = !todos.length && !bg.length && !fg;
+    if (todos.length) {
+      const done = todos.filter((t) => t.status === 'completed').length;
+      el.appendChild(h('div', { class: 'todo-list' },
+        h('div', { class: 'wp-head' }, h('span', { class: 'side-label' }, 'To do'), h('span', { class: 'faint small' }, `${done} of ${todos.length} done`)),
+        todos.map((t) => h('div', { class: `todo ${t.status}` },
+          h('span', { class: 'todo-box', 'aria-hidden': 'true' }, t.status === 'completed' ? Deck.icon('check', { size: 12 }) : null),
+          h('span', { class: 'todo-text' }, t.status === 'in_progress' ? t.activeForm : t.content),
+          h('span', { class: 'visually-hidden' }, t.status === 'completed' ? ' (done)' : t.status === 'in_progress' ? ' (in progress)' : '')))));
+    }
+    if (fg) {
+      el.appendChild(h('div', { class: 'wp-row' },
+        h('span', { class: 'faint small' }, `Claude is waiting on ${fg === 1 ? 'a task' : `${fg} tasks`}.`),
+        h('button', { type: 'button', class: 'ghost small', onclick: () => backgroundTasks(it) }, 'Run in background (Ctrl+B)')));
+    }
+    for (const t of bg) {
+      el.appendChild(h('div', { class: 'wp-row' },
+        h('span', { class: 'small' }, h('span', { class: 'side-label' }, 'In the background'), ' ', t.description || (t.type === 'local_bash' ? 'A shell command' : 'A subagent')),
+        h('button', { type: 'button', class: 'ghost small', onclick: () => run("Couldn't stop it", () => api('POST', `/api/chats/${it.id}/tasks/${encodeURIComponent(t.taskId)}/stop`)) }, 'Stop')));
+    }
+  }
+
   function updateComposer(it) {
     const c = $('#focus-detail .composer');
     if (!c) return;
     const exited = it.state === 'exited';
     const busy = it.status === 'busy';
+    renderWorkPanel(c.querySelector('.work-panel'), it);
+    // Claude Code's suggested next prompt, in the empty box; Tab takes it.
+    c.querySelector('.composer-input').placeholder = !exited && it.suggestion ? `${it.suggestion}   (Tab to use)` : 'Reply to Claude';
     c.querySelector('.composer-ended').hidden = !exited;
     c.querySelector('.composer-input').disabled = exited;
     c.querySelector('.attach-btn').disabled = exited;
@@ -2138,7 +2797,7 @@
   function composerHint(busy) {
     if (hasQueued()) return 'Claude is working. Your queued messages go when it finishes this step. Press ↑ to take them back and edit them.';
     if (busy) return 'Claude is working. Enter queues your message for when it finishes this step. Interrupt stops it and sends your message now.';
-    return 'Enter sends. Shift+Enter adds a line. ↑ recalls your last message. / for commands. Ctrl+V or Alt+V pastes an image. Esc goes to the session list.';
+    return 'Enter sends. Shift+Enter adds a line. / commands, @ files, ! runs a shell command. ↑ or Ctrl+R recalls earlier prompts. Shift+Tab changes mode. Esc Esc goes back to an earlier message.';
   }
 
   // ---- images --------------------------------------------------------------------------------
@@ -2148,6 +2807,19 @@
   const MAX_IMAGE_SIDE = 2000;
   // A dropped file that isn't an image, as the server keeps it (src/chat.js saveFile).
   const MAX_FILE_BYTES = 40 * 1024 * 1024;
+  // As Claude Code: "paste again to expand" shows for 8 seconds, and not for a paste over 100,000
+  // characters (too long to want in the reply box).
+  const PASTE_HINT_MS = 8000;
+  const PASTE_EXPAND_MAX = 100000;
+  // @ file suggestions: typing settles for this long before asking; an index still building
+  // (an empty first answer) is asked again after the second.
+  const FILE_QUERY_DELAY_MS = 120;
+  const FILE_INDEX_WAIT_MS = 500;
+  // Esc twice, this quickly, in an empty reply box: go back to an earlier message (Claude Code's Esc Esc).
+  const DOUBLE_ESC_MS = 500;
+  // Claude Code's Shift+Tab order.
+  const MODE_CYCLE = ['default', 'acceptEdits', 'plan'];
+  const MODE_NAMES = { default: 'Ask before edits', acceptEdits: 'Accept edits', plan: 'Plan mode' };
 
   function readAsDataUrl(blob) {
     return new Promise((resolve, reject) => {

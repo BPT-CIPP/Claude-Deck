@@ -86,6 +86,32 @@ test('external sessions can be hidden', () => {
   prefs.save({ showExternal: true });
 });
 
+test("an ended session's time is when its conversation was last active, as History has it, even after a restart", () => {
+  const registry = new Registry();
+  for (const e of registry.all()) registry.remove(e.id);
+  const lastActive = Date.now() - 3 * 3600 * 1000;
+  const metas = { [SID]: { sessionId: SID, updatedAt: lastActive, title: 'Old work' } };
+  const history = { get: (sid) => metas[sid] || null, stamp: () => null, tokensFor: () => null };
+  // As chats look straight after the server starts: ended, with the clock just started.
+  const now = Date.now();
+  const chats = { on: () => {}, list: () => [
+    { id: 'ended', kind: 'chat', state: 'exited', status: null, sessionId: SID, statusSince: now },
+    { id: 'never-started', kind: 'chat', state: 'exited', status: null, sessionId: null, statusSince: now },
+    { id: 'running', kind: 'chat', state: 'running', status: 'idle', sessionId: SID, statusSince: now },
+  ] };
+  registry.add({ id: 'tab-ended', title: 't', cwd: 'C:\\work', windowName: 'w', launchedAt: now, expectedSessionId: SID });
+  writeTab('tab-ended', { state: 'exited', claudePid: null, exitCode: 0, updatedAt: now });
+  const live = new Live({ registry, history, chats });
+  live._compute();
+  const since = (id) => live.state.sessions.find((s) => s.id === id).statusSince;
+  assert.strictEqual(since('ended'), lastActive);
+  assert.strictEqual(since('tab-ended'), lastActive);
+  // No transcript to go by: Claude Deck's own clock. Still running: how long in this status.
+  assert.strictEqual(since('never-started'), now);
+  assert.strictEqual(since('running'), now);
+  registry.remove('tab-ended');
+});
+
 test('prefs reject unknown keys, wrong types and bad enum values', () => {
   assert.throws(() => prefs.save({ nope: 1 }), /Unknown preference/);
   assert.throws(() => prefs.save({ notifySound: 'yes' }), /wrong type/);

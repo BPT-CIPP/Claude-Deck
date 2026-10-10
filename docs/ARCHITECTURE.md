@@ -37,7 +37,8 @@ Edge app window ──HTTP + server-sent events (per-install token)──► nod
   last pass) and caches the index in `history-cache.json`.
 - **The page** (`public/`) is plain scripts on `window.Deck` with no framework and no build:
   `lib.js` (helpers), `app.js` (session list and detail, chat, history, palette, preferences),
-  `settings-ui.js` (the Claude Code Settings editor), `spinner-verbs.js` and `tick-worker.js`.
+  `settings-ui.js` (the Claude Code Settings editor), `markdown.js` (reads the Markdown in replies),
+  `pasted-text.js` (long pastes in the reply box), `spinner-verbs.js` and `tick-worker.js`.
 
 ## Code layout
 
@@ -46,7 +47,11 @@ Start-ClaudeDeck.ps1    launcher; -Install / -Uninstall; the sign-in task and it
 src/server.js           HTTP API + events + static files; single instance via runtime.json
 src/chat.js             in-app chats: stream-json, permission/question answers, images, queue vs
                         interrupt-and-send, subagent (task_*) tracking, model, effort and permission
-                        mode, plugin reloads, sleep left out of working time
+                        mode, plugin reloads, sleep left out of working time; the terminal's own
+                        features (MCP servers, @ files, /btw, Ctrl+B, Esc Esc rewind, plan approval,
+                        thinking, edit diffs, the to-do list, fast mode)
+src/shell-mode.js       a chat's !command, in Windows PowerShell
+src/prompt-history.js   Ctrl+R: Claude Code's own prompt history (history.jsonl, paste cache), read only
 src/live.js             joins chats + terminal registry + tab status + sessions/<pid>.json; notify events
 src/history.js          incremental transcript indexer (titles, cost, token usage by hour, context
                         size; subagent transcripts on request) + transcript reader
@@ -65,8 +70,8 @@ src/app-install.js      finds the installed Edge app; sign-in task status and to
 src/models.js           the model menus: Claude Code's own model list (versions), kept per Claude Code version
 src/claude-locate.js    finds claude.exe; its version, auto-update status and `claude update`
 src/prefs.js, registry.js, paths.js, util.js
-public/                 index.html, app.css, lib.js, app.js, settings-ui.js, spinner-verbs.js,
-                        tick-worker.js, manifest.webmanifest, sw.js, offline.html, icons/, vendor/
+public/                 index.html, app.css, lib.js, markdown.js, pasted-text.js, app.js, settings-ui.js,
+                        spinner-verbs.js, tick-worker.js, manifest.webmanifest, sw.js, offline.html, icons/, vendor/
 tools/check-syntax.js   parses every .js file, and Start-ClaudeDeck.ps1 with Windows PowerShell 5.1
 tools/sandbox.js        a throwaway Claude Deck against a mock API, for testing (see TESTING.md)
 tools/make-icons.js     generates public/icons/*.png and claude-deck.ico (pure Node)
@@ -82,7 +87,8 @@ test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes),
   attack surface reduction rule that blocks executables that aren't prevalent, and a user can't make
   exceptions. Electron and node-pty were tried and blocked. Everything runs on `node.exe`, `wt.exe`,
   Edge, `claude.exe` and Windows built-ins (`explorer.exe`, `powershell.exe` (also to check a
-  process's start time before ending an outside session), `schtasks.exe`, `where.exe`, `reg.exe`
+  process's start time before ending an outside session, and to run a chat's `!` commands, rather
+  than Git Bash, whose helpers that rule blocks), `schtasks.exe`, `where.exe`, `reg.exe`
   (the billing guard reads Windows' stored environment and the Claude Code policy key),
   `choice.exe` for the tab host's resume prompt, and `conhost.exe --headless`, which the sign-in task
   runs its PowerShell supervisor under: `-WindowStyle Hidden` doesn't hide a console that Windows

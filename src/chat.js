@@ -20,7 +20,8 @@ const paths = require('./paths');
 const prefsStore = require('./prefs');
 const { isScript } = require('./claude-locate');
 const { normalizeOptions, buildClaudeArgs, displayCommand, requireClaude, requireFolder, preflight, PERMISSION_MODES, EFFORTS } = require('./launcher');
-const { readTranscript } = require('./history');
+const { readTranscript, UUID_RE } = require('./history');
+const { runPowerShell } = require('./shell-mode');
 const { SubagentLog } = require('./subagents');
 const { requirePlanBilling } = require('./billing');
 const { readJson, writeJsonAtomic, parseArgString, clip, UserError } = require('./util');
@@ -40,6 +41,70 @@ const SLEEP_GAP_MS = 15000;
 // How long a plugin reload keeps trying for Claude to notice the settings change, and how often.
 const PLUGIN_RELOAD_WAIT_MS = 8000;
 const PLUGIN_RELOAD_RETRY_MS = 750;
+const MCP_PENDING_READS = 10;
+const MCP_PENDING_RETRY_MS = 3000;
+const MCP_RECONNECT_WAIT_MS = 60000; // Claude Code waits up to 30 s for a server (MCP_TIMEOUT)
+
+// What the page gets of an mcp_status entry (docs/CLAUDE-CODE-INTERNALS.md, "MCP servers"). Its
+// config (command, arguments, environment, headers) can hold secrets, so it stays here.
+function mcpServer(s) {
+  const o = s && typeof s === 'object' ? s : {};
+  const info = o.serverInfo && typeof o.serverInfo === 'object' ? o.serverInfo : {};
+  return {
+    name: String(o.name || ''),
+    status: typeof o.status === 'string' ? o.status : 'failed',
+    error: typeof o.error === 'string' ? clip(o.error, 300) : null,
+    scope: typeof o.scope === 'string' ? o.scope : null,
+    source: typeof o.source === 'string' ? o.source : null,
+    version: typeof info.version === 'string' ? info.version : null,
+    tools: Array.isArray(o.tools) ? o.tools.slice(0, 500).map((t) => String((t && t.name) || '')).filter(Boolean) : null,
+  };
+}
+
+// An edit's change, for the conversation's diff view, from the result Claude Code reports with the
+// tool call (tool_use_result: structuredPatch hunks of `diff -u` lines, or a new file's content).
+// docs/CLAUDE-CODE-INTERNALS.md, "Tool results".
+const MAX_DIFF_LINES = 400;
+function editDiff(name, r) {
+  if (!['Edit', 'MultiEdit', 'Write'].includes(name) || !r || typeof r !== 'object') return null;
+  let hunks = Array.isArray(r.structuredPatch) ? r.structuredPatch : [];
+  if (!hunks.length && r.type === 'create' && typeof r.content === 'string') {
+    const lines = r.content.replace(/\n$/, '').split('\n');
+    hunks = [{ oldStart: 0, newStart: 1, lines: lines.map((l) => `+${l}`) }];
+  }
+  let budget = MAX_DIFF_LINES;
+  let truncated = false;
+  const out = [];
+  for (const h of hunks) {
+    if (!h || !Array.isArray(h.lines)) continue;
+    if (budget <= 0) { truncated = true; break; }
+    const lines = h.lines.slice(0, budget).map((l) => clip(String(l), 500));
+    if (lines.length < h.lines.length) truncated = true;
+    budget -= lines.length;
+    out.push({ oldStart: Number(h.oldStart) || 0, newStart: Number(h.newStart) || 0, lines });
+  }
+  if (!out.length) return null;
+  return { file: typeof r.filePath === 'string' ? r.filePath : null, hunks: out, truncated, created: r.type === 'create' };
+}
+
+// Claude's to-do list, as Claude Code keeps it from its TodoWrite calls, or from TaskCreate (whose
+// result names the new task, "Task #3 created successfully") and TaskUpdate calls.
+const TODO_STATUSES = ['pending', 'in_progress', 'completed'];
+const todoItem = (content, status, activeForm) => ({
+  content: clip(String(content || ''), 300),
+  status: TODO_STATUSES.includes(status) ? status : 'pending',
+  activeForm: clip(String(activeForm || content || ''), 300),
+});
+function todoCall(name, input) {
+  const i = input && typeof input === 'object' ? input : {};
+  if (name === 'TodoWrite' && Array.isArray(i.todos)) return { kind: 'write', todos: i.todos.slice(0, 100) };
+  if (name === 'TaskCreate' && i.subject) return { kind: 'create', subject: i.subject, activeForm: i.activeForm };
+  if (name === 'TaskUpdate' && (i.taskId || i.task_id)) return { kind: 'update', taskId: String(i.taskId || i.task_id), status: i.status, subject: i.subject, activeForm: i.activeForm || i.active_form };
+  return null;
+}
+
+// Approving a plan (ExitPlanMode) also sets how Claude carries on, as Claude Code's own choices do.
+const PLAN_MODES = ['acceptEdits', 'default'];
 
 const TOKEN_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 const zeroTotals = () => ({ costUSD: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
@@ -129,10 +194,37 @@ function safeFileName(name) {
   return base && !/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(base) ? base : 'file';
 }
 
-// A message to send: a string, or { text, images: [{ mediaType, data, thumb }] }.
+// Where long pastes sit in a message ([start, end] pairs, in order), so the chat can show them as
+// Claude Code does, "[Pasted text #1 +123 lines]" (public/pasted-text.js). Anything that doesn't
+// fit the text is dropped, and the message shows in full.
+const MAX_PASTES = 100;
+function pastedRanges(list, text) {
+  if (!Array.isArray(list) || list.length > MAX_PASTES) return [];
+  let last = 0;
+  for (const r of list) {
+    if (!Array.isArray(r) || r.length !== 2 || !Number.isInteger(r[0]) || !Number.isInteger(r[1]) || r[0] < last || r[1] <= r[0] || r[1] > text.length) return [];
+    last = r[1];
+  }
+  return list.map(([start, end]) => [start, end]);
+}
+
+// The message with each long paste as its placeholder, numbered from 1.
+function withPlaceholders(text, pasted) {
+  let out = '';
+  let at = 0;
+  pasted.forEach(([start, end], i) => {
+    const breaks = (text.slice(start, end).match(/\n/g) || []).length;
+    out += `${text.slice(at, start)}[Pasted text #${i + 1}${breaks ? ` +${breaks} lines` : ''}]`;
+    at = end;
+  });
+  return out + text.slice(at);
+}
+
+// A message to send: a string, or { text, images: [{ mediaType, data, thumb }], pasted: [[start, end]] }.
 function normalizeMessage(input) {
   const raw = typeof input === 'string' ? { text: input } : input && typeof input === 'object' ? input : {};
   const text = typeof raw.text === 'string' ? raw.text.slice(0, 100000) : '';
+  const pasted = pastedRanges(raw.pasted, text);
   const list = Array.isArray(raw.images) ? raw.images : [];
   if (list.length > MAX_IMAGES) throw new UserError(`Send at most ${MAX_IMAGES} images at a time.`);
   const images = list.map((img, i) => {
@@ -145,7 +237,7 @@ function normalizeMessage(input) {
     const thumb = typeof img.thumb === 'string' && img.thumb.length <= 200000 && THUMB.test(img.thumb) ? img.thumb : null;
     return { mediaType, data, thumb };
   });
-  return { text, images };
+  return { text, images, pasted };
 }
 
 class ChatManager extends EventEmitter {
@@ -217,6 +309,16 @@ class ChatManager extends EventEmitter {
       seq: 0,
       nextItem: 1,
       commands: [],
+      mcp: null, // [{ name, status }]: the MCP servers, from init and mcp_status
+      todos: null, // Claude's to-do list: [{ content, status, activeForm }]
+      taskItems: new Map(), // TaskCreate's numbered tasks: id -> todo item
+      todoCalls: new Map(), // tool_use id -> a to-do call waiting for its result
+      suggestion: null, // Claude Code's suggested next prompt (prompt_suggestion)
+      fast: null, // { state: 'off'|'cooldown'|'on', reason } fast mode, as Claude Code reports it
+      foreground: new Map(), // task_id -> running tasks Claude waits for (Ctrl+B backgrounds them)
+      bgTasks: [], // [{ taskId, type, description }] running in the background (background_tasks_changed)
+      silent: new Set(), // uuids of messages that don't start a turn (shell mode's output)
+      silentTurns: 0, // results still to come for those
       tasks: new Map(), // subagents: task_id -> task
       agentLogs: new Map(), // task_id -> SubagentLog (its transcript, read as it grows)
       queuedImages: new Map(), // commandUuid -> full images of a message still waiting, so it can be taken back
@@ -339,7 +441,9 @@ class ChatManager extends EventEmitter {
     proc.on('error', (err) => this._onExit(chat, proc, null, err.message));
     proc.on('exit', (code) => this._onExit(chat, proc, code, null));
     this._changed(chat);
-    this._request(chat, { subtype: 'initialize', hooks: null }, 120000).then((res) => {
+    // promptSuggestions: Claude Code's suggested next prompt after each turn, when the person's own
+    // setting (promptSuggestionEnabled) allows, as in the terminal.
+    this._request(chat, { subtype: 'initialize', hooks: null, promptSuggestions: true }, 120000).then((res) => {
       // Claude sends system/init only once a message arrives, so a freshly resumed chat that is
       // waiting for you would otherwise look stuck at "Starting". The handshake means it's ready.
       if (chat.proc === proc && chat.state === 'starting') {
@@ -350,8 +454,27 @@ class ChatManager extends EventEmitter {
       this.emit('item', { id: chat.id, meta: true });
       // The models this Claude Code offers, with their versions, for the model menus (src/models.js).
       if (Array.isArray(res.models)) this.emit('models', res.models);
+      if (res.fast_mode_state) chat.fast = { state: String(res.fast_mode_state), reason: res.fast_mode_disabled_reason ? String(res.fast_mode_disabled_reason) : null };
       this._readContext(chat);
+      this._readMcp(chat);
     }).catch(() => {});
+  }
+
+  // The MCP servers' status, for the header's button. Servers connect in the background after
+  // start-up, so while any is still pending it's read again a few times.
+  _readMcp(chat, tries = MCP_PENDING_READS) {
+    if (!chat.proc) return;
+    this._request(chat, { subtype: 'mcp_status' }, 10000).then((r) => {
+      this._setMcp(chat, (r.mcpServers || []).map(mcpServer));
+      if (tries > 1 && chat.mcp.some((s) => s.status === 'pending')) setTimeout(() => this._readMcp(chat, tries - 1), MCP_PENDING_RETRY_MS);
+    }).catch(() => {});
+  }
+
+  _setMcp(chat, servers) {
+    const next = servers.map((s) => ({ name: s.name, status: s.status }));
+    if (JSON.stringify(next) === JSON.stringify(chat.mcp)) return;
+    chat.mcp = next;
+    this._changed(chat);
   }
 
   // How full the context window is. "summary" answers from the last reply's usage and local
@@ -413,6 +536,11 @@ class ChatManager extends EventEmitter {
     chat.requests.clear();
     for (const p of chat.pending.values()) this._resolveItem(chat, p.requestId, 'cancelled', 'Claude ended before this was answered.');
     chat.pending.clear();
+    chat.foreground.clear();
+    chat.bgTasks = [];
+    chat.suggestion = null;
+    chat.silent.clear();
+    chat.silentTurns = 0;
     // Subagents run inside Claude's process, so they end with it.
     for (const t of chat.tasks.values()) {
       if (t.status === 'running') { t.status = 'stopped'; t.endedAt = Date.now(); }
@@ -484,9 +612,16 @@ class ChatManager extends EventEmitter {
           if (m.session_id) chat.sessionId = m.session_id;
           if (m.model) chat.model = m.model;
           if (m.permissionMode) chat.permissionMode = m.permissionMode;
+          if (Array.isArray(m.mcp_servers)) chat.mcp = m.mcp_servers.map(mcpServer).map((s) => ({ name: s.name, status: s.status }));
           this._changed(chat);
         } else if (/^task_(started|progress|updated|notification)$/.test(m.subtype || '')) {
+          this._onForeground(chat, m);
           this._onTask(chat, m);
+        } else if (m.subtype === 'background_tasks_changed') {
+          // What's running in the background now (shell commands and subagents), for Stop.
+          chat.bgTasks = (Array.isArray(m.tasks) ? m.tasks : []).filter((t) => t && t.task_id).slice(0, 50)
+            .map((t) => ({ taskId: String(t.task_id), type: String(t.task_type || ''), description: clip(String(t.description || ''), 200) }));
+          this._changed(chat);
         } else if (m.subtype === 'status' && m.status === 'compacting') {
           this._push(chat, { kind: 'note', text: 'Compacting the conversation…' });
         } else if (m.subtype === 'compact_boundary') {
@@ -500,6 +635,9 @@ class ChatManager extends EventEmitter {
         // /clear: Claude starts a new conversation (a new session id arrives with the next init).
         // The current cost and tokens start again at zero.
         chat.context = null;
+        chat.todos = null;
+        chat.taskItems.clear();
+        chat.suggestion = null;
         if (prefsStore.load().clearChatOnClear) this._clearItems(chat);
         this._push(chat, { kind: 'note', text: 'Context cleared. Claude starts a new conversation from here.' });
         this._changed(chat);
@@ -514,8 +652,13 @@ class ChatManager extends EventEmitter {
           if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
             this._push(chat, { kind: 'assistant', text: clip(b.text, 30000) });
             chat.lastReply = clip(b.text.trim().replace(/\s+/g, ' '), 300);
+          } else if (b.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.trim()) {
+            // Shown collapsed, as Claude Code shows it until Ctrl+O.
+            this._push(chat, { kind: 'thinking', text: clip(b.thinking, 20000) });
           } else if (b.type === 'tool_use') {
             this._push(chat, { kind: 'tool', toolUseId: b.id, name: String(b.name || 'tool'), detail: toolDetail(b.input), input: clipJson(b.input) });
+            const todo = todoCall(b.name, b.input);
+            if (todo) chat.todoCalls.set(b.id, todo);
           }
         }
         this._changed(chat);
@@ -527,13 +670,22 @@ class ChatManager extends EventEmitter {
           break;
         }
         if (!m.message || !Array.isArray(m.message.content)) break;
+        // tool_use_result is the tool's own output (an edit's patch, say); it comes with one result.
+        const results = m.message.content.filter((b) => b.type === 'tool_result');
         for (const b of m.message.content) {
           if (b.type === 'tool_result') {
             const it = chat.items.findLast((x) => x.kind === 'tool' && x.toolUseId === b.tool_use_id);
             if (it) {
               it.result = clip(resultText(b.content), 2000);
               it.isError = b.is_error === true;
+              const diff = results.length === 1 && !it.isError ? editDiff(it.name, m.tool_use_result) : null;
+              if (diff) it.diff = diff;
               this._touch(chat, it);
+            }
+            const todo = chat.todoCalls.get(b.tool_use_id);
+            if (todo) {
+              chat.todoCalls.delete(b.tool_use_id);
+              if (b.is_error !== true) this._applyTodo(chat, todo, resultText(b.content));
             }
           } else if (b.type === 'text' && /^\[Request interrupted/.test(b.text || '')) {
             this._push(chat, { kind: 'note', text: 'Stopped.' });
@@ -545,6 +697,13 @@ class ChatManager extends EventEmitter {
         chat.queued = Number.isInteger(m.queued_turn_count) ? m.queued_turn_count : 0;
         chat.busy = chat.queued > 0;
         if (typeof m.total_cost_usd === 'number') chat.costUSD = m.total_cost_usd;
+        if (m.fast_mode_state) chat.fast = { state: String(m.fast_mode_state), reason: m.fast_mode_disabled_reason ? String(m.fast_mode_disabled_reason) : null };
+        // A shell mode message (no turn) still gets a result; it isn't a reply, so nothing is shown.
+        if (chat.silentTurns > 0) {
+          chat.silentTurns--;
+          this._changed(chat);
+          break;
+        }
         const turn = this._count(chat, m);
         const aborted = m.terminal_reason === 'aborted_streaming' || m.subtype === 'error_during_execution';
         if (m.is_error && !aborted) {
@@ -578,6 +737,11 @@ class ChatManager extends EventEmitter {
         // "started" means Claude has picked the message up, so it's no longer waiting in line.
         // Either way, once it's out of the queue its images needn't be kept for taking it back.
         if (m.state !== 'queued') chat.queuedImages.delete(m.command_uuid);
+        if (chat.silent.has(m.command_uuid)) {
+          if (m.state === 'started') chat.silentTurns++;
+          else if (m.state !== 'queued') chat.silent.delete(m.command_uuid);
+          break;
+        }
         if (m.state === 'started') {
           const it = chat.items.findLast((x) => x.kind === 'user' && x.commandUuid === m.command_uuid);
           if (it && it.queued) {
@@ -585,6 +749,11 @@ class ChatManager extends EventEmitter {
             this._touch(chat, it);
           }
         }
+        break;
+      case 'prompt_suggestion':
+        // Claude Code's guess at your next prompt, shown in the empty reply box (Tab takes it).
+        chat.suggestion = clip(String(m.suggestion || '').trim(), 500) || null;
+        this._changed(chat);
         break;
       case 'control_cancel_request':
         if (chat.pending.has(m.request_id)) {
@@ -618,16 +787,20 @@ class ChatManager extends EventEmitter {
       return;
     }
     const question = r.tool_name === 'AskUserQuestion';
+    // Claude's plan, at the end of plan mode: shown in full, to approve or send back.
+    const plan = r.tool_name === 'ExitPlanMode';
     const p = {
       requestId: m.request_id,
       toolName: String(r.tool_name || 'tool'),
       input: r.input || {},
       suggestions: Array.isArray(r.permission_suggestions) ? r.permission_suggestions : [],
       question,
+      plan,
     };
     chat.pending.set(p.requestId, p);
     this._push(chat, {
-      kind: question ? 'question' : 'permission',
+      kind: question ? 'question' : plan ? 'plan' : 'permission',
+      plan: plan ? clip(String((p.input && p.input.plan) || ''), 30000) : undefined,
       requestId: p.requestId,
       toolName: p.toolName,
       displayName: String(r.display_name || r.tool_name || 'tool'),
@@ -644,7 +817,9 @@ class ChatManager extends EventEmitter {
     this._changed(chat);
   }
 
-  // decision: { action: 'allow'|'always'|'deny', suggestion?, message?, answers? }
+  // decision: { action: 'allow'|'always'|'deny', suggestion?, message?, answers?, mode? }. For a
+  // plan, allow takes mode: 'acceptEdits' (Claude edits without asking) or 'default' (it asks), and
+  // deny keeps Claude planning, with message as what to change.
   respond(id, requestId, decision) {
     const chat = this._get(id);
     const p = chat.pending.get(requestId);
@@ -653,9 +828,17 @@ class ChatManager extends EventEmitter {
     let response;
     let label;
     if (d.action === 'deny') {
-      const message = typeof d.message === 'string' && d.message.trim() ? d.message.trim().slice(0, 4000) : (p.question ? 'The user dismissed the question.' : 'The user denied this in Claude Deck.');
+      const note = typeof d.message === 'string' && d.message.trim() ? d.message.trim().slice(0, 4000) : '';
+      const message = note || (p.question ? 'The user dismissed the question.' : p.plan ? 'The user wants to keep planning. Stay in plan mode.' : 'The user denied this in Claude Deck.');
       response = { behavior: 'deny', message };
-      label = p.question ? 'Dismissed' : `Denied${d.message && d.message.trim() ? `: ${clip(d.message.trim(), 200)}` : ''}`;
+      label = p.question ? 'Dismissed' : `${p.plan ? 'Kept planning' : 'Denied'}${note ? `: ${clip(note, 200)}` : ''}`;
+    } else if (p.plan) {
+      // Verified with 2.1.284: the setMode permission update leaves plan mode for that mode.
+      const mode = PLAN_MODES.includes(d.mode) ? d.mode : 'default';
+      response = { behavior: 'allow', updatedInput: p.input, updatedPermissions: [{ type: 'setMode', mode, destination: 'session' }] };
+      chat.permissionMode = mode;
+      chat.options.permissionMode = mode === 'default' ? '' : mode;
+      label = mode === 'acceptEdits' ? 'Approved: Claude makes its edits without asking' : 'Approved: Claude asks before each edit';
     } else if (p.question) {
       const answers = {};
       const src = d.answers && typeof d.answers === 'object' ? d.answers : {};
@@ -688,7 +871,7 @@ class ChatManager extends EventEmitter {
   // While Claude is working the message is queued; Claude reads it when the current step ends.
   send(id, input) {
     const chat = this._get(id);
-    const { text, images } = normalizeMessage(input);
+    const { text, images, pasted } = normalizeMessage(input);
     if (!text.trim() && !images.length) throw new UserError('Type a message or attach an image first.');
     const content = images.length
       ? [...images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } })), ...(text.trim() ? [{ type: 'text', text }] : [])]
@@ -700,9 +883,10 @@ class ChatManager extends EventEmitter {
     const wasBusy = chat.busy;
     if (chat.busy) chat.queued++;
     chat.busy = true;
+    chat.suggestion = null;
     const imageNote = images.length ? `[${images.length} image${images.length === 1 ? '' : 's'}]` : '';
-    chat.lastPrompt = clip(`${imageNote} ${text.trim().replace(/\s+/g, ' ')}`.trim(), 300);
-    this._push(chat, { kind: 'user', text, images: images.map((img) => img.thumb).filter(Boolean), imageCount: images.length, commandUuid: uuid, queued: wasBusy });
+    chat.lastPrompt = clip(`${imageNote} ${withPlaceholders(text, pasted).trim().replace(/\s+/g, ' ')}`.trim(), 300);
+    this._push(chat, { kind: 'user', text, ...(pasted.length ? { pasted } : {}), images: images.map((img) => img.thumb).filter(Boolean), imageCount: images.length, commandUuid: uuid, queued: wasBusy });
     // Only while it waits in line: if it's taken back to edit, its images go back with it.
     if (wasBusy && images.length) chat.queuedImages.set(uuid, images.map((img) => ({ mediaType: img.mediaType, data: img.data, thumb: img.thumb })));
     this._changed(chat);
@@ -743,7 +927,7 @@ class ChatManager extends EventEmitter {
         res = await this._request(chat, { subtype: 'cancel_async_message', message_uuid: it.commandUuid });
       } catch { /* this Claude Code can't take it back; leave it queued */ }
       if (!res || res.cancelled !== true) continue;
-      messages.push({ text: it.text, images });
+      messages.push({ text: it.text, images, pasted: it.pasted || [] });
       chat.queuedImages.delete(it.commandUuid);
       it.queued = false;
       it.withdrawn = true;
@@ -772,12 +956,204 @@ class ChatManager extends EventEmitter {
     return { ok: true };
   }
 
+  // A subagent, or a shell command running in the background.
   async stopTask(id, taskId) {
     const chat = this._get(id);
     const task = chat.tasks.get(taskId);
-    if (!task) throw new UserError('That subagent is no longer listed.', 404);
-    if (task.status !== 'running') return { ok: true };
+    const background = chat.bgTasks.some((t) => t.taskId === taskId);
+    if (!task && !background) throw new UserError('That task is no longer listed.', 404);
+    if (task && task.status !== 'running' && !background) return { ok: true };
     await this._request(chat, { subtype: 'stop_task', task_id: taskId });
+    return { ok: true };
+  }
+
+  // Ctrl+B in Claude Code: what Claude is waiting on (a shell command, a subagent) carries on in the
+  // background, and Claude carries on with the turn. Verified with 2.1.284.
+  async background(id) {
+    const chat = this._get(id);
+    if (!chat.proc) throw new UserError('This chat has ended.');
+    await this._request(chat, { subtype: 'background_tasks' });
+    return { ok: true };
+  }
+
+  // The running tasks Claude waits for, so the page can offer to background them.
+  _onForeground(chat, m) {
+    const id = m.task_id;
+    if (!id) return;
+    const before = chat.foreground.size;
+    if (m.subtype === 'task_started' && m.is_backgrounded === false) {
+      chat.foreground.set(id, { taskId: id, type: String(m.task_type || ''), description: clip(String(m.description || ''), 200) });
+    }
+    const ended = (m.patch && m.patch.status && m.patch.status !== 'running') || m.subtype === 'task_notification';
+    if (ended || (m.patch && m.patch.is_backgrounded === true)) chat.foreground.delete(id);
+    if (chat.foreground.size !== before) this._changed(chat);
+  }
+
+  _applyTodo(chat, call, resultText) {
+    if (call.kind === 'write') {
+      chat.todos = call.todos.map((t) => todoItem(t && t.content, t && t.status, t && t.activeForm));
+    } else if (call.kind === 'create') {
+      const m = /^Task #(\S+) created successfully/.exec(resultText);
+      if (!m) return;
+      chat.taskItems.set(m[1], todoItem(call.subject, 'pending', call.activeForm));
+      chat.todos = [...chat.taskItems.values()];
+    } else if (call.kind === 'update') {
+      const t = chat.taskItems.get(call.taskId);
+      if (!t) return;
+      if (call.status === 'deleted') chat.taskItems.delete(call.taskId);
+      else {
+        if (TODO_STATUSES.includes(call.status)) t.status = call.status;
+        if (call.subject) t.content = clip(String(call.subject), 300);
+        if (call.activeForm) t.activeForm = clip(String(call.activeForm), 300);
+      }
+      chat.todos = [...chat.taskItems.values()];
+    }
+    this._changed(chat);
+  }
+
+  // The transcript entry just before one of your messages (its parentUuid): null when it's the
+  // conversation's first, undefined when it isn't in the current conversation's transcript.
+  _entryBefore(chat, messageId) {
+    const file = chat.sessionId && this.history ? this.history.fileFor(chat.sessionId) : null;
+    if (!file) return undefined;
+    let text;
+    try { text = fs.readFileSync(file, 'utf8'); } catch { return undefined; }
+    for (const line of text.split('\n')) {
+      if (!line.includes(messageId)) continue;
+      try {
+        const e = JSON.parse(line);
+        if (e.uuid === messageId) return e.parentUuid || null;
+      } catch { /* a partly written last line */ }
+    }
+    return undefined;
+  }
+
+  // Esc Esc in Claude Code: go back to before one of your messages, to change it. There's no request
+  // for it in stream-json, so Claude starts again from the transcript up to the entry before that
+  // message (--resume-session-at) as a new session (--fork-session), which leaves the conversation as
+  // it was in History. files: also put files back how they were before it (rewind_files). Verified
+  // with 2.1.284 (docs/CLAUDE-CODE-INTERNALS.md, "Rewinding"). Returns the message, to edit.
+  async rewind(id, messageId, { files = false } = {}) {
+    const chat = this._get(id);
+    if (typeof messageId !== 'string' || !UUID_RE.test(messageId)) throw new UserError('Choose one of your messages.');
+    const at = chat.items.findIndex((x) => x.kind === 'user' && x.commandUuid === messageId);
+    if (at < 0) throw new UserError('That message is no longer in this chat.', 404);
+    if (!chat.proc) throw new UserError('This chat has ended. Resume it first.');
+    if (chat.busy) throw new UserError('Claude is working in this chat. Interrupt it first, then go back.', 409);
+    if (this.history) await this.history.refresh();
+    const before = this._entryBefore(chat, messageId);
+    if (before === undefined) throw new UserError("That message isn't in this conversation's saved transcript (a message from before /clear isn't), so Claude Code can't go back to it.", 409);
+    const claude = requireClaude(prefsStore.load());
+    requireFolder(chat.cwd);
+    requirePlanBilling(chat.cwd, { args: parseArgString(chat.options && chat.options.extraArgs) });
+    if (files) await this.rewindFiles(id, messageId, false);
+    const message = chat.items[at];
+    await this.end(id, { keep: true });
+    // The new conversation carries on the old one's running totals, as a fork does.
+    const fromSession = chat.sessionId;
+    let args;
+    if (before) {
+      ({ args } = buildClaudeArgs(normalizeOptions({ ...chat.options, cwd: chat.cwd, mode: 'resume', resumeId: fromSession, fork: true }), null));
+      args.push('--resume-session-at', before);
+      chat.forkedFrom = fromSession;
+    } else {
+      // Back to before the first message: a new conversation.
+      chat.sessionId = crypto.randomUUID();
+      ({ args } = buildClaudeArgs(normalizeOptions({ ...chat.options, cwd: chat.cwd, mode: 'new' }), chat.sessionId));
+    }
+    chat.items = chat.items.slice(0, at);
+    chat.todos = null;
+    chat.taskItems.clear();
+    chat.suggestion = null;
+    chat.note = null;
+    chat.exitCode = null;
+    this.emit('item', { id: chat.id, reset: true });
+    this._push(chat, { kind: 'note', text: `Went back to before your message${files ? ', and put the files back as they were then' : ''}. The conversation as it was is still in History.` });
+    this._spawn(chat, claude.path, args);
+    this._save();
+    return { text: message.text, pasted: message.pasted || [] };
+  }
+
+  // "!command" in the reply box, as in Claude Code's terminal: runs it now (src/shell-mode.js) and
+  // adds the command and its output to the conversation the way the terminal does, as <bash-input>
+  // and <bash-stdout>/<bash-stderr> text in a message that starts no turn (shouldQuery: false).
+  // Claude reads it with your next message. Verified with 2.1.284.
+  async runShell(id, command) {
+    const chat = this._get(id);
+    const cmd = typeof command === 'string' ? command.trim().slice(0, 10000) : '';
+    if (!cmd) throw new UserError('Type a command after the !.');
+    if (!chat.proc) throw new UserError('This chat has ended. Resume it to run commands in it.');
+    requireFolder(chat.cwd);
+    const item = { kind: 'shell', command: cmd, running: true };
+    this._push(chat, item);
+    let r;
+    try {
+      r = await runPowerShell(cmd, chat.cwd);
+    } catch (err) {
+      Object.assign(item, { running: false, stderr: `PowerShell could not start: ${err.message}`, exitCode: null });
+      this._touch(chat, item);
+      throw new UserError(`PowerShell could not start: ${err.message}`, 500);
+    }
+    const stderr = r.timedOut ? `${r.stderr ? `${r.stderr}\n` : ''}Stopped after 2 minutes.` : r.stderr;
+    Object.assign(item, { running: false, stdout: r.stdout, stderr, exitCode: r.exitCode });
+    this._touch(chat, item);
+    if (chat.proc) {
+      const uuid = crypto.randomUUID();
+      chat.silent.add(uuid);
+      this._write(chat, {
+        type: 'user',
+        uuid,
+        shouldQuery: false,
+        message: { role: 'user', content: [{ type: 'text', text: `<bash-input>${cmd}</bash-input>` }, { type: 'text', text: `<bash-stdout>${r.stdout}</bash-stdout><bash-stderr>${stderr}</bash-stderr>` }] },
+        parent_tool_use_id: null,
+        session_id: chat.sessionId || 'default',
+      });
+    }
+    return { exitCode: r.exitCode };
+  }
+
+  // @ in the reply box: files matching what's typed, ranked as Claude Code's own @ list ranks them.
+  async fileSuggestions(id, query) {
+    const chat = this._get(id);
+    if (!chat.proc) return { suggestions: [] };
+    const r = await this._request(chat, { subtype: 'file_suggestions', query: String(query || '').slice(0, 200) }, 10000);
+    const list = Array.isArray(r.suggestions) ? r.suggestions : [];
+    return { suggestions: list.slice(0, 50).map((s) => String((s && s.path) || '')).filter(Boolean) };
+  }
+
+  // /btw: a quick question about the conversation, answered aside; neither it nor the answer goes
+  // into the conversation. Verified with 2.1.284: { response }.
+  async sideQuestion(id, question) {
+    const chat = this._get(id);
+    const q = typeof question === 'string' ? question.trim().slice(0, 4000) : '';
+    if (!q) throw new UserError('Type a question after /btw.');
+    if (!chat.proc) throw new UserError('This chat has ended. Resume it to ask about it.');
+    const r = await this._request(chat, { subtype: 'side_question', question: q }, 180000);
+    return { question: q, answer: clip(String((r && r.response) || ''), 20000) };
+  }
+
+  // Signing in to an MCP server that needs it, as /mcp does: Claude Code answers with the address
+  // to open, and finishes the sign-in itself when the browser comes back to it. The response shape
+  // is from the code inside claude.exe 2.1.284; only its errors were seen in a probe.
+  async authenticateMcp(id, name) {
+    const chat = this._get(id);
+    if (!chat.proc) throw new UserError('This chat has ended. Resume it to change its MCP servers.');
+    if (typeof name !== 'string' || !name) throw new UserError('Which MCP server?');
+    const r = await this._request(chat, { subtype: 'mcp_authenticate', serverName: name }, 60000);
+    const authUrl = typeof r.authUrl === 'string' && /^https:\/\//i.test(r.authUrl) ? r.authUrl : null;
+    return { authUrl, requiresUserAction: r.requiresUserAction !== false, callbackExpected: r.callbackExpected === true };
+  }
+
+  // Fast mode bills Claude's replies to extra usage, beyond what the plan includes (Claude Code
+  // reports "extra_usage_disabled" when that's off), so it's only allowed with Allow API billing.
+  async setFastMode(id, on) {
+    const chat = this._get(id);
+    if (!chat.proc) throw new UserError('This chat has ended.');
+    if (on && !prefsStore.load().allowApiBilling) throw new UserError("Fast mode is billed as extra usage, on top of your plan. To use it, turn on Allow API billing in Claude Deck Preferences.", 403);
+    await this._request(chat, { subtype: 'apply_flag_settings', settings: { fastMode: on === true } });
+    chat.fast = { ...(chat.fast || {}), state: on ? 'on' : 'off' };
+    this._push(chat, { kind: 'note', text: `Fast mode is ${on ? 'on' : 'off'}.` });
+    this._changed(chat);
     return { ok: true };
   }
 
@@ -991,6 +1367,41 @@ class ChatManager extends EventEmitter {
     }
   }
 
+  // The chat's MCP servers, as /mcp lists them: status, tools, and why one failed.
+  async mcpStatus(id) {
+    const chat = this._get(id);
+    if (!chat.proc) throw new UserError('This chat has ended. Resume it to see its MCP servers.');
+    const r = await this._request(chat, { subtype: 'mcp_status' }, 10000);
+    const servers = (r.mcpServers || []).map(mcpServer);
+    this._setMcp(chat, servers);
+    return { servers };
+  }
+
+  // Turns an MCP server on or off, as /mcp does. Claude Code remembers it for this folder
+  // (disabledMcpServers in its .claude.json), so new sessions here start with it the same way.
+  async setMcpEnabled(id, name, enabled) {
+    const chat = this._get(id);
+    if (!chat.proc) throw new UserError('This chat has ended. Resume it to change its MCP servers.');
+    if (typeof name !== 'string' || !name) throw new UserError('Which MCP server?');
+    await this._request(chat, { subtype: 'mcp_toggle', serverName: name, enabled });
+    this._push(chat, { kind: 'note', text: `MCP server ${name} is ${enabled ? 'on' : 'off'}.` });
+    return this.mcpStatus(id);
+  }
+
+  async reconnectMcp(id, name) {
+    const chat = this._get(id);
+    if (!chat.proc) throw new UserError('This chat has ended. Resume it to change its MCP servers.');
+    if (typeof name !== 'string' || !name) throw new UserError('Which MCP server?');
+    try {
+      await this._request(chat, { subtype: 'mcp_reconnect', serverName: name }, MCP_RECONNECT_WAIT_MS);
+    } catch (err) {
+      // Claude answers with why it couldn't connect ("Connection closed"); the list shows it too.
+      await this.mcpStatus(id).catch(() => {});
+      throw new UserError(err.message, 502);
+    }
+    return this.mcpStatus(id);
+  }
+
   async setPermissionMode(id, mode) {
     const chat = this._get(id);
     if (!PERMISSION_MODES.includes(mode) && mode !== 'default') throw new UserError('Unknown permission mode.');
@@ -1127,6 +1538,12 @@ class ChatManager extends EventEmitter {
       chatCost: chat.costUSD,
       tokens: this._currentTokens(chat),
       context: chat.proc ? chat.context : null,
+      mcp: chat.proc ? chat.mcp : null,
+      todos: chat.todos,
+      suggestion: chat.proc ? chat.suggestion : null,
+      fast: chat.proc ? chat.fast : null,
+      foregroundTasks: chat.foreground.size,
+      bgTasks: chat.bgTasks,
       exitCode: chat.exitCode,
       note: chat.note,
       command: chat.command,
