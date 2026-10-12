@@ -6,6 +6,15 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.12.0] - 2026-10-10
+
+### Added
+- **The installer offers to install missing prerequisites.** `Start-ClaudeDeck.ps1 -Install` used to
+  stop with an error when Node.js was missing. Now it asks before installing Node.js (LTS) or
+  Windows Terminal with `winget`, or Claude Code with Claude Code's official installer, then picks
+  them up without a new PowerShell window. Answer no, or run it where there's no `winget`, and it
+  says where to get each one, as before.
+
 ## [1.11.0] - 2026-10-09
 
 ### Added
@@ -349,6 +358,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.12.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.9.1...v1.10.0
 [1.9.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.9.0...v1.9.1

@@ -56,7 +56,9 @@ Node.js 24 on Windows 11. Newer Claude Code versions usually work; see
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\Start-ClaudeDeck.ps1 -Install
    ```
-   It checks for Node.js 22+ and warns if Windows Terminal, Claude Code or Edge is missing, then:
+   It checks for Node.js 22+, Windows Terminal, Claude Code and Edge, and offers to install any that
+   are missing: Node.js and Windows Terminal with `winget`, Claude Code with its official installer
+   (then run `claude` once in a new terminal to sign in). Then it:
    - creates **Start Claude Deck** shortcuts on the desktop and in the Start menu;
    - registers a **Claude Deck** scheduled task that starts the server when you sign in, as you;
    - starts the server and opens the dashboard.
@@ -246,8 +248,10 @@ them for its own tabs.
 script with `-ExecutionPolicy Bypass` for that one run, without changing your PC's policy. If you
 downloaded a ZIP instead of cloning, unblock the files first: `Get-ChildItem -Recurse | Unblock-File`.
 
-**"Node.js was not found on PATH."** Install Node.js 22 or newer, then open a *new* PowerShell window
-(an existing one won't see the updated PATH) and run the installer again.
+**"Node.js was not found on PATH."** Run the installer (`-Install`) and answer **Yes** when it offers
+to install Node.js. If that isn't offered (no `winget` on the PC) or fails, install Node.js 22 or
+newer yourself, then open a *new* PowerShell window (an existing one won't see the updated PATH) and
+run the installer again.
 
 **"Claude Code was not found."** Check that `claude --version` works in a terminal. If Claude Code is
 installed somewhere unusual, set its location under **Claude Deck Preferences → Claude Code → Program**.

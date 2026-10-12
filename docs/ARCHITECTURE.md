@@ -92,7 +92,9 @@ test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes),
   (the billing guard reads Windows' stored environment and the Claude Code policy key),
   `choice.exe` for the tab host's resume prompt, and `conhost.exe --headless`, which the sign-in task
   runs its PowerShell supervisor under: `-WindowStyle Hidden` doesn't hide a console that Windows
-  Terminal hosts, as it does when Terminal is the default terminal app). *Check for updates* also runs `git`, signed in
+  Terminal hosts, as it does when Terminal is the default terminal app). `-Install` runs `winget.exe`
+  (part of Windows' App Installer) only to install a missing Node.js or Windows Terminal, and Claude
+  Code's own installer for a missing Claude Code, each after the user says yes. *Check for updates* also runs `git`, signed in
   through the GitHub CLI (`gh auth git-credential`), both of which a contributor already has. In-app
   chats are possible because Claude's streaming JSON mode needs only pipes, not a terminal.
 - **No Claude API calls.** Everything shown is read from files Claude Code writes, and what the user
