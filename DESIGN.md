@@ -161,7 +161,7 @@ The system must survive 15 themes. Each theme supplies base colors; the frame, p
 - Frame around a reading shelf; the selected row takes the shelf's color and runs flush into it.
 - Black enamel plates with engraved capitals name views, groups, dialogs and fact labels.
 - Status is a lamp in a dark bezel, never a colored card or badge.
-- Two sizes (14px, 12px), one reading column (560px, about 72ch).
+- Two sizes (14px, 12px), and a conversation that fills its pane.
 - Mechanical motion: 120-160ms, no bounce.
 - System fonts only, drawn SVG icons, one preserved 14x10 pixel mascot.
 
@@ -209,7 +209,7 @@ Weathered green enamel and warm cream, with signal lamps as the only saturated c
 ### Hierarchy
 - **Title** (700, 14px, 1.5): session names, headings inside content, rename input. Headings are not larger, only bolder.
 - **Body** (400, 14px, 1.5): UI and lists. Row titles and your turns take weight 600.
-- **Prose** (400, 14px, 1.6): assistant replies, in the 560px column (about 72ch).
+- **Prose** (400, 14px, 1.6): assistant replies, across the conversation pane.
 - **Meta** (400 or 600, 12px): status text, since, sub-lines, fact readings, tool lines.
 - **Plate label** (Bahnschrift 600, 12px, 0.06em, uppercase, stretch 87.5%): view names, group labels, dialog titles, fact labels, section labels. The brand name is 700 at 0.08em.
 - **Mono** (Cascadia, 12px): code, paths, ids, model ids, tool names, diffs.
@@ -221,9 +221,9 @@ Weathered green enamel and warm cream, with signal lamps as the only saturated c
 
 ## Layout
 
-A viewport-height grid: a 44px shelf, then the view. Sessions is a two-column grid: the track panel (300px default, resizable by a splitter on the boundary, Ctrl+B narrows to 58px lamps-only) and the reading shelf. History uses the same grammar with a 300-380px list. Below 900px the columns stack and the shelf wraps.
+A viewport-height grid: a 44px shelf, then the view. Sessions is a two-column grid: the track panel (300px default, resizable by a splitter on the boundary, Ctrl+B narrows to 58px lamps-only) and the reading shelf. History uses the same grammar with a 300-380px list. Below 900px the shelf wraps; History's columns stack, while Sessions starts its track panel at the 58px lamps (Ctrl+B or the toggle widens it, to at most 60% of the window) and stays one screen high, so the conversation keeps the space and the reply bar stays on screen.
 
-One reading column (560px, about 72ch) is shared by prose, your turns, tool lines, the attachment tray and the reply bar, centered with a stable scrollbar gutter so the column stays over the reply bar. The line plate at the top of a session is one flex line (lamp, name, menu, status, since, extras, folder, id, actions), then one instrument row: engraved labels beside readings, spaced with gap rather than ruled, so a wrapped row starts flush. Content gutters are 28-32px; small gaps step 4, 8, 12, 16, 24.
+The conversation fills the reading shelf's width: prose, your turns, tool lines, the attachment tray and the reply bar share it, with a stable scrollbar gutter (the reply bar's side padding adds the gutter's 10px) so their edges line up. The line plate at the top of a session is one flex line (lamp, name, menu, status, since, extras, folder, id, actions), then one instrument row: engraved labels beside readings, spaced with gap rather than ruled, so a wrapped row starts flush. Content gutters are 28-32px; small gaps step 4, 8, 12, 16, 24.
 
 Instruments show a value plus the last-turn change (context, cost, tokens). Needles move by `transform: scaleX` over 600ms.
 
@@ -284,7 +284,7 @@ Small, square-shouldered enamel. Plates are 3px, controls and rows 4px, menus, p
 - **Do** show status as a lamp in a bezel and mix any new wash from the status token with `color-mix`.
 - **Do** put the selected list item on the reading shelf's color, flush to the shelf.
 - **Do** use 120-160ms with `cubic-bezier(0.22, 0.8, 0.3, 1)`; disable animation under reduced motion.
-- **Do** keep prose, turns, tool lines and the reply bar in the shared 560px column.
+- **Do** keep prose, turns, tool lines and the reply bar on the shared conversation width.
 - **Do** use Cascadia for code, paths, ids and model ids.
 - **Do** derive new theme surfaces from the theme's base colors in the shared block.
 

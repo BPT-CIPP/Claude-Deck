@@ -50,7 +50,8 @@ node tools/make-icons.js   # regenerate public/icons after changing the mascot g
   reduction rule that blocks executables that aren't prevalent (Electron and node-pty were tried and
   blocked). Everything runs on `node.exe`, `wt.exe`, Edge, `claude.exe`, `git` (with the GitHub CLI,
   for *Check for updates*) and Windows built-ins (`powershell.exe`, `reg.exe`, `where.exe`,
-  `schtasks.exe`, `explorer.exe`, `choice.exe`, `conhost.exe`; see docs/ARCHITECTURE.md). Don't work around it, for
+  `schtasks.exe`, `explorer.exe`, `choice.exe`, `conhost.exe`, and `winget.exe` for the installer's
+  prerequisites; see docs/ARCHITECTURE.md). Don't work around it, for
   example with runtime-compiled C# or P/Invoke.
 - **Claude Deck makes no Claude API calls.** It reads files Claude Code writes and relays what the
   user types. Tests and checks never hit the real API: use `test/fixtures/fake-claude.js`, or the
@@ -61,7 +62,9 @@ node tools/make-icons.js   # regenerate public/icons after changing the mascot g
   (`src/update.js`) runs `git fetch` from GitHub, signed in through `gh auth git-credential`, only
   when the user clicks it, and only fast-forwards a clean copy on `main`; tests use local
   repositories. (Installing a plugin or updating a marketplace downloads, but that's Claude Code's
-  own `claude plugin` command, run only when the user asks.)
+  own `claude plugin` command, run only when the user asks. Likewise `Start-ClaudeDeck.ps1 -Install`
+  downloads a missing Node.js or Windows Terminal through `winget`, and runs Claude Code's installer
+  from `https://claude.ai/install.ps1`, only after the user answers yes.)
 - **Sessions use the Claude plan, never per-use billing.** `src/billing.js` refuses to start a chat or
   terminal session when Claude Code would bill an Anthropic API or cloud account (an API key, a key
   helper, or a cloud-provider switch, from the environment or Claude Code's settings). The only way

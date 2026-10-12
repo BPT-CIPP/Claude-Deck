@@ -248,6 +248,18 @@ async function main() {
     claudeInfo.autoUpdate = autoUpdateStatus();
     return claudeInfo;
   }
+  // Claude Code installed after the server started: while it's missing, look again when the page
+  // loads or a session starts, and tell open pages once it turns up.
+  async function recheckClaude() {
+    if (claudeInfo && claudeInfo.path) return claudeInfo;
+    const info = await detectClaude();
+    if (info.path) {
+      broadcast('claude', info);
+      refreshModels();
+    }
+    return info;
+  }
+  const recheckClaudeSoon = () => { recheckClaude().catch((err) => console.error('checking Claude Code failed:', err)); };
 
   // The model menus, with versions from Claude Code's own list (src/models.js).
   const modelMenu = () => models.menu(models.load().models, MODEL_ALIASES);
@@ -364,7 +376,7 @@ async function main() {
     'GET /api/bootstrap': async () => ({
       version: VERSION,
       prefs: prefsStore.load(),
-      claude: claudeInfo || (await detectClaude()),
+      claude: await recheckClaude(),
       enums: { efforts: EFFORTS, permissionModes: PERMISSION_MODES, colors: COLORS, models: MODEL_ALIASES },
       models: modelMenu(),
       scopes: Object.fromEntries(Object.entries(settingsFiles.SCOPES).map(([k, v]) => [k, { label: v.label, kind: v.kind, needsFolder: v.needsFolder }])),
@@ -397,12 +409,14 @@ async function main() {
     'POST /api/launch': async (req) => {
       const entry = launcher.launch(await readBody(req));
       live.tick();
+      recheckClaudeSoon();
       return entry;
     },
 
     'POST /api/chats': async (req) => {
       const c = chats.create(await readBody(req));
       live.poke(0);
+      recheckClaudeSoon();
       return c;
     },
     'GET /api/chats/:id': (req, p) => chats.detail(p.id),
@@ -608,6 +622,7 @@ async function main() {
       };
       const result = body.target === 'terminal' ? launcher.launch(options) : chats.create(options);
       live.poke(0);
+      recheckClaudeSoon();
       return result;
     },
 

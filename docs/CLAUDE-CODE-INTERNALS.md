@@ -24,13 +24,32 @@ Last full check: **Claude Code 2.1.281**.
 
 ## Finding Claude Code
 
-✅ `src/claude-locate.js` checks, in order: the path set in *Claude Deck Preferences*, `where.exe claude`, and
-the native installer's `%USERPROFILE%\.local\bin\claude.exe`. An npm global install puts a
+✅ `src/claude-locate.js` checks, in order: the path set in *Claude Deck Preferences*, `where.exe claude`,
+the native installer's `%USERPROFILE%\.local\bin\claude.exe`, then winget's
+`%LOCALAPPDATA%\Microsoft\WinGet\Links\claude.exe` and npm's global folder, for a Claude Code
+installed after the server started (its PATH predates the install). ⚠️ The winget path is inferred
+from how winget links portable packages; it wasn't checked against an `Anthropic.ClaudeCode`
+install. An npm global install puts a
 `claude.cmd` shim on PATH that wraps
 `%APPDATA%\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe` (older versions ship
 `cli.js` instead). Launch the real `claude.exe`, not the shim, so its process id is Claude's own.
 
 ✅ `claude --version` prints and exits locally; it makes no model request.
+
+### Signed in or not (2.1.296)
+
+✅ `claude auth status` prints JSON (`{ "loggedIn": false, "authMethod": "none", ... }`; signed in:
+`"loggedIn": true, "authMethod": "claude.ai"`) and **exits 0 when signed in, 1 when not**. `--text`
+prints `Not logged in. Run claude auth login to authenticate.` instead. `claude auth login`
+(`--claudeai`, the default: the Claude plan; `--console` would be API billing) signs in through the
+browser. `Start-ClaudeDeck.ps1 -Install` uses both, and checks `claude --help` lists `auth` first:
+a version without it would take `auth status` as a prompt.
+
+✅ A chat on a signed-out Claude Code: after `system/init` (`apiKeySource: "none"`) comes a synthetic
+`assistant` message (`model: "<synthetic>"`, `error: "authentication_failed"`, text
+`Not logged in · Please run /login`), then a `result` with `is_error: true` and the same text, and the
+process exits 1. No request is made. `/login` doesn't work in stream-json; the user has to sign in
+from a terminal.
 
 ## CLI flags Claude Deck uses
 

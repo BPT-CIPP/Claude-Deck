@@ -38,7 +38,8 @@ Edge app window ──HTTP + server-sent events (per-install token)──► nod
 - **The page** (`public/`) is plain scripts on `window.Deck` with no framework and no build:
   `lib.js` (helpers), `app.js` (session list and detail, chat, history, palette, preferences),
   `settings-ui.js` (the Claude Code Settings editor), `markdown.js` (reads the Markdown in replies),
-  `pasted-text.js` (long pastes in the reply box), `spinner-verbs.js` and `tick-worker.js`.
+  `pasted-text.js` (long pastes in the reply box), `tour.js` (the first-launch guided tour),
+  `spinner-verbs.js` and `tick-worker.js`.
 
 ## Code layout
 
@@ -71,7 +72,7 @@ src/models.js           the model menus: Claude Code's own model list (versions)
 src/claude-locate.js    finds claude.exe; its version, auto-update status and `claude update`
 src/prefs.js, registry.js, paths.js, util.js
 public/                 index.html, app.css, lib.js, markdown.js, pasted-text.js, app.js, settings-ui.js,
-                        spinner-verbs.js, tick-worker.js, manifest.webmanifest, sw.js, offline.html, icons/, vendor/
+                        tour.js, spinner-verbs.js, tick-worker.js, manifest.webmanifest, sw.js, offline.html, icons/, vendor/
 tools/check-syntax.js   parses every .js file, and Start-ClaudeDeck.ps1 with Windows PowerShell 5.1
 tools/sandbox.js        a throwaway Claude Deck against a mock API, for testing (see TESTING.md)
 tools/make-icons.js     generates public/icons/*.png and claude-deck.ico (pure Node)
@@ -92,7 +93,9 @@ test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes),
   (the billing guard reads Windows' stored environment and the Claude Code policy key),
   `choice.exe` for the tab host's resume prompt, and `conhost.exe --headless`, which the sign-in task
   runs its PowerShell supervisor under: `-WindowStyle Hidden` doesn't hide a console that Windows
-  Terminal hosts, as it does when Terminal is the default terminal app). *Check for updates* also runs `git`, signed in
+  Terminal hosts, as it does when Terminal is the default terminal app). `-Install` runs `winget.exe`
+  (part of Windows' App Installer) only to install a missing Node.js or Windows Terminal, and Claude
+  Code's own installer for a missing Claude Code, each after the user says yes. *Check for updates* also runs `git`, signed in
   through the GitHub CLI (`gh auth git-credential`), both of which a contributor already has. In-app
   chats are possible because Claude's streaming JSON mode needs only pipes, not a terminal.
 - **No Claude API calls.** Everything shown is read from files Claude Code writes, and what the user

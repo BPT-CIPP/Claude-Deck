@@ -1,6 +1,6 @@
 {
   "name": "claude-deck",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "description": "A Windows dashboard for running, watching and resuming Claude Code sessions, as in-app chats or Windows Terminal tabs.",
   "private": true,
   "main": "src/server.js",

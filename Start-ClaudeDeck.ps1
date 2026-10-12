@@ -13,7 +13,9 @@
 
 .PARAMETER Install
     Sets Claude Deck up for the current user: checks prerequisites (Node.js 22+, and warns about a
-    missing Windows Terminal, Claude Code or Edge), creates the "Start Claude Deck" shortcuts,
+    missing Windows Terminal, Claude Code or Edge), offers to install a missing Node.js, Windows
+    Terminal or Claude Code (Node.js and Windows Terminal with winget, Claude Code with its official
+    installer), creates the "Start Claude Deck" shortcuts,
     registers the sign-in task (see -InstallStartup), starts the server and opens the dashboard.
 
 .PARAMETER Uninstall
@@ -81,11 +83,92 @@ $dataDir = Join-Path $env:LOCALAPPDATA 'ClaudeDeck'
 $ExitStopped = 0         # stopped on purpose
 $ExitAlreadyRunning = 3  # another copy is serving; nothing to do
 
-$nodeCmd = Get-Command node.exe -ErrorAction SilentlyContinue
-if (-not $nodeCmd) {
-    throw 'Node.js was not found on PATH. Install Node.js 22 or later (https://nodejs.org), open a new PowerShell window, then run this again.'
+$claudeNativeExe = Join-Path $env:USERPROFILE '.local\bin\claude.exe'
+
+function Get-DeckNode {
+    $cmd = Get-Command node.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    return $null
 }
-$node = $nodeCmd.Source
+
+# -Install offers to install a missing Node.js, so only the other modes stop here.
+$node = Get-DeckNode
+if (-not $node -and -not $Install) {
+    throw 'Node.js was not found on PATH. Run this script with -Install to install it, or install Node.js 22 or later (https://nodejs.org), open a new PowerShell window, then run this again.'
+}
+
+# Reloads PATH from the registry, so programs installed while this script runs are found
+# without opening a new window. Entries only this window had are kept, after the registry's.
+function Update-SessionPath {
+    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $entries = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in (@($machinePath, $userPath, $env:Path) -join ';') -split ';') {
+        if ($entry -and -not $entries.Contains($entry)) { $entries.Add($entry) }
+    }
+    $env:Path = $entries -join ';'
+}
+
+# Asks a yes/no question, defaulting to no, since yes installs software. Where nobody can answer
+# (-NonInteractive), the answer is no.
+function Read-DeckYesNo {
+    param([string]$Question)
+    $choices = [System.Management.Automation.Host.ChoiceDescription[]]@('&Yes', '&No')
+    try {
+        return ($Host.UI.PromptForChoice('', $Question, $choices, 1) -eq 0)
+    } catch [System.Management.Automation.MethodInvocationException] {
+        return $false
+    }
+}
+
+# Offers to install a missing prerequisite with winget. The caller checks for it again afterwards.
+function Install-DeckPrerequisite {
+    param([string]$Name, [string]$WingetId, [string]$Url, [string]$Note)
+    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if (-not $winget) {
+        Write-Warning "winget isn't available on this PC, so $Name can't be installed for you. Get it from $Url."
+        return
+    }
+    if (-not (Read-DeckYesNo "Install $Name now with winget?$Note")) {
+        Write-Warning "Skipped installing $Name. Get it from $Url."
+        return
+    }
+    $wingetArgs = @('install', '--id', $WingetId, '--exact', '--source', 'winget', '--accept-source-agreements', '--accept-package-agreements')
+    $proc = Start-Process -FilePath $winget.Source -ArgumentList $wingetArgs -NoNewWindow -Wait -PassThru
+    if ($proc.ExitCode -ne 0) { Write-Warning "winget couldn't install $Name (exit code $($proc.ExitCode))." }
+    Update-SessionPath
+}
+
+function Get-ClaudeCommand {
+    if (Test-Path -LiteralPath $claudeNativeExe) { return $claudeNativeExe }
+    $cmd = Get-Command claude -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cmd) { return $cmd.Source }
+    return $null
+}
+
+function Test-ClaudeCode {
+    return [bool](Get-ClaudeCommand)
+}
+
+# Signs Claude Code in to the Claude plan if it isn't, so chats can start. "claude auth status"
+# exits 0 when signed in and 1 when not (Claude Code 2.1.296); it makes no model request. A version
+# without the auth command is left alone: there, "claude auth status" would be taken as a prompt.
+function Confirm-ClaudeSignIn {
+    param([string]$Claude)
+    $help = (& $Claude --help 2>&1) -join "`n"
+    if ($help -notmatch '(?m)^\s+auth\s') { return }
+    & $Claude auth status *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Output 'Claude Code needs to be signed in to your Claude plan before Claude Deck can start a chat. Starting the sign-in: finish it in the browser window that opens.'
+        & $Claude auth login --claudeai
+        & $Claude auth status *> $null
+    }
+    if ($LASTEXITCODE -eq 0) {
+        Write-Output 'Claude Code is signed in.'
+    } else {
+        Write-Warning 'Claude Code is not signed in yet. Before you start a chat, open a terminal and run: claude auth login'
+    }
+}
 
 function New-DeckShortcut {
     param([string]$Path, [string]$ScriptArgs, [string]$Description)
@@ -176,18 +259,44 @@ if ($Service) {
 }
 
 if ($Install) {
-    $nodeVersion = (& $node --version).Trim()
-    if ([version]($nodeVersion.TrimStart('v')) -lt [version]'22.0.0') {
-        throw "Claude Deck needs Node.js 22 or later; this PC has $nodeVersion. Install a current version from https://nodejs.org, then run this again."
+    $nodeVersion = if ($node) { (& $node --version).Trim() } else { $null }
+    if (-not $nodeVersion -or [version]($nodeVersion.TrimStart('v')) -lt [version]'22.0.0') {
+        if ($nodeVersion) {
+            Write-Warning "Claude Deck needs Node.js 22 or later; this PC has $nodeVersion."
+        } else {
+            Write-Warning 'Node.js was not found. Claude Deck needs Node.js 22 or later.'
+        }
+        Install-DeckPrerequisite -Name 'Node.js (LTS)' -WingetId 'OpenJS.NodeJS.LTS' -Url 'https://nodejs.org' -Note ' Windows may ask for administrator approval.'
+        $node = Get-DeckNode
+        $nodeVersion = if ($node) { (& $node --version).Trim() } else { $null }
+        if (-not $nodeVersion) {
+            throw 'Node.js was not found on PATH. Install Node.js 22 or later (https://nodejs.org), open a new PowerShell window, then run this again.'
+        }
+        if ([version]($nodeVersion.TrimStart('v')) -lt [version]'22.0.0') {
+            throw "Claude Deck needs Node.js 22 or later; this PC has $nodeVersion. Install a current version from https://nodejs.org, then run this again."
+        }
     }
     Write-Output "Node.js $nodeVersion"
     if (-not (Get-Command wt.exe -ErrorAction SilentlyContinue)) {
         Write-Warning 'Windows Terminal (wt.exe) was not found. Chats in Claude Deck work, but "run in a terminal" sessions will not.'
+        Install-DeckPrerequisite -Name 'Windows Terminal' -WingetId 'Microsoft.WindowsTerminal' -Url 'https://aka.ms/terminal'
+        if (Get-Command wt.exe -ErrorAction SilentlyContinue) { Write-Output 'Windows Terminal is installed.' }
     }
-    $claudeFound = (Get-Command claude -ErrorAction SilentlyContinue) -or (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.local\bin\claude.exe'))
-    if (-not $claudeFound) {
-        Write-Warning 'Claude Code was not found. Install it, or set its path later under Claude Deck Preferences > Claude Code.'
+    if (-not (Test-ClaudeCode)) {
+        Write-Warning 'Claude Code was not found.'
+        # Claude Code's own installer, the one its docs recommend: unlike the winget package, it keeps Claude Code updated.
+        if (Read-DeckYesNo 'Install Claude Code now with its official installer (https://claude.ai/install.ps1)?') {
+            & $powershellExe -NoProfile -ExecutionPolicy Bypass -Command '[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; irm https://claude.ai/install.ps1 | iex'
+            Update-SessionPath
+        }
+        if (Test-ClaudeCode) {
+            Write-Output 'Claude Code is installed.'
+        } else {
+            Write-Warning 'Claude Code is still missing. Install it (https://code.claude.com/docs), or set its path later under Claude Deck Preferences > Claude Code.'
+        }
     }
+    $claudeCmd = Get-ClaudeCommand
+    if ($claudeCmd) { Confirm-ClaudeSignIn -Claude $claudeCmd }
     $edgePaths = @(
         (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'),
         (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe')
