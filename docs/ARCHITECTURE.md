@@ -38,7 +38,8 @@ Edge app window ──HTTP + server-sent events (per-install token)──► nod
 - **The page** (`public/`) is plain scripts on `window.Deck` with no framework and no build:
   `lib.js` (helpers), `app.js` (session list and detail, chat, history, palette, preferences),
   `settings-ui.js` (the Claude Code Settings editor), `markdown.js` (reads the Markdown in replies),
-  `pasted-text.js` (long pastes in the reply box), `spinner-verbs.js` and `tick-worker.js`.
+  `pasted-text.js` (long pastes in the reply box), `tour.js` (the first-launch guided tour),
+  `spinner-verbs.js` and `tick-worker.js`.
 
 ## Code layout
 
@@ -71,7 +72,7 @@ src/models.js           the model menus: Claude Code's own model list (versions)
 src/claude-locate.js    finds claude.exe; its version, auto-update status and `claude update`
 src/prefs.js, registry.js, paths.js, util.js
 public/                 index.html, app.css, lib.js, markdown.js, pasted-text.js, app.js, settings-ui.js,
-                        spinner-verbs.js, tick-worker.js, manifest.webmanifest, sw.js, offline.html, icons/, vendor/
+                        tour.js, spinner-verbs.js, tick-worker.js, manifest.webmanifest, sw.js, offline.html, icons/, vendor/
 tools/check-syntax.js   parses every .js file, and Start-ClaudeDeck.ps1 with Windows PowerShell 5.1
 tools/sandbox.js        a throwaway Claude Deck against a mock API, for testing (see TESTING.md)
 tools/make-icons.js     generates public/icons/*.png and claude-deck.ico (pure Node)

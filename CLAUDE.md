@@ -62,7 +62,9 @@ node tools/make-icons.js   # regenerate public/icons after changing the mascot g
   (`src/update.js`) runs `git fetch` from GitHub, signed in through `gh auth git-credential`, only
   when the user clicks it, and only fast-forwards a clean copy on `main`; tests use local
   repositories. (Installing a plugin or updating a marketplace downloads, but that's Claude Code's
-  own `claude plugin` command, run only when the user asks.)
+  own `claude plugin` command, run only when the user asks. Likewise `Start-ClaudeDeck.ps1 -Install`
+  downloads a missing Node.js or Windows Terminal through `winget`, and runs Claude Code's installer
+  from `https://claude.ai/install.ps1`, only after the user answers yes.)
 - **Sessions use the Claude plan, never per-use billing.** `src/billing.js` refuses to start a chat or
   terminal session when Claude Code would bill an Anthropic API or cloud account (an API key, a key
   helper, or a cloud-provider switch, from the environment or Claude Code's settings). The only way

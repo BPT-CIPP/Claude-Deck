@@ -44,6 +44,12 @@ function candidates(preferred) {
     }
   }
   list.push({ path: path.join(os.homedir(), '.local', 'bin', 'claude.exe'), source: 'native installer' });
+  // The other usual install places, for a Claude Code installed after this server started: its
+  // PATH is the one it started with, so where.exe can't see a newly added folder.
+  const local = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+  const roaming = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+  list.push({ path: path.join(local, 'Microsoft', 'WinGet', 'Links', 'claude.exe'), source: 'winget' });
+  for (const target of npmPackageTargets(path.join(roaming, 'npm'))) list.push({ path: target, source: 'npm global install' });
   return list;
 }
 

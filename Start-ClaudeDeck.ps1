@@ -13,8 +13,9 @@
 
 .PARAMETER Install
     Sets Claude Deck up for the current user: checks prerequisites (Node.js 22+, and warns about a
-    missing Windows Terminal, Claude Code or Edge) and offers to install any that are missing
-    (Node.js and Windows Terminal with winget, Claude Code with its official installer), creates the "Start Claude Deck" shortcuts,
+    missing Windows Terminal, Claude Code or Edge), offers to install a missing Node.js, Windows
+    Terminal or Claude Code (Node.js and Windows Terminal with winget, Claude Code with its official
+    installer), creates the "Start Claude Deck" shortcuts,
     registers the sign-in task (see -InstallStartup), starts the server and opens the dashboard.
 
 .PARAMETER Uninstall
@@ -97,19 +98,24 @@ if (-not $node -and -not $Install) {
 }
 
 # Reloads PATH from the registry, so programs installed while this script runs are found
-# without opening a new window.
+# without opening a new window. Entries only this window had are kept, after the registry's.
 function Update-SessionPath {
     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $env:Path = (@($machinePath, $userPath) | Where-Object { $_ }) -join ';'
+    $entries = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in (@($machinePath, $userPath, $env:Path) -join ';') -split ';') {
+        if ($entry -and -not $entries.Contains($entry)) { $entries.Add($entry) }
+    }
+    $env:Path = $entries -join ';'
 }
 
-# Asks a yes/no question, defaulting to yes. Where nobody can answer (-NonInteractive), the answer is no.
+# Asks a yes/no question, defaulting to no, since yes installs software. Where nobody can answer
+# (-NonInteractive), the answer is no.
 function Read-DeckYesNo {
     param([string]$Question)
     $choices = [System.Management.Automation.Host.ChoiceDescription[]]@('&Yes', '&No')
     try {
-        return ($Host.UI.PromptForChoice('', $Question, $choices, 0) -eq 0)
+        return ($Host.UI.PromptForChoice('', $Question, $choices, 1) -eq 0)
     } catch [System.Management.Automation.MethodInvocationException] {
         return $false
     }
@@ -123,15 +129,45 @@ function Install-DeckPrerequisite {
         Write-Warning "winget isn't available on this PC, so $Name can't be installed for you. Get it from $Url."
         return
     }
-    if (-not (Read-DeckYesNo "Install $Name now with winget?$Note")) { return }
+    if (-not (Read-DeckYesNo "Install $Name now with winget?$Note")) {
+        Write-Warning "Skipped installing $Name. Get it from $Url."
+        return
+    }
     $wingetArgs = @('install', '--id', $WingetId, '--exact', '--source', 'winget', '--accept-source-agreements', '--accept-package-agreements')
     $proc = Start-Process -FilePath $winget.Source -ArgumentList $wingetArgs -NoNewWindow -Wait -PassThru
     if ($proc.ExitCode -ne 0) { Write-Warning "winget couldn't install $Name (exit code $($proc.ExitCode))." }
     Update-SessionPath
 }
 
+function Get-ClaudeCommand {
+    if (Test-Path -LiteralPath $claudeNativeExe) { return $claudeNativeExe }
+    $cmd = Get-Command claude -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cmd) { return $cmd.Source }
+    return $null
+}
+
 function Test-ClaudeCode {
-    return [bool]((Get-Command claude -ErrorAction SilentlyContinue) -or (Test-Path -LiteralPath $claudeNativeExe))
+    return [bool](Get-ClaudeCommand)
+}
+
+# Signs Claude Code in to the Claude plan if it isn't, so chats can start. "claude auth status"
+# exits 0 when signed in and 1 when not (Claude Code 2.1.296); it makes no model request. A version
+# without the auth command is left alone: there, "claude auth status" would be taken as a prompt.
+function Confirm-ClaudeSignIn {
+    param([string]$Claude)
+    $help = (& $Claude --help 2>&1) -join "`n"
+    if ($help -notmatch '(?m)^\s+auth\s') { return }
+    & $Claude auth status *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Output 'Claude Code needs to be signed in to your Claude plan before Claude Deck can start a chat. Starting the sign-in: finish it in the browser window that opens.'
+        & $Claude auth login --claudeai
+        & $Claude auth status *> $null
+    }
+    if ($LASTEXITCODE -eq 0) {
+        Write-Output 'Claude Code is signed in.'
+    } else {
+        Write-Warning 'Claude Code is not signed in yet. Before you start a chat, open a terminal and run: claude auth login'
+    }
 }
 
 function New-DeckShortcut {
@@ -254,11 +290,13 @@ if ($Install) {
             Update-SessionPath
         }
         if (Test-ClaudeCode) {
-            Write-Output 'Claude Code is installed. Open a new terminal and run "claude" once to sign in before you start a chat.'
+            Write-Output 'Claude Code is installed.'
         } else {
             Write-Warning 'Claude Code is still missing. Install it (https://code.claude.com/docs), or set its path later under Claude Deck Preferences > Claude Code.'
         }
     }
+    $claudeCmd = Get-ClaudeCommand
+    if ($claudeCmd) { Confirm-ClaudeSignIn -Claude $claudeCmd }
     $edgePaths = @(
         (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'),
         (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe')

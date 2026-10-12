@@ -3746,7 +3746,16 @@
       { kind: 'Command', text: 'Edit Claude Code settings', run: () => setView('settings') },
       { kind: 'Command', text: 'Open preferences', run: () => setView('prefs') },
       { kind: 'Command', text: 'Show keyboard shortcuts', run: () => $('#dlg-keys').showModal() },
+      { kind: 'Command', text: 'Take the guided tour', run: () => startTour() },
     ];
+  }
+
+  // The guided tour (public/tour.js), on the Sessions view. Seen once it's finished or skipped, so
+  // first launch offers it only once; Preferences and Ctrl+K start it again.
+  function startTour() {
+    if (document.querySelector('dialog[open]')) return;
+    setView('sessions');
+    Deck.tour.start({ onDone: () => store.set('tourSeen', true) });
   }
 
   function renderPalette() {
@@ -3977,7 +3986,8 @@
           h('button', { class: 'ghost', title: 'Stop the server and start it again, then reload this window: picks up changes to Claude Deck', onclick: restartServer }, 'Restart server'),
           h('button', { class: 'danger', onclick: async () => { if (await Deck.confirm({ title: 'Stop the Claude Deck server?', body: 'Chats end (resume them from History later). Terminal sessions keep running. Start Claude Deck again to reconnect.', ok: 'Stop server', danger: true })) api('POST', '/api/shutdown').catch(() => {}); } }, 'Stop server now'))),
       prefRow('Data folder', 'Preferences, settings backups and the history cache', h('div', { class: 'row' }, h('code', { style: { overflowWrap: 'anywhere', flex: '1' } }, S.boot.dataDir), h('button', { class: 'ghost', onclick: () => openFolder(S.boot.dataDir) }, 'Open'))),
-      prefRow('Version', 'The version the server was started from', h('div', { class: 'row' }, h('span', null, `Claude Deck ${S.boot.version}`), h('a', { href: 'https://github.com/BPT-CIPP/Claude-Deck/releases', target: '_blank', rel: 'noopener', class: 'small' }, 'Release notes')))));
+      prefRow('Version', 'The version the server was started from', h('div', { class: 'row' }, h('span', null, `Claude Deck ${S.boot.version}`), h('a', { href: 'https://github.com/BPT-CIPP/Claude-Deck/releases', target: '_blank', rel: 'noopener', class: 'small' }, 'Release notes'))),
+      prefRow('Guided tour', 'A two-minute walk through Claude Deck, for anyone new to it or to Claude Code', h('div', { class: 'row' }, h('button', { class: 'ghost', onclick: startTour }, 'Take the tour')))));
   }
 
   // Restart the server (a new copy takes over on the same port), then reload this window once the
@@ -4081,6 +4091,8 @@
     es.addEventListener('usage', (e) => { S.usage = JSON.parse(e.data); renderUsage(); });
     // Claude Code reported a different model list (a new version, say): menus opened from now on use it.
     es.addEventListener('models', (e) => { S.boot.models = JSON.parse(e.data); });
+    // Claude Code turned up after the server started (installed since): Preferences shows it.
+    es.addEventListener('claude', (e) => { S.boot.claude = JSON.parse(e.data); if (S.view === 'prefs') renderPrefs(); });
     es.addEventListener('open', () => {
       setConn(true);
       // After a reconnect, reload the open chat in case events were missed. If the server that
@@ -4164,13 +4176,17 @@
   function wireRailCollapse() {
     const app = $('.app');
     const toggleBtn = $('#btn-rail-toggle');
-    const isCollapsed = Boolean(store.get('rail-collapsed', false));
-    if (isCollapsed) app.classList.add('rail-collapsed');
+    // Windows 900px wide or less (app.css) start with the list narrowed, to leave the chat room.
+    // Widening it there lasts until the window crosses 900px and doesn't change the saved choice.
+    const narrow = window.matchMedia('(max-width: 900px)');
+    const applyRail = () => app.classList.toggle('rail-collapsed', narrow.matches || Boolean(store.get('rail-collapsed', false)));
+    applyRail();
+    narrow.addEventListener('change', applyRail);
 
     function toggleRail() {
       const next = !app.classList.contains('rail-collapsed');
       app.classList.toggle('rail-collapsed', next);
-      store.set('rail-collapsed', next);
+      if (!narrow.matches) store.set('rail-collapsed', next);
     }
 
     if (toggleBtn) toggleBtn.addEventListener('click', toggleRail);
@@ -4320,6 +4336,8 @@
     updateNotifBanner();
     setView(S.view);
     connect();
+    // First launch: the guided tour, once the page has drawn.
+    if (!store.get('tourSeen', false)) setTimeout(startTour, 400);
     // Keep "for 3m" style labels fresh.
     setInterval(() => { if (S.view === 'sessions' && !document.hidden) { renderSessions(); renderUsage(); } }, 30000);
   }

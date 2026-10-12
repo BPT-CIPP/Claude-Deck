@@ -12,8 +12,26 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
 - **The installer offers to install missing prerequisites.** `Start-ClaudeDeck.ps1 -Install` used to
   stop with an error when Node.js was missing. Now it asks before installing Node.js (LTS) or
   Windows Terminal with `winget`, or Claude Code with Claude Code's official installer, then picks
-  them up without a new PowerShell window. Answer no, or run it where there's no `winget`, and it
-  says where to get each one, as before.
+  them up without a new PowerShell window. Each question defaults to no. Answer no, or run it where
+  there's no `winget`, and it says where to get each one, as before.
+- **The installer signs Claude Code in.** If Claude Code isn't signed in to your Claude plan, the
+  installer starts its sign-in (`claude auth login`), so the first chat doesn't stop at "Not logged
+  in".
+- **A guided tour for first-time users.** The first time Claude Deck opens, a two-minute tour lights
+  up each part of the page (New session, the session list and its lamps, the conversation and its
+  controls, plan usage, search, History, Settings and Preferences) and explains it for someone who
+  has never used Claude Code. Skip it with Esc; take it again from Preferences → Dashboard or Ctrl+K.
+- **The conversation fills the window.** It spans the whole chat pane instead of a fixed 560px
+  column, at the same text size. Below 900px wide, the session list narrows to its lamps instead
+  of stacking above the chat, so the conversation and the reply bar stay on screen; the
+  narrow/widen button and Ctrl+B still widen it there, without changing your choice for wider
+  windows.
+
+### Fixed
+- **A Claude Code installed after Claude Deck started is found.** Preferences no longer says "not
+  found", and the model menus fill in, once Claude Code turns up: Claude Deck looks again when the
+  page loads or a session starts, and checks winget's and npm's install folders, which the server's
+  PATH from before the install can't see.
 
 ## [1.11.0] - 2026-10-09
 

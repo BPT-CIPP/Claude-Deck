@@ -56,12 +56,13 @@ Node.js 24 on Windows 11. Newer Claude Code versions usually work; see
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\Start-ClaudeDeck.ps1 -Install
    ```
-   It checks for Node.js 22+, Windows Terminal, Claude Code and Edge, and offers to install any that
-   are missing: Node.js and Windows Terminal with `winget`, Claude Code with its official installer
-   (then run `claude` once in a new terminal to sign in). Then it:
+   It checks for Node.js 22+, Windows Terminal, Claude Code and Edge. It offers to install a missing
+   Node.js or Windows Terminal with `winget`, and a missing Claude Code with its official installer;
+   a missing Edge gets a warning. If Claude Code isn't signed in, it starts Claude Code's sign-in
+   (`claude auth login`) so you can finish it in your browser. Then it:
    - creates **Start Claude Deck** shortcuts on the desktop and in the Start menu;
    - registers a **Claude Deck** scheduled task that starts the server when you sign in, as you;
-   - starts the server and opens the dashboard.
+   - starts the server and opens the dashboard, with a short guided tour the first time.
 3. **Install it as an app and pin it** (next section), so it gets its own taskbar icon.
 
 The shortcuts and the sign-in task point at the folder you installed from. If you move the folder,
@@ -145,6 +146,10 @@ own files. If you installed the app from Edge, remove it from `edge://apps`. The
 Claude-Deck folder.
 
 ## Using Claude Deck
+
+New to Claude Code? The first time Claude Deck opens, a two-minute guided tour lights up each part
+of the page and explains it. Take it again any time from **Claude Deck Preferences → Dashboard →
+Take the tour**, or **Ctrl+K → Take the guided tour**.
 
 Each session runs one of two ways, your choice when you start it:
 

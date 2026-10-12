@@ -9,7 +9,7 @@ const { sandbox } = require('./helpers');
 const box = sandbox();
 const models = require('../src/models');
 const { MODEL_ALIASES } = require('../src/launcher');
-const { autoUpdateStatus } = require('../src/claude-locate');
+const { autoUpdateStatus, locateClaude } = require('../src/claude-locate');
 
 test.after(() => box.cleanup());
 
@@ -139,4 +139,24 @@ test('automatic updates are on unless Claude Code is told not to', () => {
   fs.writeFileSync(settingsFile, JSON.stringify({ env: { DISABLE_AUTOUPDATER: '0' } }));
   assert.strictEqual(autoUpdateStatus({ env: {}, settingsFile }).enabled, true, '0 leaves them on');
   assert.deepStrictEqual(autoUpdateStatus({ env: { DISABLE_UPDATES: '1' }, settingsFile }).blockedBy, 'DISABLE_UPDATES');
+});
+
+test('finds a Claude Code installed with winget or npm even when it is not on this PATH', (t) => {
+  const saved = ['PATH', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA'].map((k) => [k, process.env[k]]);
+  t.after(() => { for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  // A server started before Claude Code was installed: its PATH doesn't have Claude Code's folder.
+  process.env.PATH = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+  process.env.USERPROFILE = path.join(box.root, 'home');
+  process.env.LOCALAPPDATA = path.join(box.root, 'local');
+  process.env.APPDATA = path.join(box.root, 'roaming');
+  assert.strictEqual(locateClaude(null), null);
+  // Empty placeholder files: located, never run.
+  const npmExe = path.join(process.env.APPDATA, 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
+  fs.mkdirSync(path.dirname(npmExe), { recursive: true });
+  fs.writeFileSync(npmExe, '');
+  assert.deepStrictEqual(locateClaude(null), { path: npmExe, source: 'npm global install' });
+  const wingetExe = path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links', 'claude.exe');
+  fs.mkdirSync(path.dirname(wingetExe), { recursive: true });
+  fs.writeFileSync(wingetExe, '');
+  assert.deepStrictEqual(locateClaude(null), { path: wingetExe, source: 'winget' });
 });

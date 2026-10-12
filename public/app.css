@@ -70,8 +70,8 @@
   --mono: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
   --fs: 14px;
   --fs-s: 12px;
-  /* One reading column: about 72 characters of the body face. Prose, your messages, tool lines and
-     the reply bar share it. */
+  /* A reading column of about 72 characters of the body face. Chats override it to fill their pane
+     (.focus-detail, .convo-inner); the usage list still uses it. */
   --measure: 72ch;
   --column: 560px;
 
@@ -375,7 +375,7 @@ a:hover { text-decoration-thickness: 2px; }
 /* Engraved lettering: the plates' voice. */
 .plate-text, .focus-group, .facts dt, .field > span, .field legend, .field-label, .pp-section,
 .fp-places h3, .p-item .p-kind, .agent-section, .h-group, .view-head h1, dialog h2, .pref-section h2,
-.lane-head h2, .upop-head strong, .hm-heading, .command-preview span, .setting .s-group {
+.lane-head h2, .upop-head strong, .hm-heading, .command-preview span, .setting .s-group, .tour-title {
   font-family: var(--font-plate);
   font-stretch: 87.5%;
   font-size: var(--fs-s);
@@ -815,7 +815,10 @@ html.lamps-dim .lamp.waiting { background: color-mix(in srgb, var(--waiting) 55%
 /* ---- the conversation ------------------------------------------------------------------------ */
 /* The gutter is kept either way, so the column stays over the reply bar when a scrollbar appears. */
 .convo { overflow-y: auto; scrollbar-gutter: stable both-edges; padding: 24px 32px 56px; flex: 1; min-height: 0; }
-.convo-inner { max-width: var(--column); margin: 0 auto; }
+/* The conversation fills its pane at the usual two sizes: lines get longer in a wider window. */
+.convo-inner { min-width: 0; }
+/* The reply bar and the panels over it span the same width as the conversation. */
+.focus-detail { --column: none; }
 .msg { margin: 0 0 18px; }
 /* You: a band of darker enamel with an engraved label, at the reading measure. */
 /* You: a hairline rule and an engraved label, not a card. */
@@ -1002,7 +1005,8 @@ pre.code.small { font-size: var(--fs-s); max-height: 280px; overflow: auto; whit
 .attach-remove { position: absolute; top: -8px; right: -8px; width: 20px; height: 20px; padding: 0; border-radius: 50%; display: grid; place-items: center; background: var(--plate); color: var(--plate-text); border-color: var(--plate); }
 
 /* The reply bar, docked under the reading column. */
-.composer { border-top: 1px solid var(--line); padding: 12px 32px 12px; background: var(--bg); position: relative; z-index: 6; }
+/* Side padding: the conversation's 32px plus its 10px scrollbar gutter, so the edges line up. */
+.composer { border-top: 1px solid var(--line); padding: 12px 42px 12px; background: var(--bg); position: relative; z-index: 6; }
 .composer-row { display: flex; gap: 8px; align-items: flex-end; max-width: var(--column); margin: 0 auto; }
 .composer-input { flex: 1; resize: none; min-height: 42px; overflow-y: hidden; max-height: 40vh; line-height: 1.5; padding: 9px 12px; background: var(--panel); }
 .composer-buttons { display: flex; gap: 8px; }
@@ -1400,6 +1404,39 @@ dialog.palette { width: min(660px, calc(100vw - 32px)); padding: 0; margin-top: 
 /* Setting the route: the cream plate slides in from the lamp to the shelf. */
 @keyframes route-set { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 
+/* ---- the guided tour (public/tour.js) -------------------------------------------------------- */
+/* The cover takes the clicks; the cutout's spread shadow dims everything but the part being shown,
+   in the plate's near-black (darker than the dialog backdrop, so the lit part stands out), and a
+   focus-ring outline marks it. A floating card explains. */
+.tour { position: fixed; inset: 0; z-index: 1000; }
+.tour-cover { position: absolute; inset: 0; }
+.tour-cutout {
+  position: absolute;
+  border-radius: 6px;
+  outline: 2px solid var(--focus-ring);
+  box-shadow: 0 0 0 9999px color-mix(in srgb, var(--plate) 72%, transparent);
+  pointer-events: none;
+  transition: left var(--dur-normal) var(--ease), top var(--dur-normal) var(--ease), width var(--dur-normal) var(--ease), height var(--dur-normal) var(--ease);
+}
+.tour-centered .tour-cutout { left: 50%; top: 50%; width: 0; height: 0; outline: 0; }
+.tour-card {
+  position: absolute;
+  width: min(380px, calc(100vw - 24px));
+  background: var(--surface-overlay);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 14px 16px 12px;
+  box-shadow: var(--shadow-pop);
+  animation: pop-in var(--dur-normal) var(--ease);
+}
+.tour-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.tour-title { margin: 0; background: var(--plate); color: var(--plate-text); padding: 3px 9px; border-radius: 3px; }
+.tour-count { font-size: var(--fs-s); color: var(--muted); white-space: nowrap; }
+.tour-body p { margin: 0 0 8px; line-height: 1.55; }
+.tour-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+.tour-actions .spacer { flex: 1; }
+
 /* ---- smaller windows ------------------------------------------------------------------------- */
 /* Narrower windows drop the least useful words first; full names stay in the tooltips. */
 @media (max-width: 1500px) {
@@ -1422,14 +1459,21 @@ dialog.palette { width: min(660px, calc(100vw - 32px)); padding: 0; margin-top: 
   .shelf { flex-wrap: wrap; padding: 6px 12px; gap: 8px 14px; }
   .nav-item { margin-top: 0; border-radius: 3px; padding: 5px 10px; }
   .shelf-instruments { margin-left: 0; flex-wrap: wrap; }
-  .focus, .split, .fp-body { grid-template-columns: 1fr; }
+  .split, .fp-body { grid-template-columns: 1fr; }
+  .history-list { max-height: 42vh; }
+  /* Sessions keep the conversation in view: the session list stays beside the chat instead of
+     stacking above it (app.js narrows it to its lamps here, and the toggle widens it again, to at
+     most 60% of the window), and the page stays one screen high so the conversation scrolls
+     inside it with the reply bar on screen. */
+  .app:has(#view-sessions:not([hidden])) { height: 100vh; }
+  .focus { grid-template-columns: min(var(--focus-sidebar-w, 300px), 60vw) minmax(0, 1fr); }
   .focus-splitter { display: none; }
-  .track, .history-list { max-height: 42vh; }
   .fp-places { max-height: 30vh; border-right: 0; }
   .setting, .pref-row { grid-template-columns: 1fr; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   input[type="search"] { width: 100%; }
-  .view-head, .scope-bar, .tabs, .settings-body, .prefs, .convo, .composer, .detail-head, .banner { padding-left: 16px; padding-right: 16px; }
+  .view-head, .scope-bar, .tabs, .settings-body, .prefs, .convo, .detail-head, .banner { padding-left: 16px; padding-right: 16px; }
+  .composer { padding-left: 26px; padding-right: 26px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
