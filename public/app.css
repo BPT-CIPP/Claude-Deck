@@ -928,6 +928,9 @@ pre.code { background: transparent; border: 0; padding: 10px 14px; overflow-x: a
 
 .msg-note { color: var(--faint); font-size: var(--fs-s); margin: -4px 0 12px; }
 .msg-error { color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); background: var(--danger-wash); border-radius: 4px; padding: 8px 12px; margin: 0 0 14px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-s); }
+.msg-signin { border: 1px solid var(--line-strong); background: var(--panel); border-radius: 4px; padding: 10px 12px; margin: -6px 0 14px; overflow-wrap: anywhere; }
+.signin-command { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.signin-command code { background: var(--panel-2); border-radius: 3px; padding: 3px 8px; }
 .msg-result { color: var(--faint); font-size: var(--fs-s); margin: -4px 0 18px; }
 
 /* Tool calls: lines in a register, ruled, not boxed. */

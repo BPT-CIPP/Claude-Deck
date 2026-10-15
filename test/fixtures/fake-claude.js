@@ -326,6 +326,13 @@ function streamMode() {
     // Shapes from the real CLI (2.1.284): thinking as its own assistant message; an edit's result
     // with tool_use_result.structuredPatch; TodoWrite; TaskCreate's "Task #N created successfully";
     // ExitPlanMode asking with requires_user_interaction, and its setMode update.
+    // An expired sign-in, in the shapes the real CLI sends when it can't authenticate (2.1.296): a
+    // synthetic assistant message marked authentication_failed, then an error result.
+    if (/expire my sign-in/i.test(prompt)) {
+      const msg = 'Failed to authenticate: OAuth session expired and could not be refreshed';
+      out({ type: 'assistant', message: { id: `msg_${++n}`, role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: msg }] }, error: 'authentication_failed', parent_tool_use_id: null, session_id: sessionId });
+      return result({ is_error: true, result: msg });
+    }
     if (/show thinking/i.test(prompt)) {
       out({ type: 'assistant', message: { id: `msg_${++n}`, role: 'assistant', model: 'claude-fake', content: [{ type: 'thinking', thinking: 'Let me think about this for a moment.', signature: 'fake' }] }, parent_tool_use_id: null, session_id: sessionId });
       text('Thought it through.');

@@ -187,6 +187,26 @@ test("thinking, edits' diffs and the to-do list come through as Claude Code show
   await waitFor(() => sum().todos === null, 'the list cleared with the conversation');
 }));
 
+test("an expired sign-in says how to sign in from PowerShell, and /login isn't sent to Claude", () => withChat(async ({ id, its, last, say }) => {
+  await say('please expire my sign-in');
+  assert.match(last('error').text, /OAuth session expired/);
+  const help = last('signin');
+  assert.ok(help, 'sign-in instructions after the error');
+  assert.strictEqual(help.command, 'claude auth login');
+  assert.match(help.text, /PowerShell/);
+  // An ordinary reply afterwards brings no instructions with it.
+  const before = its().filter((i) => i.kind === 'signin').length;
+  await say('hello again');
+  assert.strictEqual(its().filter((i) => i.kind === 'signin').length, before);
+  // /login only works in Claude Code's terminal: it stays here, with the instructions, and no reply.
+  const replies = its().filter((i) => i.kind === 'result').length;
+  mgr.send(id, '/login');
+  assert.strictEqual(its().at(-2).kind, 'user');
+  assert.strictEqual(its().at(-1).kind, 'signin');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.strictEqual(its().filter((i) => i.kind === 'result').length, replies, 'Claude got no /login turn');
+}));
+
 test('a plan is approved with how Claude carries on, or sent back to keep planning', () => withChat(async ({ id, sum, last, its }) => {
   mgr.send(id, 'plan it');
   await waitFor(() => last('plan') && last('plan').status === 'pending', 'the plan');

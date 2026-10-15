@@ -122,8 +122,9 @@ running, with a link to the releases.
 
 ## Getting a change to everyone
 
-There's nothing to build or package. After a pull request merges, teammates choose **Claude Deck
-Preferences → Dashboard → Check for updates**: it updates a clean copy on `main` and restarts on
+There's nothing to build or package. After a pull request merges, teammates are offered the update
+the next time their Claude Deck window opens, or choose **Claude Deck Preferences → Dashboard →
+Check for updates**: it updates a clean copy on `main` and restarts on
 it (a copy on another branch, or with changes of its own, is left alone, with the command to update
 it by hand). Or update the clone by hand and restart the server:
 

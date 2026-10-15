@@ -1860,6 +1860,13 @@
         return h('div', { class: 'msg-note', dataset: { n } }, it.text);
       case 'error':
         return h('div', { class: 'msg-error', dataset: { n }, role: 'alert' }, it.text);
+      // How to sign Claude Code in again (src/chat.js signInHelp), with the command to copy.
+      case 'signin':
+        return h('div', { class: 'msg-signin', dataset: { n }, role: 'alert' },
+          h('div', null, it.text),
+          h('div', { class: 'signin-command' },
+            h('code', null, it.command),
+            h('button', { class: 'ghost small', onclick: () => copy(it.command, 'Command copied') }, 'Copy command')));
       case 'result':
         return it.aborted || it.isError ? h('span', { dataset: { n }, hidden: true }) : h('div', { class: 'msg-result', dataset: { n } },
           it.durationMs ? `Done in ${duration(it.durationMs)}` : 'Done',
@@ -4045,6 +4052,36 @@
     reloadWhenRestarted(res.pid);
   }
 
+  // At launch: when GitHub has a newer Claude Deck for this copy (a git clone on main, with access to
+  // the repository through the GitHub CLI), offer it. Everything that can go wrong (no access, no
+  // git or gh, offline, a copy that isn't updated from here) ends silently, by request: Check for
+  // updates in Preferences is the place that explains problems. A version declined isn't offered
+  // again until the window is next opened.
+  async function checkForUpdatesAtLaunch() {
+    const offered = 'deck-update-offered';
+    let check;
+    try { check = await api('POST', '/api/update', { apply: false }); } catch { return; }
+    if (!check || !check.available) return;
+    const version = String(check.to || '');
+    try {
+      if (sessionStorage.getItem(offered) === version) return;
+      sessionStorage.setItem(offered, version);
+    } catch { /* storage unavailable: offer it anyway */ }
+    // After the first-launch tour or any open dialog, not on top of them.
+    while (document.querySelector('.tour, dialog[open]')) await new Promise((r) => setTimeout(r, 1000));
+    const ok = await Deck.confirm({
+      title: 'Update found',
+      body: `Would you like to update Claude Deck now?${check.to && check.to !== check.from ? ` Version ${check.to} is available${check.from ? ` (this is ${check.from})` : ''}.` : ''} Claude Deck gets it from GitHub, then restarts and this window reloads. Chats end, including one working on Claude Deck itself; resume them afterwards. Terminal sessions keep running.`,
+      ok: 'Update now',
+    });
+    if (!ok) return;
+    let res;
+    try { res = await api('POST', '/api/update', { apply: true }); } catch { return; }
+    if (!res || !res.updated) return;
+    toast(`Updated to v${res.to}. Restarting…`);
+    reloadWhenRestarted(res.pid);
+  }
+
   // ---- views + wiring ------------------------------------------------------------------------
   function setView(view) {
     if (!['sessions', 'history', 'settings', 'prefs'].includes(view)) view = 'sessions';
@@ -4336,8 +4373,12 @@
     updateNotifBanner();
     setView(S.view);
     connect();
-    // First launch: the guided tour, once the page has drawn.
-    if (!store.get('tourSeen', false)) setTimeout(startTour, 400);
+    // Once the page has drawn: on first launch the guided tour, then the update check, which waits
+    // for the tour to finish before it asks anything.
+    setTimeout(() => {
+      if (!store.get('tourSeen', false)) startTour();
+      checkForUpdatesAtLaunch();
+    }, 400);
     // Keep "for 3m" style labels fresh.
     setInterval(() => { if (S.view === 'sessions' && !document.hidden) { renderSessions(); renderUsage(); } }, 30000);
   }

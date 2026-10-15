@@ -188,6 +188,17 @@ const THUMB = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/;
 // A dropped file, base64-encoded, has to fit in one request (the server takes up to 60 MB).
 const MAX_FILE_BYTES = 40 * 1024 * 1024;
 
+// Claude Code can't sign in: not signed in ("Not logged in · Please run /login") or a sign-in that
+// expired ("Failed to authenticate: OAuth session expired ..."). Its own fix, /login, only works in
+// its terminal, so the chat says how to sign in from PowerShell instead.
+const AUTH_ERROR = /not logged in|failed to authenticate|oauth|please run \/login/i;
+const SIGN_IN_COMMAND = 'claude auth login';
+const signInHelp = () => ({
+  kind: 'signin',
+  text: "Claude Code isn't signed in, or its sign-in has expired. Open PowerShell, run the command below and finish signing in in your browser. Then send your message again; if it still fails, end this chat and resume it.",
+  command: SIGN_IN_COMMAND,
+});
+
 // A dropped file's name, safe to create on Windows: no folders, reserved characters or device names.
 function safeFileName(name) {
   const base = String(name || '').split(/[\\/]/).pop().replace(/[<>:"|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(-120);
@@ -648,6 +659,8 @@ class ChatManager extends EventEmitter {
           break;
         }
         if (!m.message) break;
+        // Claude Code couldn't sign in (not signed in, or the sign-in expired): see the result below.
+        if (m.error === 'authentication_failed') chat.authFailed = true;
         for (const b of m.message.content || []) {
           if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
             this._push(chat, { kind: 'assistant', text: clip(b.text, 30000) });
@@ -709,7 +722,10 @@ class ChatManager extends EventEmitter {
         if (m.is_error && !aborted) {
           const detail = m.result || (Array.isArray(m.errors) ? m.errors.join('\n') : '') || m.subtype;
           this._push(chat, { kind: 'error', text: `Claude hit an error: ${clip(String(detail), 2000)}` });
+          // A sign-in problem: Claude Code says to run /login, which doesn't work in a chat.
+          if (chat.authFailed || AUTH_ERROR.test(String(detail))) this._push(chat, signInHelp());
         }
+        chat.authFailed = false;
         // Claude's duration_ms is clock time, sleep included.
         const durationMs = m.duration_ms ? Math.max(0, m.duration_ms - chat.turnSleptMs) : null;
         chat.turnSleptMs = 0;
@@ -873,6 +889,14 @@ class ChatManager extends EventEmitter {
     const chat = this._get(id);
     const { text, images, pasted } = normalizeMessage(input);
     if (!text.trim() && !images.length) throw new UserError('Type a message or attach an image first.');
+    // /login only works in Claude Code's terminal ("isn't available in this environment" here), so
+    // it isn't sent: the chat says how to sign in instead.
+    if (!images.length && /^\/login\s*$/i.test(text.trim())) {
+      this._push(chat, { kind: 'user', text: text.trim(), images: [], imageCount: 0, queued: false });
+      this._push(chat, signInHelp());
+      this._changed(chat);
+      return { queued: chat.queued > 0 };
+    }
     const content = images.length
       ? [...images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } })), ...(text.trim() ? [{ type: 'text', text }] : [])]
       : text;

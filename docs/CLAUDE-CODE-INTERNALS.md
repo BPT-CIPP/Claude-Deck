@@ -48,8 +48,15 @@ a version without it would take `auth status` as a prompt.
 ✅ A chat on a signed-out Claude Code: after `system/init` (`apiKeySource: "none"`) comes a synthetic
 `assistant` message (`model: "<synthetic>"`, `error: "authentication_failed"`, text
 `Not logged in · Please run /login`), then a `result` with `is_error: true` and the same text, and the
-process exits 1. No request is made. `/login` doesn't work in stream-json; the user has to sign in
-from a terminal.
+process exits 1. No request is made. `/login` doesn't work in stream-json (it answers "/login isn't
+available in this environment."); the user has to sign in from a terminal.
+
+✅ A sign-in that expired mid-chat (seen in a real chat, 2026-10-15): the reply and the error result
+read `Failed to authenticate: OAuth session expired and could not be refreshed`, and the process
+keeps running. ⚠️ That this message also carries `error: "authentication_failed"` is inferred from
+the signed-out case, so `src/chat.js` matches the text too (`AUTH_ERROR`) and adds sign-in
+instructions (`claude auth login`) either way, and answers a typed `/login` with them instead of
+sending it.
 
 ## CLI flags Claude Deck uses
 
