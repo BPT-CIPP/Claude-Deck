@@ -3947,14 +3947,22 @@
       prefRow('Terminal profile', 'Font, colors and so on come from this profile', h('div', { class: 'row' }, profileInput, h('button', { class: 'ghost', onclick: () => savePrefs({ wtProfile: profileInput.value.trim() }) }, 'Save')))));
 
     const folderInput = h('input', { type: 'text', value: p.defaultFolder, spellcheck: 'false' });
+    // A newly chosen default is where New session opens next: the folder it remembers from the last
+    // session started (lastCwd, which otherwise comes first) is forgotten.
+    const saveDefaultFolder = async (folder) => {
+      if (await savePrefs({ defaultFolder: folder })) {
+        try { localStorage.removeItem('deck-lastCwd'); } catch { /* storage unavailable */ }
+      }
+    };
     const favList = h('div', { class: 'pc' }, p.favorites.length ? p.favorites.map((f) => h('div', { class: 'fav' }, h('span', null, f), h('button', { class: 'ghost small', onclick: async () => { await toggleFavorite(f); renderPrefs(); } }, 'Unpin'))) : h('small', { class: 'faint' }, 'Pin folders with the star in the New session window.'));
     const presetList = h('div', { class: 'pc' }, p.presets.length ? p.presets.map((pr) => h('div', { class: 'fav' }, h('span', null, pr.name), h('button', { class: 'ghost small', onclick: async () => { await savePrefs({ presets: S.prefs.presets.filter((x) => x.name !== pr.name) }, true); renderPrefs(); } }, 'Delete'))) : h('small', { class: 'faint' }, 'Save a preset from the New session window.'));
     root.appendChild(h('section', { class: 'pref-section' },
       h('h2', null, 'New sessions'),
       prefRow('Default folder', 'Where Ctrl+Shift+N starts a chat. New session starts here too, until you start a session somewhere else',
         h('div', { class: 'row' }, folderInput,
-          h('button', { class: 'ghost', onclick: async () => { const picked = await pickFolder(folderInput.value); if (picked) folderInput.value = picked; } }, 'Browse…'),
-          h('button', { class: 'ghost', onclick: () => savePrefs({ defaultFolder: folderInput.value.trim() }) }, 'Save'))),
+          // A folder chosen with Browse is saved straight away, like the other choices in Preferences.
+          h('button', { class: 'ghost', onclick: async () => { const picked = await pickFolder(folderInput.value); if (picked) { folderInput.value = picked; await saveDefaultFolder(picked); } } }, 'Browse…'),
+          h('button', { class: 'ghost', onclick: () => saveDefaultFolder(folderInput.value.trim()) }, 'Save'))),
       prefRow('Pinned folders', null, favList),
       prefRow('Presets', null, presetList)));
 

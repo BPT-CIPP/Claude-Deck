@@ -22,6 +22,15 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   which only works in Claude Code's terminal, shows the same instructions instead of "isn't
   available in this environment".
 
+### Fixed
+- **The model menu in New session works again.** It opened, but clicks and hovers went through it
+  to the window underneath (showing that window's tooltips), so no model could be chosen. Browsers
+  block everything outside an open dialog, and the menu sat outside it; it now opens inside it.
+- **New session opens in the default folder you choose.** Choosing a folder with **Browse…** under
+  Preferences → New sessions → Default folder now saves it right away (it used to wait for
+  **Save**), and saving a default makes it where the next New session opens, even when it
+  remembered a folder from an earlier session.
+
 ## [1.12.0] - 2026-10-10
 
 ### Added
