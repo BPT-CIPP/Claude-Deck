@@ -6,6 +6,19 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.15.0] - 2026-10-21
+
+### Added
+- **History is filed by folder.** Conversations are grouped one folder per working directory, as
+  Claude Code keeps them (every conversation started in `…\Documents\Claude` is under that
+  folder), most recently active first. A folder opens in place to show its conversations, with
+  the other folders still in view. Drag a conversation onto another folder to move it there:
+  Claude Deck remembers that in its own data, Claude Code's files aren't touched, and the
+  conversation still resumes from the folder it was started in. A moved conversation says where it
+  came from, with a button to put it back, and the move can be undone from its toast. **Folders**
+  / **List** at the top of History switches to the old single list by day; the choice, and which
+  folders are open, are remembered.
+
 ## [1.14.0] - 2026-10-21
 
 ### Added
@@ -461,6 +474,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.15.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.11.0...v1.12.0

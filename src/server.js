@@ -22,6 +22,7 @@ const { UsageMonitor } = require('./usage');
 const { PluginManager } = require('./plugins');
 const promptHistory = require('./prompt-history');
 const { HistoryIndex, readTranscript, UUID_RE } = require('./history');
+const historyFolders = require('./history-folders');
 const { Registry } = require('./registry');
 const { Launcher, normalizeOptions, buildClaudeArgs, displayCommand, preflight, requireClaude, EFFORTS, PERMISSION_MODES, COLORS, MODEL_ALIASES } = require('./launcher');
 const { Live, isSameProcess } = require('./live');
@@ -378,6 +379,10 @@ async function main() {
     return [...ids];
   }
 
+  // History as the page lists it: every conversation, with the folder it's filed under
+  // (src/history-folders.js) and which are open right now.
+  const historyView = () => ({ sessions: historyFolders.annotate(history.list()), live: liveSessionIds() });
+
   const routes = {
     'GET /api/ping': () => ({ ok: true, pid: process.pid, version: VERSION }),
 
@@ -557,7 +562,18 @@ async function main() {
 
     'GET /api/history': async (req, p, url) => {
       if (url.searchParams.get('refresh') === '1') await history.refresh();
-      return { sessions: history.list(), live: liveSessionIds() };
+      return historyView();
+    },
+    // Files a conversation under another folder in History's folder view ({ folder }), or back in
+    // the one it was started in ({ folder: null }). Claude Deck's own note: Claude Code's files
+    // aren't touched, and the conversation resumes from its real folder as before.
+    'PUT /api/history/:sessionId/folder': async (req, p) => {
+      if (!UUID_RE.test(p.sessionId)) throw new UserError('Invalid session ID.');
+      await history.refreshIfOlderThan(1000);
+      if (!history.get(p.sessionId)) throw new UserError('That conversation was not found in history.', 404);
+      const b = await readBody(req);
+      historyFolders.set(p.sessionId, b.folder === null || b.folder === undefined ? null : b.folder);
+      return historyView();
     },
     // Delete a conversation: its files go to Claude Deck's trash (src/trash.js); Undo restores them.
     'DELETE /api/history/:sessionId': async (req, p) => {
@@ -571,16 +587,16 @@ async function main() {
       const meta = history.get(p.sessionId) || {};
       const result = trash.trashSession(p.sessionId, file, { title: meta.title, cwd: meta.cwd });
       await history.refresh();
-      return { ...result, sessions: history.list(), live: liveSessionIds() };
+      return { ...result, ...historyView() };
     },
     'POST /api/history/restore': async (req) => {
       const result = trash.restore((await readBody(req)).trashId);
       await history.refresh();
-      return { ...result, sessions: history.list(), live: liveSessionIds() };
+      return { ...result, ...historyView() };
     },
     'POST /api/history/rebuild': async () => {
       await history.rebuild();
-      return { sessions: history.list(), live: liveSessionIds() };
+      return historyView();
     },
     'GET /api/transcript/:sessionId': async (req, p, url) => {
       if (!UUID_RE.test(p.sessionId)) throw new UserError('Invalid session ID.');
@@ -884,6 +900,9 @@ async function main() {
   billing.readRegistryEnv();
   await history.refresh();
   try { trash.purgeOld(); } catch (err) { console.error('emptying old trash failed:', err); }
+  // Trashed conversations keep their folder note until the trash is emptied of them; after that
+  // it's forgotten with them.
+  try { historyFolders.prune([...history.list().map((m) => m.sessionId), ...trash.trashedSessionIds()]); } catch (err) { console.error('tidying history folders failed:', err); }
   live.start();
   usage.start();
   detectClaude().then(() => refreshModels()).catch((err) => console.error('checking Claude Code failed:', err));

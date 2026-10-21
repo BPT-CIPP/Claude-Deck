@@ -96,6 +96,10 @@
       <section id="view-history" class="view" aria-labelledby="h-history" hidden>
         <header class="view-head">
           <h1 id="h-history">History</h1>
+          <div class="seg" id="history-view" role="group" aria-label="Show conversations as">
+            <button type="button" data-view="folders" aria-pressed="true" title="One folder per working directory, as Claude Code files them. Drag a conversation onto another folder to move it.">Folders</button>
+            <button type="button" data-view="list" aria-pressed="false" title="Every conversation in one list, newest first">List</button>
+          </div>
           <div class="summary" id="history-summary"></div>
           <div class="spacer"></div>
           <input type="search" id="history-search" placeholder="Search titles, prompts, folders, IDs" aria-label="Search history">

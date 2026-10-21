@@ -95,6 +95,36 @@ test('a Claude Code path set to a .cmd shim does not stop the server from starti
   }
 });
 
+test('History files each conversation under its folder, and a move is remembered without touching the transcript', async () => {
+  const fs = require('fs');
+  const { line } = require('./helpers');
+  const { port } = JSON.parse(fs.readFileSync(path.join(box.dataDir, 'runtime.json'), 'utf8'));
+  const token = JSON.parse(fs.readFileSync(path.join(box.dataDir, 'secret.json'), 'utf8')).token;
+  const call = async (method, url, body) => {
+    const r = await fetch(`http://127.0.0.1:${port}${url}`, { method, headers: { 'x-deck-token': token, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, body: await r.json() };
+  };
+  const SID = 'dddddddd-4444-4444-8444-444444444444';
+  const dir = path.join(box.claudeDir, 'projects', 'C--work-filed');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${SID}.jsonl`);
+  fs.writeFileSync(file, line({ sessionId: SID, cwd: 'C:\\work\\filed', type: 'user', message: { role: 'user', content: 'File me' }, timestamp: '2026-10-01T10:00:00.000Z' }));
+  const before = fs.readFileSync(file);
+  let r = await call('GET', '/api/history?refresh=1');
+  let m = r.body.sessions.find((s) => s.sessionId === SID);
+  assert.deepStrictEqual([m.folder, m.movedFrom], ['C:\\work\\filed', null]);
+  r = await call('PUT', `/api/history/${SID}/folder`, { folder: 'C:\\work\\elsewhere' });
+  assert.strictEqual(r.status, 200);
+  m = r.body.sessions.find((s) => s.sessionId === SID);
+  assert.deepStrictEqual([m.folder, m.movedFrom, m.cwd], ['C:\\work\\elsewhere', 'C:\\work\\filed', 'C:\\work\\filed']);
+  assert.deepStrictEqual(fs.readFileSync(file), before, "Claude Code's transcript is untouched");
+  assert.strictEqual((await call('PUT', `/api/history/${SID}/folder`, { folder: 'not\\a\\full\\path' })).status, 400);
+  assert.strictEqual((await call('PUT', '/api/history/eeeeeeee-5555-4555-8555-555555555555/folder', { folder: 'C:\\x' })).status, 404);
+  r = await call('PUT', `/api/history/${SID}/folder`, { folder: null });
+  m = r.body.sessions.find((s) => s.sessionId === SID);
+  assert.deepStrictEqual([m.folder, m.movedFrom], ['C:\\work\\filed', null], 'put back');
+});
+
 test('restart hands over to a new server on the same port, exiting as "another copy is serving"', async () => {
   const fs = require('fs');
   const runtime = () => JSON.parse(fs.readFileSync(path.join(box.dataDir, 'runtime.json'), 'utf8'));
