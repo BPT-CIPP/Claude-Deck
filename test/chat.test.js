@@ -207,6 +207,57 @@ test("an expired sign-in says how to sign in from PowerShell, and /login isn't s
   assert.strictEqual(its().filter((i) => i.kind === 'result').length, replies, 'Claude got no /login turn');
 }));
 
+test("Config lists and changes Claude Code's /config options through the chat's own Claude Code, out of the conversation", () => withChat(async ({ id, its }) => {
+  const before = its().length;
+  const first = await mgr.configOptions(id);
+  const theme = first.options.find((o) => o.key === 'theme');
+  assert.deepStrictEqual([theme.label, theme.values, theme.where], ['Theme', ['auto', 'dark', 'light'], 'user']);
+  const res = await mgr.setConfig(id, { theme: 'dark', editor: 'vim' });
+  assert.deepStrictEqual(res, { lines: ['Set Theme to dark', 'Set Editor mode to vim'] });
+  const after = Object.fromEntries((await mgr.configOptions(id)).options.map((o) => [o.key, o.value]));
+  assert.strictEqual(after.theme, 'dark');
+  assert.strictEqual(after.editor, 'vim');
+  // Claude Code checks the value; its answer comes back instead of "Set ...".
+  const bad = await mgr.setConfig(id, { theme: 'purple' });
+  assert.deepStrictEqual(bad, { lines: ['Theme takes one of: auto, dark, light.'] });
+  assert.strictEqual(its().length, before, 'nothing was added to the conversation');
+  // Every change is checked before any is sent: a bad second one stops the first from being made.
+  await assert.rejects(() => mgr.setConfig(id, { theme: 'light', 'theme dark': 'x' }), /Not a \/config option/);
+  assert.strictEqual(Object.fromEntries((await mgr.configOptions(id)).options.map((o) => [o.key, o.value])).theme, 'dark', 'the first change was not made');
+}));
+
+test("a /config reply is matched to its own command, not to a shell command or message sent just before", { skip: process.platform !== 'win32' }, () => withChat(async ({ id, its, last }) => {
+  // The shell message is written as runShell resolves; its result arrives after /config is sent.
+  await mgr.runShell(id, 'Write-Output hi');
+  const before = its().length;
+  const { options } = await mgr.configOptions(id);
+  assert.ok(options.some((o) => o.key === 'theme'), 'the list came from /config, not from the shell message');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.strictEqual(its().length, before, 'neither reply was added to the conversation');
+  assert.ok(!(last('assistant') && /^Usage: \/config/.test(last('assistant').text)), "the list wasn't shown as Claude's reply");
+}));
+
+test('Default in the model menu shows as the default, not as the model before it', () => withChat(async ({ id, sum }) => {
+  await mgr.setModel(id, 'opus');
+  assert.strictEqual(sum().chatModel, 'opus');
+  assert.strictEqual(sum().requestedModel, 'opus');
+  await mgr.setModel(id, '');
+  assert.strictEqual(sum().chatModel, null, "which model the default is comes with the next turn's init");
+  assert.strictEqual(sum().requestedModel, '');
+}));
+
+test("a /config reply that arrives after Claude Deck gave up waiting is read, not shown as Claude's", () => withChat(async ({ id, its }) => {
+  const chat = mgr.chats.get(id);
+  const before = its().length;
+  // No time at all to answer: the command has been sent, and its reply is still on its way.
+  await assert.rejects(mgr._localCommand(chat, '/config', 0), /didn't answer/);
+  await waitFor(() => chat.localCommands.size === 0, 'the late reply to arrive');
+  assert.strictEqual(its().length, before, 'the late reply was swallowed');
+  assert.ok(!its().some((i) => i.kind === 'assistant' && /^Usage: \/config/.test(i.text)));
+  // And the window works again afterwards.
+  assert.ok((await mgr.configOptions(id)).options.length > 0);
+}));
+
 test('a plan is approved with how Claude carries on, or sent back to keep planning', () => withChat(async ({ id, sum, last, its }) => {
   mgr.send(id, 'plan it');
   await waitFor(() => last('plan') && last('plan').status === 'pending', 'the plan');
@@ -420,9 +471,28 @@ test('a dropped file is kept in the data folder under a safe name', async () => 
     assert.notStrictEqual(again.path, res.path);
     assert.strictEqual(fs.readFileSync(res.path).length, data.length);
     assert.throws(() => mgr.saveFile(c.id, { name: 'x.txt', data: 'not base64!' }), /couldn't be read/);
-  } finally {
+    // The copies go with the chat when it's removed from the list.
     await mgr.end(c.id);
+    await waitFor(() => !fs.existsSync(path.join(box.dataDir, 'attachments', c.id)), 'the attachments to be removed with the chat');
+  } finally {
+    if (mgr.chats.has(c.id)) await mgr.end(c.id);
   }
+});
+
+test('attachments left by chats that are no longer listed are removed when the server starts', async () => {
+  const stale = path.join(box.dataDir, 'attachments', 'no-such-chat', 'abcd');
+  fs.mkdirSync(stale, { recursive: true });
+  fs.writeFileSync(path.join(stale, 'old.pdf'), 'x');
+  const kept = path.join(box.dataDir, 'attachments', id, 'abcd');
+  fs.mkdirSync(kept, { recursive: true });
+  fs.writeFileSync(path.join(kept, 'mine.pdf'), 'x');
+  // A new manager starting with the same chats.json: the demo chat is listed, no-such-chat isn't.
+  mgr._saveNow();
+  const again = new ChatManager();
+  clearInterval(again.sleepTimer);
+  await waitFor(() => !fs.existsSync(path.join(box.dataDir, 'attachments', 'no-such-chat')), 'the stale attachments to go');
+  assert.ok(fs.existsSync(path.join(kept, 'mine.pdf')), "a listed chat's attachments stay");
+  fs.rmSync(path.join(box.dataDir, 'attachments', id), { recursive: true, force: true });
 });
 
 test('dropped file names are made safe for Windows', () => {

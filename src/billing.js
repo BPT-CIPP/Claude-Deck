@@ -12,7 +12,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 const paths = require('./paths');
 const prefsStore = require('./prefs');
 const { readJson, UserError } = require('./util');
@@ -29,7 +29,7 @@ const BILLING_VARS = [
   'CLAUDE_CODE_USE_MANTLE',
   'CLAUDE_CODE_USE_GATEWAY',
 ];
-const MANAGED_SETTINGS = path.join('C:\\Program Files', 'ClaudeCode', 'managed-settings.json');
+const MANAGED_SETTINGS = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'ClaudeCode', 'managed-settings.json');
 const REGISTRY_ENV = {
   'your Windows user environment': 'HKCU\\Environment',
   "this PC's environment": 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment',
@@ -45,35 +45,55 @@ const isSet = (v) => typeof v === 'string' ? v.trim() !== '' && v.trim() !== '0'
 // Tests only: leave this PC's registry and managed settings out, so they can't trip the guard.
 const skipSystem = () => process.env.CLAUDE_DECK_SKIP_SYSTEM_SETTINGS === '1';
 
-// Values under a registry key, by name, with reg.exe (a Windows built-in). A missing key is empty.
-function regValues(key) {
-  let out = '';
-  try { out = execFileSync('reg.exe', ['query', key], { encoding: 'utf8', windowsHide: true, timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return null; }
+// Values under a registry key, by name, from reg.exe's output. A missing key is empty.
+const REG_OPTS = { encoding: 'utf8', windowsHide: true, timeout: 5000 };
+function parseRegOutput(out) {
   const values = {};
-  for (const line of out.split(/\r?\n/)) {
+  for (const line of String(out || '').split(/\r?\n/)) {
     const m = line.match(/^\s+(\S+)\s+REG_\w+\s*(.*)$/);
     if (m) values[m[1].toUpperCase()] = m[2];
   }
   return values;
 }
 
+function regValues(key) {
+  try { return parseRegOutput(execFileSync('reg.exe', ['query', key], { ...REG_OPTS, stdio: ['ignore', 'pipe', 'ignore'] })); } catch { return null; }
+}
+
+function regValuesAsync(key) {
+  return new Promise((resolve) => {
+    execFile('reg.exe', ['query', key], REG_OPTS, (err, stdout) => resolve(err ? null : parseRegOutput(stdout)));
+  });
+}
+
+function assemble(env, policy) {
+  const value = { env: {}, policy: {} };
+  for (const [where, names] of Object.entries(env)) if (names) value.env[where] = names;
+  for (const [where, values] of Object.entries(policy)) if (values && values.SETTINGS) value.policy[where] = values.SETTINGS;
+  return value;
+}
+
 // Windows Terminal tabs get Windows' stored environment rather than Claude Deck's, so that's read
-// too, along with the policy keys. Cached briefly: reg.exe runs on every session start otherwise.
+// too, along with the policy keys. reg.exe runs four times and the server would wait for it on
+// every session start, so only the first read waits (the server does it at start-up); after that
+// a reading older than REGISTRY_CACHE_MS is answered from the cache while reg.exe runs again in
+// the background. A change in the registry shows up on the read after the next refresh.
 let registryCache = null;
+let registryRefresh = null;
 function readRegistry() {
   if (process.platform !== 'win32' || skipSystem()) return { env: {}, policy: {} };
-  if (registryCache && Date.now() - registryCache.at < REGISTRY_CACHE_MS) return registryCache.value;
-  const value = { env: {}, policy: {} };
-  for (const [where, key] of Object.entries(REGISTRY_ENV)) {
-    const names = regValues(key);
-    if (names) value.env[where] = names;
+  if (!registryCache) {
+    const env = Object.fromEntries(Object.entries(REGISTRY_ENV).map(([where, key]) => [where, regValues(key)]));
+    const policy = Object.fromEntries(Object.entries(REGISTRY_POLICY).map(([where, key]) => [where, regValues(key)]));
+    registryCache = { at: Date.now(), value: assemble(env, policy) };
+  } else if (Date.now() - registryCache.at >= REGISTRY_CACHE_MS && !registryRefresh) {
+    const read = (keys) => Promise.all(Object.entries(keys).map(([where, key]) => regValuesAsync(key).then((v) => [where, v]))).then(Object.fromEntries);
+    registryRefresh = Promise.all([read(REGISTRY_ENV), read(REGISTRY_POLICY)])
+      .then(([env, policy]) => { registryCache = { at: Date.now(), value: assemble(env, policy) }; })
+      .catch(() => {})
+      .finally(() => { registryRefresh = null; });
   }
-  for (const [where, key] of Object.entries(REGISTRY_POLICY)) {
-    const values = regValues(key);
-    if (values && values.SETTINGS) value.policy[where] = values.SETTINGS;
-  }
-  registryCache = { at: Date.now(), value };
-  return value;
+  return registryCache.value;
 }
 const readRegistryEnv = () => readRegistry().env;
 const readRegistryPolicy = () => readRegistry().policy;

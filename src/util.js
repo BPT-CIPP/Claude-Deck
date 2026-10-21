@@ -87,6 +87,33 @@ function parseArgString(input) {
   return args;
 }
 
+// Calls fn with each line of a file, reading a megabyte at a time: a transcript can be larger
+// than the biggest string V8 can hold, so it's never read as one.
+function forEachLine(file, fn) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.alloc(1024 * 1024);
+    let carry = Buffer.alloc(0);
+    let n;
+    while ((n = fs.readSync(fd, buf, 0, buf.length, null)) > 0) {
+      const chunk = carry.length ? Buffer.concat([carry, buf.subarray(0, n)]) : buf.subarray(0, n);
+      let from = 0;
+      let idx;
+      // Only the new bytes can hold the next newline.
+      let search = carry.length;
+      while ((idx = chunk.indexOf(0x0a, search)) !== -1) {
+        fn(chunk.toString('utf8', from, idx));
+        from = idx + 1;
+        search = from;
+      }
+      carry = Buffer.from(chunk.subarray(from));
+    }
+    if (carry.length) fn(carry.toString('utf8'));
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function clip(text, max) {
   if (typeof text !== 'string') return text;
   return text.length > max ? text.slice(0, max - 1) + '…' : text;
@@ -106,6 +133,7 @@ module.exports = {
   writeJsonAtomic,
   isPidAlive,
   parseArgString,
+  forEachLine,
   clip,
   UserError,
 };

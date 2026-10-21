@@ -444,6 +444,59 @@ requiresUserAction: true, callbackExpected: false}` for a claude.ai connector, c
 claude.ai. Probed: a stdio server answers the error `Server type "stdio" does not support OAuth
 authentication`; an unknown name, `Server not found: <name>`.
 
+## The /config options (2.1.301)
+
+✅ `/config` sent as a chat message in stream-json is a local command (no model request): Claude Code
+answers with one `assistant` text message and a `result` (`is_error: false`, the same text in
+`result`). With nothing after it, the text is the list of options:
+
+```
+Usage: /config key=value [key=value ...]
+  autoCompact=true|false
+  language=<value>
+  switchModelsOnFlag=Switch automatically|Ask each time
+  ...
+```
+
+32 options in 2.1.301 (`<value>` is free text). `/config key=value` sets one ("Set Theme to dark"),
+or explains why not ("Verbose output takes true or false, not \"\".", "x isn't a /config setting.",
+"Couldn't save Thinking mode: Thinking can't be turned off for Opus 5.5"). Several pairs go on one
+line, but a value with spaces only works unquoted as the last pair, so `src/claude-config.js` sends
+one per command. `/config key` alone, and the interactive panel, aren't available: current values
+come from the files. Claude Code writes them a moment after it says "Set" (Claude Deck waits up to
+3 seconds before reading them back).
+
+✅ Like every other user message, a `/config` message gets `command_lifecycle` `queued`, `started`
+and `completed` for the `uuid` it was sent with. Probed with 2.1.301 against the mock API (a
+`shouldQuery: false` shell message, then `/config` straight after): `queued`/`started` for the
+shell message, `queued` for `/config`, `init`, the shell message's empty `result`, `completed` for
+the shell message, then `started` for `/config`, `init`, its `assistant` text, its `result`
+(`local_command: 'config'`) and `completed`. So a reply can't be matched to a command by order of
+arrival alone: `src/chat.js` takes the `assistant` text and `result` after a local command's
+`started` as that command's, and nothing before it. The current value shown for each option is
+read from the one file `/config` writes it to (its scope above): a project's shared
+`.claude/settings.json` is left out, since a value there would hide the one just saved and never
+match it.
+
+✅ Where each option is saved, from setting every one in a throwaway config folder: most go to the
+user's `settings.json` (`theme`, `editorMode`, `autoCompactEnabled`, `model`,
+`permissions.defaultMode`, `language`, `awaySummaryEnabled`, `timeFormat`, `preferredNotifChannel`,
+`fileCheckpointingEnabled`, `showTurnDuration`, `terminalProgressBarEnabled`, `autoScrollEnabled`,
+`verbose`, `enableWorkflows`, `workflowKeywordTriggerEnabled`, `useAutoModeDuringPlan`,
+`worktree.baseRef`, and `switchModelsOnFlag` as a boolean, `true` for "Switch automatically"); three
+to the project's `.claude/settings.local.json` (`spinnerTipsEnabled`, `prefersReducedMotion`,
+`outputStyle`); the rest to `.claude.json` (`respectGitignore`, `copyFullResponse`,
+`prStatusFooterEnabled`, `autoConnectIde`, `copyOnSelect`, `defaultToAgentsView`,
+`externalEditorContext`, `leftArrowOpensAgents`, `workflowSizeGuideline`). The full table, with
+labels, is `KNOWN` in `src/claude-config.js`. ⚠️ `thinking` → `alwaysThinkingEnabled` is inferred
+(Claude Code refused to change it on Opus 5.5). `.claude.json` sits inside `CLAUDE_CONFIG_DIR` when
+that's set, otherwise beside `~/.claude` (`paths.globalConfigFile()`).
+
+✅ The control channel can't do this instead: `update_settings` (needs `source: "userSettings"` and a
+`settings` object) accepts only `effortLevel` and refuses every other key ("update_settings keys not
+allowed: ..."); `get_settings` returns `{ effective, sources, applied }` for the settings files only.
+There's no `claude config` command.
+
 ## Rewinding the conversation
 
 ✅ Claude Code's Esc Esc has no stream-json request. `--resume <id> --resume-session-at <uuid>

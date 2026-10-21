@@ -4,8 +4,11 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { sandbox } = require('./helpers');
 
+const fs = require('fs');
+const path = require('path');
 const box = sandbox();
-const { normalizeOptions, buildClaudeArgs, displayCommand, wtEscape } = require('../src/launcher');
+const { Launcher, normalizeOptions, buildClaudeArgs, displayCommand, wtEscape } = require('../src/launcher');
+const { Registry } = require('../src/registry');
 const { parseArgString } = require('../src/util');
 
 test.after(() => box.cleanup());
@@ -68,4 +71,14 @@ test('display command quotes what needs quoting', () => {
 test('wt escaping keeps semicolons literal', () => {
   assert.strictEqual(wtEscape('C:\\a;b'), 'C:\\a\\;b');
   assert.strictEqual(wtEscape('plain'), 'plain');
+});
+
+test('dismissing a session that never started removes what its launch left in tabs/', () => {
+  const registry = new Registry();
+  const launcher = new Launcher({ registry });
+  registry.add({ id: 'never', title: 'x', cwd: 'C:\\', windowName: 'w', launchedAt: Date.now() - 60000 });
+  for (const suffix of ['.spec.json', '.json', '.close']) fs.writeFileSync(path.join(box.dataDir, 'tabs', `never${suffix}`), '{}');
+  launcher.dismiss('never');
+  assert.strictEqual(registry.get('never'), null);
+  assert.deepStrictEqual(fs.readdirSync(path.join(box.dataDir, 'tabs')).filter((n) => n.startsWith('never')), []);
 });

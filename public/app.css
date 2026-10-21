@@ -774,8 +774,9 @@ html.lamps-dim .lamp.waiting { background: color-mix(in srgb, var(--waiting) 55%
 .head-title { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
 .head-title h2 { overflow-wrap: anywhere; cursor: default; }
 .rename-input { font-weight: 700; padding: 2px 6px; min-width: 260px; }
-.head-menu-btn { padding: 2px 4px; color: var(--muted); }
-.head-menu-btn[aria-expanded="true"] { color: var(--text); background: var(--panel-2); }
+/* The session menu's button: outlined and on a lighter plane, so it reads as a control. */
+button.ghost.head-menu-btn { padding: 2px 5px; color: var(--text); background: var(--raise); border-color: var(--line-strong); }
+button.ghost.head-menu-btn:hover, .head-menu-btn[aria-expanded="true"] { color: var(--text); background: var(--panel-2); border-color: var(--muted); }
 .head-since { font-size: var(--fs-s); }
 .head-badge { padding: 0 8px; font-size: var(--fs-s); font-weight: 600; background: var(--working-wash); border-color: var(--line-strong); border-radius: 9px; }
 .head-extra { display: inline-flex; gap: 14px; margin-left: 6px; }
@@ -1343,6 +1344,15 @@ dialog.dialog {
 dialog::backdrop { background: color-mix(in srgb, var(--frame) 62%, transparent); }
 dialog.small { width: min(460px, calc(100vw - 32px)); }
 dialog.launch { width: min(740px, calc(100vw - 32px)); }
+/* A chat's Config window: Claude Code's /config options, one row each (app.js openConfig). */
+dialog.config-dialog { width: min(640px, calc(100vw - 32px)); }
+.config-list { max-height: min(56vh, 560px); overflow-y: auto; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
+.config-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(170px, 230px); gap: 4px 16px; align-items: center; padding: 7px 4px; border-bottom: 1px solid var(--line-soft); }
+.config-row:last-child { border-bottom: 0; }
+.config-row.changed .config-label { font-weight: 600; }
+.config-where { font-size: var(--fs-s); color: var(--faint); }
+.config-row select, .config-row input { width: 100%; }
+.config-dialog .form-error { white-space: pre-line; }
 dialog h2 { display: inline-block; background: var(--plate); color: var(--plate-text); padding: 3px 9px; border-radius: 3px; margin-bottom: 18px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
 .dialog-actions .spacer { flex: 1; }

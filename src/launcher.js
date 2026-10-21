@@ -122,6 +122,13 @@ function tabTitle(o) {
   return o.name || path.basename(o.cwd) || o.cwd;
 }
 
+// What a tab leaves in tabs/: its launch spec, its status, and any close or resume marker.
+function removeTabFiles(id) {
+  for (const suffix of ['.json', '.spec.json', '.close', '.resume']) {
+    try { fs.unlinkSync(path.join(paths.tabsDir(), id + suffix)); } catch { /* not present */ }
+  }
+}
+
 class Launcher {
   constructor({ registry, hostScript }) {
     this.registry = registry;
@@ -219,7 +226,16 @@ class Launcher {
     if (!sessionId) throw new UserError('This session never started a conversation, so there is nothing to resume.');
     const next = this.launch({ ...entry.options, mode: 'resume', resumeId: sessionId, name: entry.name, color: entry.color });
     this.registry.remove(id);
+    // Its files aren't needed once nothing tracks it; a host still up keeps writing its own.
+    if (!status || !isPidAlive(status.hostPid)) removeTabFiles(id);
     return { inPlace: false, entry: next };
+  }
+
+  // Forget a session that never reported in (a failed launch), and what it left in tabs/.
+  dismiss(id) {
+    this.registry.remove(id);
+    removeTabFiles(id);
+    return { ok: true };
   }
 
   _wt(args, onError) {
@@ -235,6 +251,7 @@ module.exports = {
   buildClaudeArgs,
   displayCommand,
   wtEscape,
+  removeTabFiles,
   requireClaude,
   requireFolder,
   preflight,

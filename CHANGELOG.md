@@ -6,6 +6,66 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.14.0] - 2026-10-21
+
+### Added
+- **Config, in a chat's ▾ menu.** Opens Claude Code's `/config` options (theme, editor mode,
+  auto-compact, model, default permission mode, notifications, output style and the rest, 32 in
+  Claude Code 2.1.301) with their current values, and changes them. The list comes from the chat's
+  own Claude Code, so new options appear as Claude Code adds them, and each change is made by
+  Claude Code itself (`/config key=value`), which checks it and saves it where it belongs. Nothing
+  is added to the conversation. Each option says whether it applies to all sessions or just this
+  folder.
+
+### Changed
+- **The ▾ menu button beside a session's name is easier to see**: it has an outline and a lighter
+  background.
+- **Enter takes the highlighted command or file** when the `/` or `@` list is open in the reply
+  box, as in Claude Code, instead of sending the half-typed word. A command typed out in full is
+  still sent.
+- **Dropped files are cleaned up.** The copy Claude Deck keeps of a file dropped on a chat
+  (`attachments\`) goes when the chat is removed from the list, and copies left by chats that are
+  no longer listed go when the server starts.
+- **Faster to start a session.** The billing guard's registry check waits for `reg.exe` only once,
+  when the server starts; after that it answers from what it last read and refreshes in the
+  background, so starting, resuming or rewinding a session no longer pauses every other chat.
+- **The Changes list is quicker to refresh** on a long conversation: earlier turns' file lists are
+  kept while the transcript is unchanged, and only the latest turn is compared with the disk again.
+
+### Fixed
+- **Config: a change's reply can no longer be mistaken for something else's.** A `/config` reply is
+  now matched to the command Claude Deck sent (by the uuid Claude Code reports progress on), so a
+  `!` command's result or a message sent at the same moment doesn't answer it, and its real reply
+  no longer lands in the conversation. A reply that arrives after the window gave up waiting is
+  read, not shown as Claude's.
+- **Config shows the value `/config` saved.** A setting in a project's shared `.claude/settings.json`
+  no longer hides the one Claude Code writes for all sessions, which made a change look as if it
+  hadn't taken and made every save wait the full three seconds.
+- **Config: changes are checked before any is made**, so a bad one can't leave the others half
+  done; when a later change fails, the earlier ones' confirmations are still shown, with what
+  stopped it. A value can't carry a second `name=` into the command, and clearing a free-text
+  option's box (which `/config` can't do) keeps its value instead of failing on Save.
+- **"Claude Code isn't signed in" only for Claude Code's own sign-in.** An MCP server's OAuth
+  failure no longer brings up the `claude auth login` instructions.
+- **Continue here says what to do when Claude won't stop.** If Claude in a terminal or outside
+  session hasn't exited after its tab was told to close, the message now says to resume the
+  conversation from History once it has, instead of "try again", which could no longer work.
+- **Preferences no longer loses what you're typing** when the window regains focus: the billing
+  check that runs then updates only its own status line instead of rebuilding the view.
+- **No "Outside" session flashes up** while Claude Deck asks Claude Code for its model list (at
+  start after a Claude Code update, and after *Update Claude Code now*).
+- **A `!` command that runs out of time is stopped with everything it started**, not just the
+  PowerShell that ran it.
+- **Choosing Default in a chat's model menu** no longer keeps showing the previous model's name;
+  the default's name comes with Claude's next reply.
+- **Going back to an earlier message** reads the transcript a line at a time, so a very large one
+  can't fail with "isn't in this conversation's saved transcript".
+- **Dismissing a session that never started, or resuming one in a new tab,** no longer leaves its
+  launch files behind in the data folder.
+- **A request whose body isn't a JSON object** gets a "bad request" answer instead of a server
+  error in the log, and a pinned folder or preset of the wrong shape is refused rather than
+  breaking the New session window later.
+
 ## [1.13.0] - 2026-10-13
 
 ### Added
@@ -401,6 +461,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.14.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.10.0...v1.11.0

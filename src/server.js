@@ -167,11 +167,15 @@ function readBody(req) {
     });
     req.on('end', () => {
       if (!chunks.length) return resolve({});
+      let body;
       try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       } catch {
-        reject(new UserError('Request body is not valid JSON.'));
+        return reject(new UserError('Request body is not valid JSON.'));
       }
+      // Every handler reads fields off it; null, a string or a list would be an exception instead.
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return reject(new UserError('Request body must be a JSON object.'));
+      resolve(body);
     });
     req.on('error', reject);
   });
@@ -274,9 +278,11 @@ async function main() {
     if (!claudeInfo || !claudeInfo.path) return Promise.resolve();
     const saved = models.load();
     if (!force && saved.models.length && saved.claudeVersion === claudeInfo.version) return Promise.resolve();
-    modelProbe = models.probe(claudeInfo.path).then((list) => { if (list) rememberModels(list); })
+    // The probe is a Claude Code process of our own: not an outside session while it runs.
+    let probePid = null;
+    modelProbe = models.probe(claudeInfo.path, { onStart: (pid) => { probePid = pid; live.ignore(pid); } }).then((list) => { if (list) rememberModels(list); })
       .catch((err) => console.error('reading Claude Code models failed:', err))
-      .finally(() => { modelProbe = null; });
+      .finally(() => { modelProbe = null; if (probePid) live.release(probePid); });
     return modelProbe;
   }
 
@@ -347,11 +353,13 @@ async function main() {
     return x;
   }
 
-  // Wait until a Claude process has exited so two processes never write one transcript.
+  // Wait until a Claude process has exited so two processes never write one transcript. By now
+  // the session it ran in has been told to close, so a Claude that won't stop can't be tried
+  // again from its card: the way on is History, once it has gone.
   async function waitForExit(pid, timeoutMs) {
     const until = Date.now() + timeoutMs;
     while (pid && isPidAlive(pid) && Date.now() < until) await new Promise((r) => setTimeout(r, 200));
-    if (pid && isPidAlive(pid)) throw new UserError('Claude is still shutting down in the other window. Try again in a moment.', 409);
+    if (pid && isPidAlive(pid)) throw new UserError("Claude hasn't stopped yet, so the conversation wasn't continued here. Once it has, open History and choose Resume here.", 409);
   }
 
   // Who has this conversation open: one of our chats, a terminal/external Claude, or nobody.
@@ -462,6 +470,10 @@ async function main() {
       return chats.rewind(p.id, b.messageId, { files: b.files === true });
     },
     'POST /api/chats/:id/fast': async (req, p) => chats.setFastMode(p.id, (await readBody(req)).on === true),
+    // Claude Code's /config options, through the chat's own Claude Code (src/claude-config.js):
+    // GET lists them with current values; POST { changes: { key: value } } applies them.
+    'GET /api/chats/:id/config': (req, p) => chats.configOptions(p.id),
+    'POST /api/chats/:id/config': async (req, p) => chats.setConfig(p.id, (await readBody(req)).changes),
     // Ctrl+R: your earlier prompts, from Claude Code's own prompt history (src/prompt-history.js).
     'GET /api/prompt-history': (req, p, url) => promptHistory.search(url.searchParams.get('q') || '', url.searchParams.get('cwd') || ''),
     // { keep? }: keep leaves the chat in the session list as ended (Ctrl+W's first press).
@@ -482,7 +494,12 @@ async function main() {
       // Checked before the chat ends, so a refusal leaves it running.
       preflight(next);
       await chats.end(p.id);
-      const entry = launcher.launch(next);
+      let entry;
+      try {
+        entry = launcher.launch(next);
+      } catch (err) {
+        throw new UserError(`${err.message} The chat has ended; resume the conversation from History.`, err instanceof UserError ? err.status : 500);
+      }
       live.poke(0);
       return entry;
     },
@@ -526,7 +543,7 @@ async function main() {
     'POST /api/sessions/:id/focus': (req, p) => launcher.focus(p.id),
     'POST /api/sessions/:id/close': (req, p) => { const r = launcher.close(p.id); live.tick(); return r; },
     'POST /api/sessions/:id/resume': (req, p) => { const r = launcher.resume(p.id); live.tick(); return r; },
-    'POST /api/sessions/:id/dismiss': (req, p) => { registry.remove(p.id); live.tick(); return { ok: true }; },
+    'POST /api/sessions/:id/dismiss': (req, p) => { launcher.dismiss(p.id); live.tick(); return { ok: true }; },
     'PATCH /api/sessions/:id': async (req, p) => {
       const body = await readBody(req);
       const patch = {};
@@ -760,7 +777,12 @@ async function main() {
         'X-Content-Type-Options': 'nosniff',
       };
       if (file.endsWith('.html')) {
-        headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'";
+        // No inline styles for the dashboard: it sets styles through the CSSOM (Deck.h's style
+        // object), which the policy allows; a style attribute or <style> element would be refused.
+        // The offline page is one self-contained file (the service worker caches it, headers
+        // included), so its own <style> stays allowed.
+        const styles = path.basename(file) === 'offline.html' ? "'self' 'unsafe-inline'" : "'self'";
+        headers['Content-Security-Policy'] = `default-src 'self'; script-src 'self'; style-src ${styles}; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'`;
         headers['X-Frame-Options'] = 'DENY';
       }
       res.writeHead(200, headers);
@@ -857,6 +879,9 @@ async function main() {
   port = server.address().port;
 
   writeJsonAtomic(runtimeFile(), { pid: process.pid, port, startedAt: Date.now() });
+  // The billing guard's first registry read runs reg.exe and waits for it; done here, before
+  // anything is being served, later reads answer from the cache and refresh in the background.
+  billing.readRegistryEnv();
   await history.refresh();
   try { trash.purgeOld(); } catch (err) { console.error('emptying old trash failed:', err); }
   live.start();

@@ -22,9 +22,10 @@ const { isScript } = require('./claude-locate');
 const { normalizeOptions, buildClaudeArgs, displayCommand, requireClaude, requireFolder, preflight, PERMISSION_MODES, EFFORTS } = require('./launcher');
 const { readTranscript, UUID_RE } = require('./history');
 const { runPowerShell } = require('./shell-mode');
+const claudeConfig = require('./claude-config');
 const { SubagentLog } = require('./subagents');
 const { requirePlanBilling } = require('./billing');
-const { readJson, writeJsonAtomic, parseArgString, clip, UserError } = require('./util');
+const { readJson, writeJsonAtomic, parseArgString, clip, forEachLine, UserError } = require('./util');
 
 // No --include-partial-messages: replies are shown once Claude has finished each message, not
 // as they're written (text arriving a chunk at a time read as choppy); the spinner covers the wait.
@@ -190,8 +191,9 @@ const MAX_FILE_BYTES = 40 * 1024 * 1024;
 
 // Claude Code can't sign in: not signed in ("Not logged in · Please run /login") or a sign-in that
 // expired ("Failed to authenticate: OAuth session expired ..."). Its own fix, /login, only works in
-// its terminal, so the chat says how to sign in from PowerShell instead.
-const AUTH_ERROR = /not logged in|failed to authenticate|oauth|please run \/login/i;
+// its terminal, so the chat says how to sign in from PowerShell instead. Only Claude Code's own
+// phrases: an MCP server's OAuth failure, say, isn't a Claude Code sign-in problem.
+const AUTH_ERROR = /not logged in|failed to authenticate|oauth (session|token) (expired|invalid)|please run \/login/i;
 const SIGN_IN_COMMAND = 'claude auth login';
 const signInHelp = () => ({
   kind: 'signin',
@@ -268,6 +270,20 @@ class ChatManager extends EventEmitter {
     this.lastAwake = Date.now();
     this.sleepTimer = setInterval(() => this._checkSleep(), SLEEP_TICK_MS);
     this.sleepTimer.unref();
+    this._purgeAttachments();
+  }
+
+  // Dropped files are kept for the chat they were dropped on (saveFile), and go with it: when it's
+  // removed from the list, and at start-up for chats that are no longer listed.
+  _attachmentsDir(id) {
+    return path.join(paths.dataDir(), 'attachments', id);
+  }
+
+  _purgeAttachments() {
+    const dir = path.join(paths.dataDir(), 'attachments');
+    fs.promises.readdir(dir)
+      .then((names) => Promise.all(names.filter((n) => !this.chats.has(n)).map((n) => fs.promises.rm(path.join(dir, n), { recursive: true, force: true }))))
+      .catch(() => { /* no attachments yet, or one in use: next start */ });
   }
 
   // Time the PC spent asleep isn't time Claude spent working: it's taken out of a working chat's
@@ -308,6 +324,10 @@ class ChatManager extends EventEmitter {
       context: null, // { tokens, max, percent } from get_context_usage
       state: fields.state || 'starting',
       note: fields.note || null,
+      // The session this one was forked from (a fork, or a rewind): its running totals carry on.
+      forkedFrom: fields.forkedFrom || null,
+      authFailed: false, // Claude Code's last reply said it couldn't sign in
+      loadingPast: false, // detail() is reading the transcript for a chat restored after a restart
       proc: null,
       pid: null,
       busy: false,
@@ -330,6 +350,10 @@ class ChatManager extends EventEmitter {
       bgTasks: [], // [{ taskId, type, description }] running in the background (background_tasks_changed)
       silent: new Set(), // uuids of messages that don't start a turn (shell mode's output)
       silentTurns: 0, // results still to come for those
+      // Local commands Claude Deck ran for itself (/config), by the uuid they were sent with:
+      // { uuid, text, resolve, reject, settled }. Their replies are read, not shown.
+      localCommands: new Map(),
+      localActive: null, // the one whose turn is running, from its command_lifecycle "started"
       tasks: new Map(), // subagents: task_id -> task
       agentLogs: new Map(), // task_id -> SubagentLog (its transcript, read as it grows)
       queuedImages: new Map(), // commandUuid -> full images of a message still waiting, so it can be taken back
@@ -545,6 +569,9 @@ class ChatManager extends EventEmitter {
     chat.turnSleptMs = 0;
     for (const w of chat.requests.values()) w.reject(new Error('Claude Code exited.'));
     chat.requests.clear();
+    for (const lc of chat.localCommands.values()) lc.reject(new UserError('Claude Code exited before it answered.'));
+    chat.localCommands.clear();
+    chat.localActive = null;
     for (const p of chat.pending.values()) this._resolveItem(chat, p.requestId, 'cancelled', 'Claude ended before this was answered.');
     chat.pending.clear();
     chat.foreground.clear();
@@ -582,6 +609,7 @@ class ChatManager extends EventEmitter {
     this.chats.delete(chat.id);
     this._save();
     this.emit('change', chat);
+    fs.promises.rm(this._attachmentsDir(chat.id), { recursive: true, force: true }).catch(() => { /* a file still open; next start */ });
   }
 
   // ---- protocol ------------------------------------------------------------------------------
@@ -659,6 +687,11 @@ class ChatManager extends EventEmitter {
           break;
         }
         if (!m.message) break;
+        // The reply to a local command Claude Deck ran for itself (/config): read, not shown.
+        if (chat.localActive) {
+          for (const b of m.message.content || []) if (b.type === 'text' && typeof b.text === 'string') chat.localActive.text.push(b.text);
+          break;
+        }
         // Claude Code couldn't sign in (not signed in, or the sign-in expired): see the result below.
         if (m.error === 'authentication_failed') chat.authFailed = true;
         for (const b of m.message.content || []) {
@@ -711,6 +744,15 @@ class ChatManager extends EventEmitter {
         chat.busy = chat.queued > 0;
         if (typeof m.total_cost_usd === 'number') chat.costUSD = m.total_cost_usd;
         if (m.fast_mode_state) chat.fast = { state: String(m.fast_mode_state), reason: m.fast_mode_disabled_reason ? String(m.fast_mode_disabled_reason) : null };
+        if (chat.localActive) {
+          const lc = chat.localActive;
+          chat.localActive = null;
+          chat.localCommands.delete(lc.uuid);
+          // One that timed out meanwhile has already been answered; its reply is still swallowed.
+          lc.resolve(lc.text.length ? lc.text.join('\n') : String(m.result || ''));
+          this._changed(chat);
+          break;
+        }
         // A shell mode message (no turn) still gets a result; it isn't a reply, so nothing is shown.
         if (chat.silentTurns > 0) {
           chat.silentTurns--;
@@ -753,6 +795,19 @@ class ChatManager extends EventEmitter {
         // "started" means Claude has picked the message up, so it's no longer waiting in line.
         // Either way, once it's out of the queue its images needn't be kept for taking it back.
         if (m.state !== 'queued') chat.queuedImages.delete(m.command_uuid);
+        // A local command's turn: from "started" until its result, the reply and result are its own
+        // (a shell message's result, or a user message's reply, can arrive in between otherwise).
+        if (chat.localCommands.has(m.command_uuid)) {
+          const lc = chat.localCommands.get(m.command_uuid);
+          if (m.state === 'started') chat.localActive = lc;
+          else if (m.state !== 'queued' && m.state !== 'completed') {
+            // Dropped before it ran (cancelled, discarded, refused).
+            chat.localCommands.delete(m.command_uuid);
+            if (chat.localActive === lc) chat.localActive = null;
+            lc.reject(new UserError(`Claude Code didn't run it (${m.state}).`));
+          }
+          break;
+        }
         if (chat.silent.has(m.command_uuid)) {
           if (m.state === 'started') chat.silentTurns++;
           else if (m.state !== 'queued') chat.silent.delete(m.command_uuid);
@@ -1037,19 +1092,23 @@ class ChatManager extends EventEmitter {
 
   // The transcript entry just before one of your messages (its parentUuid): null when it's the
   // conversation's first, undefined when it isn't in the current conversation's transcript.
+  // Read a line at a time: a transcript can be larger than one string can hold.
   _entryBefore(chat, messageId) {
     const file = chat.sessionId && this.history ? this.history.fileFor(chat.sessionId) : null;
     if (!file) return undefined;
-    let text;
-    try { text = fs.readFileSync(file, 'utf8'); } catch { return undefined; }
-    for (const line of text.split('\n')) {
-      if (!line.includes(messageId)) continue;
-      try {
-        const e = JSON.parse(line);
-        if (e.uuid === messageId) return e.parentUuid || null;
-      } catch { /* a partly written last line */ }
+    let found;
+    try {
+      forEachLine(file, (line) => {
+        if (found !== undefined || !line.includes(messageId)) return;
+        try {
+          const e = JSON.parse(line);
+          if (e.uuid === messageId) found = e.parentUuid || null;
+        } catch { /* a partly written last line */ }
+      });
+    } catch {
+      return undefined;
     }
-    return undefined;
+    return found;
   }
 
   // Esc Esc in Claude Code: go back to before one of your messages, to change it. There's no request
@@ -1134,6 +1193,78 @@ class ChatManager extends EventEmitter {
       });
     }
     return { exitCode: r.exitCode };
+  }
+
+  // Runs one of Claude Code's local commands (no model request) in the chat's own Claude Code and
+  // returns its reply as text, without adding anything to the conversation. Its reply is told
+  // apart from everything else by the command_lifecycle events for the uuid it was sent with
+  // (see _onMessage), so a message or shell command sent meanwhile can't be taken for it. Only
+  // while Claude is idle, so it's answered right away. Verified with 2.1.301.
+  _localCommand(chat, text, timeoutMs = 20000) {
+    if (!chat.proc) return Promise.reject(new UserError('This chat has ended. Resume it first.'));
+    if (chat.busy || chat.queued > 0) return Promise.reject(new UserError('Claude is working. Try again when it has finished.'));
+    if ([...chat.localCommands.values()].some((lc) => !lc.settled)) return Promise.reject(new UserError('Still waiting for Claude Code to answer the last change.'));
+    return new Promise((resolve, reject) => {
+      const uuid = crypto.randomUUID();
+      const lc = { uuid, text: [], settled: false, timer: null };
+      const settle = (fn, v) => { if (lc.settled) return; lc.settled = true; clearTimeout(lc.timer); fn(v); };
+      lc.resolve = (v) => settle(resolve, v);
+      lc.reject = (e) => settle(reject, e);
+      // After the timeout the command stays listed: Claude Code may still run it, and its reply
+      // must still be read rather than shown as Claude's.
+      lc.timer = setTimeout(() => lc.reject(new UserError("Claude Code didn't answer. Try again in a moment.")), timeoutMs);
+      chat.localCommands.set(uuid, lc);
+      try {
+        this._write(chat, { type: 'user', uuid, message: { role: 'user', content: text }, parent_tool_use_id: null, session_id: chat.sessionId || 'default' });
+      } catch (err) {
+        chat.localCommands.delete(uuid);
+        lc.reject(err);
+      }
+    });
+  }
+
+  // The chat's Config window: Claude Code's /config options (its own list) with current values.
+  async configOptions(id) {
+    const chat = this._get(id);
+    const options = claudeConfig.options(await this._localCommand(chat, '/config'), chat.cwd);
+    if (!options.length) throw new UserError("Claude Code didn't list its /config options. Its version may not support changing them here.");
+    return { options };
+  }
+
+  // { key: value } -> Claude Code's own "/config key=value", one option at a time. Returns its reply
+  // lines: "Set Theme to dark" when it took, anything else when it didn't.
+  async setConfig(id, changes) {
+    const chat = this._get(id);
+    const entries = changes && typeof changes === 'object' ? Object.entries(changes) : [];
+    if (!entries.length) throw new UserError('Nothing to change.');
+    // Every change is checked before any is sent, so a bad one can't leave the others half done.
+    const commands = entries.map(([key, value]) => {
+      try { return { key, value: String(value).trim(), command: claudeConfig.setCommand(key, value) }; } catch (err) { throw new UserError(err.message); }
+    });
+    const lines = [];
+    const taken = [];
+    for (const { key, value, command } of commands) {
+      let reply;
+      try {
+        reply = await this._localCommand(chat, command);
+      } catch (err) {
+        // The changes before this one were made; their confirmations stay, with what stopped it.
+        lines.push(`Couldn't set ${key}: ${err.message}`);
+        break;
+      }
+      const out = reply.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      if (out.length && out.every((l) => /^Set /.test(l))) taken.push([key, value]);
+      lines.push(...out);
+    }
+    // Claude Code says "Set ..." a moment before its files show the change (2.1.301), so wait for
+    // them (up to 3 seconds): the window reads the files again straight after this.
+    for (let waited = 0; taken.length && waited < 3000; waited += 150) {
+      const now = claudeConfig.currentValues(taken.map(([k]) => k), chat.cwd);
+      // An option whose file isn't known here can't be waited for.
+      if (taken.every(([k, v]) => now[k].where === null || String(now[k].value).toLowerCase() === v.toLowerCase())) break;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    return { lines };
   }
 
   // @ in the reply box: files matching what's typed, ranked as Claude Code's own @ list ranks them.
@@ -1344,7 +1475,8 @@ class ChatManager extends EventEmitter {
     const chat = this._get(id);
     const value = typeof model === 'string' && model.trim() ? model.trim().slice(0, 120) : null;
     await this._request(chat, { subtype: 'set_model', model: value });
-    chat.model = value || chat.model;
+    // Back to the default: which model that is comes with the next turn's init.
+    chat.model = value;
     chat.options.model = value || '';
     this._push(chat, { kind: 'note', text: `Model changed to ${value || 'the default'}.` });
     this._changed(chat);

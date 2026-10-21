@@ -340,13 +340,12 @@ class HistoryIndex {
     const files = listTranscriptFiles(paths.projectsDir());
     const seen = new Set(files);
     let changed = false;
-    for (const file of files) {
-      let st;
-      try {
-        st = fs.statSync(file);
-      } catch {
-        continue;
-      }
+    // Every transcript is checked for growth on each pass (every few seconds); asked all at once,
+    // off the event loop, so a large history doesn't hold up the chats meanwhile.
+    const stats = await Promise.all(files.map((file) => fs.promises.stat(file).catch(() => null)));
+    for (const [i, file] of files.entries()) {
+      const st = stats[i];
+      if (!st) continue;
       const cached = this.files[file];
       if (cached && cached.size === st.size && cached.mtimeMs === st.mtimeMs) continue;
       try {
