@@ -70,6 +70,7 @@ src/update.js           Check for updates: git fetch through `gh auth git-creden
 src/app-install.js      finds the installed Edge app; sign-in task status and toggle
 src/models.js           the model menus: Claude Code's own model list (versions), kept per Claude Code version
 src/claude-locate.js    finds claude.exe; its version, auto-update status and `claude update`
+src/claude-config.js    a chat's Config window: Claude Code's /config options (its own list), current values (read only)
 src/prefs.js, registry.js, paths.js, util.js
 public/                 index.html, app.css, lib.js, markdown.js, pasted-text.js, app.js, settings-ui.js,
                         tour.js, spinner-verbs.js, tick-worker.js, manifest.webmanifest, sw.js, offline.html, icons/, vendor/
@@ -91,6 +92,7 @@ test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes),
   process's start time before ending an outside session, and to run a chat's `!` commands, rather
   than Git Bash, whose helpers that rule blocks), `schtasks.exe`, `where.exe`, `reg.exe`
   (the billing guard reads Windows' stored environment and the Claude Code policy key),
+  `taskkill.exe` (to end a `!` command that ran out of time along with everything it started),
   `choice.exe` for the tab host's resume prompt, and `conhost.exe --headless`, which the sign-in task
   runs its PowerShell supervisor under: `-WindowStyle Hidden` doesn't hide a console that Windows
   Terminal hosts, as it does when Terminal is the default terminal app). `-Install` runs `winget.exe`
@@ -137,7 +139,8 @@ Claude Deck's own data is in `%LOCALAPPDATA%\ClaudeDeck\` (or `CLAUDE_DECK_DATA`
 `backups\` (the last 30 versions of each settings file), `rewinds\` (files as
 they were before each of the last 20 restores, for Undo), `trash\` (deleted conversations, removed for
 good after 30 days), `attachments\<chat id>\` (copies of files dropped on a chat's reply box, which
-Claude reads by path; not cleaned up yet), `secret.json` (the API token) and `runtime.json` (the
+Claude reads by path; removed with the chat, or at start-up once the chat is no longer listed),
+`secret.json` (the API token) and `runtime.json` (the
 running server's pid and port).
 
 Claude Code's files live in `%USERPROFILE%\.claude\` (or `CLAUDE_CONFIG_DIR`). Claude Deck writes

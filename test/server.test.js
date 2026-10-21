@@ -34,7 +34,7 @@ test('a second server exits with code 3 when one is already running', async () =
 });
 
 // Raw requests, so the path goes out exactly as written (fetch would normalize it).
-function raw(port, urlPath, { method = 'GET', headers = {} } = {}) {
+function raw(port, urlPath, { method = 'GET', headers = {}, body } = {}) {
   const http = require('http');
   return new Promise((resolve) => {
     const req = http.request({ host: '127.0.0.1', port, path: urlPath, method, headers: { host: `127.0.0.1:${port}`, ...headers } }, (res) => {
@@ -42,7 +42,7 @@ function raw(port, urlPath, { method = 'GET', headers = {} } = {}) {
       res.on('end', () => resolve(res.statusCode));
     });
     req.on('error', (err) => resolve(`error: ${err.code}`));
-    req.end();
+    req.end(body);
   });
 }
 
@@ -56,6 +56,11 @@ test('malformed, unauthorized and misaddressed requests get an error, and the se
   assert.strictEqual(await raw(port, '/%00'), 400, 'NUL in a page path');
   assert.strictEqual(await raw(port, `/api/events?t=${'%C3%A9'.repeat(48)}`), 401, 'a token of the right length in characters, not bytes');
   assert.strictEqual(await raw(port, '/api/chats/%/send', { method: 'POST', headers: auth }), 400, 'a lone % in an API path');
+  // A body that parses but isn't an object: the handler would read fields off null otherwise.
+  assert.strictEqual(await raw(port, '/api/prefs', { method: 'PUT', headers: auth, body: 'null' }), 400, 'a null body');
+  assert.strictEqual(await raw(port, '/api/prefs', { method: 'PUT', headers: auth, body: '"text"' }), 400, 'a string body');
+  assert.strictEqual(await raw(port, '/api/prefs', { method: 'PUT', headers: auth, body: '[1]' }), 400, 'a list body');
+  assert.strictEqual(await raw(port, '/api/prefs', { method: 'PUT', headers: auth, body: '{' }), 400, 'not JSON');
   // And the usual refusals.
   assert.strictEqual(await raw(port, '/api/ping'), 401, 'no token');
   assert.strictEqual(await raw(port, '/api/ping', { headers: { 'x-deck-token': 'x'.repeat(token.length) } }), 401, 'wrong token');

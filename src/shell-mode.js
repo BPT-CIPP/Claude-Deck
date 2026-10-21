@@ -7,11 +7,23 @@
 // The command goes in as -EncodedCommand (UTF-16LE base64), so no quoting can break it. PowerShell
 // then reports errors on stderr as CLIXML, which decodeClixml turns back into plain text.
 
+const path = require('path');
 const { spawn } = require('child_process');
 const { clip } = require('./util');
 
 const TIMEOUT_MS = 2 * 60 * 1000; // as Claude Code's own shell commands default to
 const MAX_OUTPUT = 30000;
+
+// Ends a command that ran out of time, and everything it started: proc.kill() would end
+// PowerShell alone and leave its children (a ping -t, a dev server) running. taskkill /T, a Windows
+// built-in, ends the tree. Falls back to proc.kill() where taskkill can't run.
+function killTree(proc) {
+  const fallback = () => { try { proc.kill(); } catch { /* gone */ } };
+  if (process.platform !== 'win32' || !proc.pid) return fallback();
+  const taskkill = spawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'), ['/PID', String(proc.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+  taskkill.on('error', fallback);
+  return undefined;
+}
 
 const XML_ENTITIES = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
 
@@ -49,7 +61,7 @@ function runPowerShell(command, cwd, { timeoutMs = TIMEOUT_MS } = {}) {
     // Kept a little past the limit, so clipping can say there was more.
     proc.stdout.on('data', (d) => { if (stdout.length <= MAX_OUTPUT) stdout += d; });
     proc.stderr.on('data', (d) => { if (stderr.length <= MAX_OUTPUT * 4) stderr += d; });
-    const timer = setTimeout(() => { timedOut = true; try { proc.kill(); } catch { /* gone */ } }, timeoutMs);
+    const timer = setTimeout(() => { timedOut = true; killTree(proc); }, timeoutMs);
     proc.on('error', (err) => { clearTimeout(timer); reject(err); });
     proc.on('exit', (code) => {
       clearTimeout(timer);

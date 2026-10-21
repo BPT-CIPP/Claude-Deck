@@ -9,7 +9,7 @@
 // Prompts containing "write" ask permission for Write, "ask" asks a question, "slow" takes 3s
 // (and can be interrupted), "delegate" / "delegate slow" / "delegate foreground" start subagents,
 // "run slow" runs a shell command reported as a task, "which effort" reports the effort level;
-// "/clear" and "/compact" behave like the real local commands; anything else is echoed back.
+// "/clear", "/compact" and "/config" behave like the real local commands; anything else is echoed back.
 // Answers reload_plugins from the plugin state below, get_context_usage, and the MCP requests
 // (mcp_status, mcp_toggle, mcp_reconnect) for two made-up servers.
 //
@@ -305,6 +305,33 @@ function streamMode() {
       context = 5000;
       init();
       return result({ num_turns: 0, local_command: 'clear' }, false);
+    }
+    // /config, as the real CLI answers it in stream-json (2.1.301): with nothing after it, the list of
+    // options; "key=value" sets one and replies "Set <label> to <value>", written to the user's
+    // settings.json in CLAUDE_CONFIG_DIR. A few of the real options, trimmed.
+    if (/^\/config(\s|$)/.test(prompt.trim())) {
+      const OPTIONS = { theme: ['Theme', 'theme', ['auto', 'dark', 'light']], editor: ['Editor mode', 'editorMode', ['normal', 'vim']], verbose: ['Verbose output', 'verbose', ['true', 'false']], language: ['Language', 'language', null] };
+      const rest = prompt.trim().slice('/config'.length).trim();
+      let reply;
+      if (!rest) {
+        reply = `Usage: /config key=value [key=value ...]\n${Object.entries(OPTIONS).map(([k, [, , v]]) => `  ${k}=${v ? v.join('|') : '<value>'}`).join('\n')}`;
+      } else {
+        const m = /^(\w+)=(.*)$/.exec(rest);
+        const opt = m && OPTIONS[m[1]];
+        if (!m) reply = `Expected key=value, got "${rest}". Run /config to see what's available.`;
+        else if (!opt) reply = `${m[1]} isn't a /config setting. Run /config to see what's available.`;
+        else if (opt[2] && !opt[2].includes(m[2])) reply = `${opt[0]} takes one of: ${opt[2].join(', ')}.`;
+        else {
+          const file = path.join(process.env.CLAUDE_CONFIG_DIR || '.', 'settings.json');
+          let s = {};
+          try { s = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* none yet */ }
+          s[opt[1]] = m[2] === 'true' ? true : m[2] === 'false' ? false : m[2];
+          fs.writeFileSync(file, JSON.stringify(s, null, 2));
+          reply = `Set ${opt[0]} to ${m[2]}`;
+        }
+      }
+      text(reply);
+      return result({ num_turns: 0, local_command: 'config', result: reply }, false);
     }
     if (prompt.trim() === '/compact') {
       out({ type: 'system', subtype: 'status', status: 'compacting', session_id: sessionId });

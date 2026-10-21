@@ -46,11 +46,19 @@ function file() {
   return path.join(paths.dataDir(), 'prefs.json');
 }
 
+// The shape of each list's entries: the page reads them as such (a pinned folder is a path it
+// lower-cases; a preset is applied by its options), so anything else is left out.
+const ENTRY_OK = {
+  favorites: (f) => typeof f === 'string' && f.trim() !== '',
+  presets: (p) => Boolean(p) && typeof p === 'object' && typeof p.name === 'string' && p.name.trim() !== '' && Boolean(p.options) && typeof p.options === 'object' && !Array.isArray(p.options),
+};
+
 function load() {
   const stored = readJson(file(), {});
   const out = { ...DEFAULTS };
   for (const key of Object.keys(DEFAULTS)) {
-    if (key in stored && sameType(DEFAULTS[key], stored[key])) out[key] = stored[key];
+    if (!(key in stored) || !sameType(DEFAULTS[key], stored[key])) continue;
+    out[key] = ENTRY_OK[key] ? stored[key].filter(ENTRY_OK[key]) : stored[key];
   }
   return out;
 }
@@ -67,6 +75,7 @@ function save(patch) {
     if (!Object.hasOwn(DEFAULTS, key)) throw new UserError(`Unknown preference: ${key}`);
     if (!sameType(DEFAULTS[key], value)) throw new UserError(`Preference ${key} has the wrong type.`);
     if (ENUMS[key] && !ENUMS[key].includes(value)) throw new UserError(`Preference ${key} must be one of: ${ENUMS[key].join(', ')}`);
+    if (ENTRY_OK[key] && !value.every(ENTRY_OK[key])) throw new UserError(key === 'favorites' ? 'Pinned folders must be paths.' : 'Each preset needs a name and its options.');
     next[key] = value;
   }
   if (!next.windowName.trim()) next.windowName = DEFAULTS.windowName;

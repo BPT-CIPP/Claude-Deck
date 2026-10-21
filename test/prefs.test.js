@@ -39,6 +39,19 @@ test('every font is offered in Preferences, and only known fonts are accepted', 
   assert.throws(() => prefs.save({ fontText: 'Comic Sans MS' }), /must be one of/);
 });
 
+test('pinned folders are paths and presets have a name and options; anything else is refused or left out', () => {
+  assert.throws(() => prefs.save({ favorites: ['C:\\ok', 42] }), /must be paths/);
+  assert.throws(() => prefs.save({ presets: [{ name: 'x' }] }), /name and its options/);
+  assert.throws(() => prefs.save({ presets: [{ name: '', options: {} }] }), /name and its options/);
+  assert.deepStrictEqual(prefs.save({ favorites: ['C:\\ok'], presets: [{ name: 'Mine', options: { model: 'opus' } }] }).presets, [{ name: 'Mine', options: { model: 'opus' } }]);
+  // A prefs.json edited by hand: the page can't use a pinned folder that isn't a path.
+  const file = path.join(box.dataDir, 'prefs.json');
+  const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+  fs.writeFileSync(file, JSON.stringify({ ...stored, favorites: ['C:\\ok', null, ''], presets: [{ name: 'Mine', options: { model: 'opus' } }, 'nope'] }));
+  assert.deepStrictEqual(prefs.load().favorites, ['C:\\ok']);
+  assert.strictEqual(prefs.load().presets.length, 1);
+});
+
 test('theme preference accepts known themes only', () => {
   assert.strictEqual(prefs.save({ theme: 'nord' }).theme, 'nord');
   assert.throws(() => prefs.save({ theme: 'neon' }), /must be one of/);

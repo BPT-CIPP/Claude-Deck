@@ -505,6 +505,7 @@
       if (it.sessionId) items.push({ label: 'Continue in terminal', title: 'Continue this conversation in a Windows Terminal tab', run: () => continueInTerminal(it) });
       if (it.state !== 'exited') items.push({ label: 'Go back to an earlier message…', title: 'Claude forgets everything from one of your messages on, and the message comes back to the reply box (Esc Esc)', run: () => { if (S.rewindHere && S.rewindHere.chatId === it.id) S.rewindHere.run(); } });
       items.push({ label: S.showTasks[it.id] ? 'Hide subagents' : it.taskCount ? `Subagents (${it.taskCount})` : 'Subagents', title: 'Subagents Claude started in this chat', run: () => setTasksPanel(it.id, !S.showTasks[it.id]) });
+      if (it.state !== 'exited') items.push({ label: 'Config…', title: "Claude Code's /config options: theme, editor mode, auto-compact and the rest", run: () => openConfig(it) });
     } else {
       if (isTerminal(it) && it.state !== 'failed' && it.sessionId) items.push({ label: 'Continue here', title: 'Close the tab and continue this conversation here', run: () => continueHere(it) });
       if (cmd) items.push({ label: 'Copy resume command', run: () => copy(cmd, 'Resume command copied') });
@@ -576,6 +577,85 @@
     closeHeadMenu();
     if (b && b.isConnected) b.focus();
   }, true);
+
+  // Claude Code's /config options for a running chat, read and changed through the chat's own Claude
+  // Code (src/claude-config.js): its own list, so new options appear as Claude Code adds them.
+  const CONFIG_WHERE = { user: 'All sessions', global: 'All sessions', local: 'This folder only' };
+  async function openConfig(it) {
+    const list = h('div', { class: 'config-list' }, h('p', { class: 'muted' }, 'Asking Claude Code for its options…'));
+    const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+    const saveBtn = h('button', { type: 'button', class: 'primary', disabled: true }, 'Save');
+    const dlg = h('dialog', { class: 'dialog config-dialog', 'aria-labelledby': 'config-title' },
+      h('h2', { id: 'config-title' }, 'Claude Code config'),
+      h('p', { class: 'muted' }, "The options Claude Code's /config command offers. Claude Code saves each change itself, in its own settings. Some only take effect in new or resumed sessions."),
+      list,
+      error,
+      h('div', { class: 'dialog-actions' },
+        h('button', { type: 'button', class: 'ghost', onclick: () => dlg.close() }, 'Close'),
+        saveBtn));
+    dlg.addEventListener('close', () => dlg.remove());
+    document.body.appendChild(dlg);
+    dlg.showModal();
+
+    const changes = {};
+    const showError = (msg) => { error.textContent = msg; error.hidden = !msg; };
+    const row = (o) => {
+      const mark = (v) => {
+        if (v === (o.value || '')) delete changes[o.key]; else changes[o.key] = v;
+        r.classList.toggle('changed', o.key in changes);
+        saveBtn.disabled = !Object.keys(changes).length;
+      };
+      // A choice from Claude Code's own values; "Not set" stands for its default, which /config can't go back to.
+      // Nor can a free-text option be emptied: clearing the box leaves its value as it is.
+      const control = o.values
+        ? h('select', { 'aria-label': o.label, onchange: (e) => mark(e.target.value) },
+          o.value === null ? h('option', { value: '', selected: true, disabled: true }, 'Not set (default)') : null,
+          o.value !== null && !o.values.includes(o.value) ? h('option', { value: o.value, selected: true }, o.value) : null,
+          o.values.map((v) => h('option', { value: v, selected: v === o.value }, v)))
+        : h('input', {
+          type: 'text',
+          value: o.value || '',
+          placeholder: o.value === null ? 'Not set (default)' : '',
+          title: o.value === null ? null : "Claude Code can't unset an option: leaving this empty keeps the current value",
+          'aria-label': o.label,
+          oninput: (e) => mark(e.target.value.trim() || o.value || ''),
+        });
+      const r = h('div', { class: 'config-row' },
+        h('div', null,
+          h('div', { class: 'config-label' }, o.label),
+          h('div', { class: 'config-where' }, `${o.key}${o.where ? ` · ${CONFIG_WHERE[o.where]}` : ''}`)),
+        control);
+      return r;
+    };
+    const load = async () => {
+      try {
+        const res = await api('GET', `/api/chats/${it.id}/config`);
+        for (const k of Object.keys(changes)) delete changes[k];
+        saveBtn.disabled = true;
+        clear(list).append(...res.options.map(row));
+      } catch (err) {
+        clear(list).append(h('p', { class: 'muted' }, "Couldn't read Claude Code's options."));
+        showError(err.message);
+      }
+    };
+    saveBtn.addEventListener('click', async () => {
+      showError('');
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+      try {
+        const res = await api('POST', `/api/chats/${it.id}/config`, { changes });
+        const problems = res.lines.filter((l) => !/^Set /.test(l));
+        if (problems.length) showError(problems.join('\n'));
+        else toast(res.lines.length === 1 ? res.lines[0] : `Saved ${res.lines.length} changes`);
+      } catch (err) {
+        showError(err.message);
+      } finally {
+        saveBtn.textContent = 'Save';
+      }
+      await load();
+    });
+    await load();
+  }
 
   function setTasksPanel(chatId, open) {
     S.showTasks[chatId] = open;
@@ -2529,6 +2609,14 @@
         if (e.key === 'ArrowUp') { e.preventDefault(); slashIndex = (slashIndex - 1 + slashItems.length) % slashItems.length; drawSlash(); return; }
         if (e.key === 'Tab') { e.preventDefault(); pick(slashIndex); return; }
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); slash.hidden = true; return; }
+        // Enter takes the highlighted command or file too, as in Claude Code, rather than sending
+        // the half-typed word. A command typed out in full is sent.
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+          const c = slashItems[slashIndex];
+          const w = slashWord();
+          const typedOut = c && !c.file && w && c.label.toLowerCase() === `/${w.query}`.toLowerCase();
+          if (c && !typedOut) { e.preventDefault(); pick(slashIndex); return; }
+        }
       }
       const plainKey = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && !e.isComposing;
       const ctrlOnly = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey;
@@ -3155,7 +3243,15 @@
   async function loadBilling() {
     try { S.billing = await api('GET', '/api/billing'); } catch { return; }
     renderBillingBanner();
-    if (S.view === 'prefs') renderPrefs();
+    // Only the status line in Preferences changes; rebuilding the whole view (this runs on every
+    // window focus) would throw away anything being typed into its boxes.
+    const status = $('#prefs-root .billing-status');
+    if (status) status.textContent = billingStatusText();
+  }
+
+  function billingStatusText() {
+    const b = S.billing;
+    return !b ? 'Checking…' : b.findings.length ? `Found: ${b.findings.join('; ')}.` : 'Nothing found: sessions use your Claude plan.';
   }
 
   function renderBillingBanner() {
@@ -3173,8 +3269,7 @@
   }
 
   function billingRow(p) {
-    const b = S.billing;
-    const status = !b ? 'Checking…' : b.findings.length ? `Found: ${b.findings.join('; ')}.` : 'Nothing found: sessions use your Claude plan.';
+    const status = h('span', { class: 'billing-status' }, billingStatusText());
     const box = h('input', {
       type: 'checkbox',
       checked: p.allowApiBilling,
@@ -3183,7 +3278,7 @@
           const ok = await Deck.confirm({
             title: 'Allow sessions that bill an API account?',
             body: "With this on, Claude Deck starts sessions even when Claude Code is set up to bill an Anthropic API account or a cloud provider (an API key, a key helper, or Bedrock, Vertex and the like). Those sessions are charged per use, on top of your Claude plan. Only turn this on if you're authorized to incur those charges.",
-            extra: b && b.findings.length ? h('p', { class: 'small' }, h('strong', null, 'Set up on this PC right now: '), b.findings.join('; ')) : null,
+            extra: S.billing && S.billing.findings.length ? h('p', { class: 'small' }, h('strong', null, 'Set up on this PC right now: '), S.billing.findings.join('; ')) : null,
             ok: 'Allow API billing',
             danger: true,
             safeDefault: true,

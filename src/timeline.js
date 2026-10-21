@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const paths = require('./paths');
-const { readJson, writeJsonAtomic, clip, UserError } = require('./util');
+const { readJson, writeJsonAtomic, clip, forEachLine, UserError } = require('./util');
 const { promptText } = require('./history');
 
 const BACKUP_NAME = /^[A-Za-z0-9._@-]+$/;
@@ -28,33 +28,6 @@ const MAX_UNDO = 20;
 
 // Tools whose file changes Claude Code checkpoints, and the input field naming the file.
 const EDIT_TOOLS = { Write: 'file_path', Edit: 'file_path', MultiEdit: 'file_path', NotebookEdit: 'notebook_path' };
-
-// Calls fn with each line of a file, reading a megabyte at a time: a transcript can be larger
-// than the biggest string V8 can hold, so it's never read as one.
-function forEachLine(file, fn) {
-  const fd = fs.openSync(file, 'r');
-  try {
-    const buf = Buffer.alloc(1024 * 1024);
-    let carry = Buffer.alloc(0);
-    let n;
-    while ((n = fs.readSync(fd, buf, 0, buf.length, null)) > 0) {
-      const chunk = carry.length ? Buffer.concat([carry, buf.subarray(0, n)]) : buf.subarray(0, n);
-      let from = 0;
-      let idx;
-      // Only the new bytes can hold the next newline.
-      let search = carry.length;
-      while ((idx = chunk.indexOf(0x0a, search)) !== -1) {
-        fn(chunk.toString('utf8', from, idx));
-        from = idx + 1;
-        search = from;
-      }
-      carry = Buffer.from(chunk.subarray(from));
-    }
-    if (carry.length) fn(carry.toString('utf8'));
-  } finally {
-    fs.closeSync(fd);
-  }
-}
 
 function parseTranscript(file) {
   const prompts = new Map(); // uuid -> { text, ts }
@@ -291,7 +264,13 @@ class Timeline {
 
   list(sessionId) {
     const model = this._model(sessionId);
+    // A turn's row means reading every backup it touched; the model is kept while the transcript
+    // is unchanged, so rows are kept with it. The latest turn is compared with the disk, which
+    // can change without the transcript, so it's always worked out afresh.
+    if (!model.rows) model.rows = new Map();
+    const latest = model.turns.length - 1;
     const turns = model.turns.map((snap, i) => {
+      if (i !== latest && model.rows.has(i)) return model.rows.get(i);
       const prompt = model.prompts.get(snap.messageId);
       const files = this._turnFiles(sessionId, model, i).map((f) => {
         const binary = isBinary(f.before) || isBinary(f.after);
@@ -300,15 +279,17 @@ class Timeline {
         const change = f.before === null ? 'created' : f.after === null ? 'deleted' : 'edited';
         return { key: f.key, path: f.path, rel: model.cwd && f.path.toLowerCase().startsWith(model.cwd.toLowerCase() + path.sep) ? path.relative(model.cwd, f.path) : f.path, change, binary, large, outside: f.outside, unknown: f.before === undefined || f.after === undefined, ...counts };
       });
-      return {
+      const row = {
         messageId: snap.messageId,
         prompt: prompt ? clip(prompt.text, 400) : '(prompt not found)',
         ts: prompt ? prompt.ts : null,
-        latest: i === model.turns.length - 1,
+        latest: i === latest,
         files,
         added: files.reduce((s, f) => s + (f.added || 0), 0),
         removed: files.reduce((s, f) => s + (f.removed || 0), 0),
       };
+      if (i !== latest) model.rows.set(i, row);
+      return row;
     });
     return { sessionId, cwd: model.cwd, turns: turns.reverse(), checkpoints: model.snapshots.length > 0 };
   }

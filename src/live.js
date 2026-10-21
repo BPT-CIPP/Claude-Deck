@@ -12,6 +12,7 @@ const { EventEmitter } = require('events');
 const { execFile } = require('child_process');
 const paths = require('./paths');
 const prefsStore = require('./prefs');
+const { removeTabFiles } = require('./launcher');
 const { readJson, isPidAlive } = require('./util');
 
 const START_TIMEOUT_MS = 45000;
@@ -31,12 +32,6 @@ function readSessionRecords() {
     out.set(rec.pid, rec);
   }
   return out;
-}
-
-function removeTabFiles(id) {
-  for (const suffix of ['.json', '.spec.json', '.close', '.resume']) {
-    try { fs.unlinkSync(path.join(paths.tabsDir(), id + suffix)); } catch { /* not present */ }
-  }
 }
 
 function describe(meta) {
@@ -69,6 +64,9 @@ class Live extends EventEmitter {
     this.chats = chats || null;
     this.state = { sessions: [], external: [], updatedAt: 0 };
     this.prevStatus = new Map(); // deck id -> { status, state }
+    // Claude processes of Claude Deck's own that aren't sessions (the model probe), by pid: they
+    // write a session record too, and would show as outside sessions otherwise.
+    this.ignored = new Set();
     this.lastJson = '';
     this.ticking = false;
     this.again = false;
@@ -80,6 +78,16 @@ class Live extends EventEmitter {
   poke(delay = 150) {
     clearTimeout(this.pokeTimer);
     this.pokeTimer = setTimeout(() => this.tick(), delay);
+  }
+
+  ignore(pid) {
+    this.ignored.add(pid);
+    this.poke(0);
+  }
+
+  release(pid) {
+    this.ignored.delete(pid);
+    this.poke(0);
   }
 
   start() {
@@ -217,7 +225,7 @@ class Live extends EventEmitter {
     const external = [];
     if (prefsStore.load().showExternal) {
       for (const rec of records.values()) {
-        if (claimed.has(rec.pid)) continue;
+        if (claimed.has(rec.pid) || this.ignored.has(rec.pid)) continue;
         const meta = rec.sessionId ? this.history.get(rec.sessionId) : null;
         external.push({
           pid: rec.pid,

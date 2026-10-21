@@ -76,6 +76,20 @@ test('drops closed tabs and marks tabs that never reported as failed', () => {
   assert.strictEqual(never.state, 'failed');
 });
 
+test("a Claude process of Claude Deck's own that isn't a session (the model probe) is not an outside session", () => {
+  const registry = new Registry();
+  for (const e of registry.all()) registry.remove(e.id);
+  writeRecord({ status: 'idle' });
+  const live = new Live({ registry, history: new HistoryIndex() });
+  live.ignore(claudePid);
+  live._compute();
+  assert.strictEqual(live.state.external.length, 0, 'ignored while it runs');
+  live.release(claudePid);
+  live._compute();
+  assert.strictEqual(live.state.external.length, 1, 'any other process with that pid later shows as usual');
+  clearTimeout(live.pokeTimer);
+});
+
 test('external sessions can be hidden', () => {
   const registry = new Registry();
   for (const e of registry.all()) registry.remove(e.id);

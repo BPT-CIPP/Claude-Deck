@@ -129,7 +129,9 @@ function menu(models, aliases) {
 // Starts Claude Code just to read its model list: the initialize handshake, then it's closed.
 // No prompt is sent, and MCP servers aren't started (--strict-mcp-config with none given).
 // Resolves once that Claude Code has exited, so nothing is left running in the data folder.
-function probe(claudePath) {
+// onStart(pid) is told the process's pid, so the live view can leave it out of outside sessions
+// (it writes a sessions/<pid>.json like any Claude Code process).
+function probe(claudePath, { onStart } = {}) {
   return new Promise((resolve) => {
     let found = null;
     let ending = false;
@@ -154,6 +156,7 @@ function probe(claudePath) {
       resolve(null);
       return;
     }
+    if (onStart && proc.pid) onStart(proc.pid);
     proc.on('error', () => { clearTimeout(timer); resolve(null); });
     proc.on('exit', () => { clearTimeout(timer); resolve(found); });
     proc.stdin.on('error', () => {});

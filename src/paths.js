@@ -9,6 +9,12 @@ function claudeDir() {
   return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 }
 
+// Claude Code's own state file (sign-in, per-project state, the /config global options): beside
+// ~/.claude, or inside CLAUDE_CONFIG_DIR when that's set (seen with 2.1.301). Read only.
+function globalConfigFile() {
+  return process.env.CLAUDE_CONFIG_DIR ? path.join(process.env.CLAUDE_CONFIG_DIR, '.claude.json') : path.join(os.homedir(), '.claude.json');
+}
+
 function projectsDir() {
   return path.join(claudeDir(), 'projects');
 }
@@ -29,4 +35,4 @@ function tabsDir() {
   return path.join(dataDir(), 'tabs');
 }
 
-module.exports = { claudeDir, projectsDir, sessionsDir, dataDir, tabsDir };
+module.exports = { claudeDir, globalConfigFile, projectsDir, sessionsDir, dataDir, tabsDir };
