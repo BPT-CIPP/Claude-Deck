@@ -182,7 +182,7 @@ over.
 | **Subagents** | When Claude starts a subagent, a panel opens above the conversation listing the subagents it started, from the moment each starts: type, model, time, current step, tool calls and tokens. Click one for everything it did, live: its instructions, every step with results, and token usage (input, output, cache). **Stop** ends a running one. **✕** closes the panel until another subagent starts; **Subagents** in the session menu opens it again. |
 | **Changes** | **Changes** in the session menu shows the files Claude changed in each turn, with line counts and diffs. **Restore to before this turn** puts those files back (it lists what it will do first), and **Undo** reverses the restore. The conversation itself isn't changed. |
 | **New session** | Where to run it (chat or terminal), folder (browse, pinned, recent), name, color, new or continue-latest, model, effort, permission mode, git worktree, extra folders, extra arguments and a first prompt. Shows the exact `claude` command. Save setups as presets. |
-| **History** | Every past conversation, searchable and filterable by folder. Preview it, then **Resume here**, **Resume in terminal** or **Fork a copy**. The trash button deletes a conversation you don't need (with **Undo**; open conversations can't be deleted). |
+| **History** | Every past conversation, filed by folder: one folder per working directory, as Claude Code keeps them, most recently active first. Click a folder to open it in place and see its conversations; drag a conversation onto another folder to move it there (Claude Code's own files aren't touched, and it still resumes from the folder it was started in; a moved conversation says where it came from, with a button to put it back). **List** shows everything in one list by day instead; the choice is remembered. Search and the folder filter work in both. Preview a conversation, then **Resume here**, **Resume in terminal** or **Fork a copy**. The trash button deletes a conversation you don't need (with **Undo**; open conversations can't be deleted). |
 | **Plan usage** | On the bar across the top: your current session and weekly limits, the same numbers as `/usage` in Claude Code. Click for every limit and reset time. **Most tokens this week**, at the bottom of that dropdown, lists the conversations that used the most (subagents included) since your plan's weekly limit reset, or in the last 7 days; **Show all** lists every one. |
 | **Notifications** | A desktop notification (and optional chime) when a session needs you or finishes. The taskbar icon's mascot sweats while anything is working and gets an amber dot when a session needs you. |
 | **Claude Code Settings** | Edits your user, project and project-local `settings.json`, and your user and project `CLAUDE.md`, with a form for every setting, plus raw JSON. Every save backs up the previous file first, and a save is refused if Claude Code changed the file since you opened it. **Plugin marketplaces** lists where Claude Code finds plugins, and adds, updates or removes them. |
@@ -237,8 +237,9 @@ them for its own tabs.
 - **Local only.** The server listens on `127.0.0.1:47821` (or another free port) and requires a
   per-install token, so other web pages and other PCs can't use it.
 - **Claude Deck's data** is in `%LOCALAPPDATA%\ClaudeDeck`: preferences, open chats, settings
-  backups, undo copies, its trash, Claude Code's model list, and copies of files you dropped on a
-  chat (`attachments\`).
+  backups, undo copies, its trash, Claude Code's model list, where you've moved conversations in
+  History's folder view (`history-folders.json`), and copies of files you dropped on a chat
+  (`attachments\`).
 - **Claude Code's files** (`%USERPROFILE%\.claude`) are changed only when you save in the settings
   editor (after a backup) or delete a conversation from History (moved to Claude Deck's trash, kept
   for 30 days). **Restore to before this turn** changes your project files, after saving their

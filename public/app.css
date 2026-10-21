@@ -1228,6 +1228,27 @@ dialog.week-dialog { width: min(780px, calc(100vw - 32px)); }
 .h-sub .path { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
 .h-sub .live { color: inherit; font-weight: 700; white-space: nowrap; }
 .h-more { margin: 10px; color: var(--frame-text); }
+/* Folder view: one folder per working directory, opened in place over its conversations. */
+.h-folder { margin: 2px 8px 2px 4px; border-radius: 4px; }
+.h-folder-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 8px; align-items: center; width: 100%; text-align: left; border: 0; border-radius: 4px; background: transparent; color: var(--frame-text); padding: 7px 10px 7px 8px; font-weight: 600; }
+.h-folder-head:hover { background: var(--frame-2); }
+.h-chevron { display: inline-flex; line-height: 0; transition: transform var(--dur-fast) var(--ease); }
+.h-folder.open > .h-folder-head .h-chevron { transform: rotate(90deg); }
+.h-folder-name { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.h-folder-name > bdi { direction: ltr; unicode-bidi: isolate; }
+.h-folder-count { font-size: var(--fs-s); background: var(--plate); color: var(--plate-text); border-radius: 9px; padding: 0 7px; line-height: 18px; font-weight: 600; }
+.h-folder-time { font-size: var(--fs-s); color: var(--frame-muted); white-space: nowrap; }
+.h-folder-body { margin-left: 15px; padding-left: 4px; border-left: 1px solid color-mix(in srgb, var(--frame-text) 22%, transparent); }
+.h-folder-body .h-more { margin: 4px 10px 8px; }
+.h-folder.drop-target { outline: 2px dashed var(--focus-ring); outline-offset: -2px; background: color-mix(in srgb, var(--focus-ring) 16%, transparent); }
+.h-item[draggable="true"] { cursor: grab; }
+.h-item.dragging { opacity: 0.45; }
+.h-moved { color: var(--frame-muted); font-style: italic; }
+.h-row[aria-selected="true"] .h-moved { color: var(--muted); }
+.h-back { position: absolute; right: 34px; bottom: 5px; padding: 3px; line-height: 0; color: var(--frame-muted); opacity: 0.55; transition: opacity var(--dur-fast) var(--ease); }
+.h-item:hover .h-back, .h-back:focus-visible, .h-row[aria-selected="true"] ~ .h-back { opacity: 1; }
+.h-row[aria-selected="true"] ~ .h-back { color: var(--muted); }
+.h-item.moved .h-sub { padding-right: 54px; }
 .h-item { position: relative; }
 .h-item .h-sub { padding-right: 28px; }
 .h-del { position: absolute; right: 8px; bottom: 5px; padding: 3px; line-height: 0; color: var(--frame-muted); opacity: 0.55; transition: opacity var(--dur-fast) var(--ease); }

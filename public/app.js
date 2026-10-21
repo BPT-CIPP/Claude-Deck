@@ -21,6 +21,11 @@
     history: { sessions: [], live: [], loaded: false },
     historySel: null,
     historyLimit: 150,
+    historyView: store.get('historyView', 'folders'), // 'folders': one per working directory; 'list': all, newest first
+    historyOpen: new Set(store.get('historyOpen', [])), // folder keys opened in the folder view
+    historyReveal: null, // a session id whose folder opens on the next render (chosen elsewhere)
+    historyFolderLimits: {}, // folder key -> how many of its conversations to show
+    historyDrag: null, // { sessionId, folderKey } while a conversation is being dragged
     folders: { favorites: [], recent: [] },
     detailKey: null,
     headSig: null,
@@ -360,6 +365,7 @@
       return;
     }
     S.historySel = r.sessionId;
+    S.historyReveal = r.sessionId;
     $('#history-search').value = '';
     $('#history-folder').value = '';
     setView('history');
@@ -3640,11 +3646,15 @@
     renderHistory();
   }
 
+  // A conversation's folder in History: where it was started, or where it was dragged to
+  // (m.folder, from src/history-folders.js). Folders are keyed case-insensitively, as Windows is.
+  const folderKey = (m) => (m.folder || '').toLowerCase();
+
   function historyFiltered() {
     const q = $('#history-search').value.trim();
     const folder = $('#history-folder').value;
-    const list = S.history.sessions.filter((m) => (!folder || (m.cwd || '').toLowerCase() === folder)
-      && matches([m.title, m.firstPrompt, m.lastPrompt, m.cwd, m.sessionId, m.gitBranch, m.tag], q));
+    const list = S.history.sessions.filter((m) => (!folder || folderKey(m) === folder)
+      && matches([m.title, m.firstPrompt, m.lastPrompt, m.cwd, m.folder, m.sessionId, m.gitBranch, m.tag], q));
     const sort = $('#history-sort').value;
     if (sort === 'turns') list.sort((a, b) => b.userTurns - a.userTurns);
     else if (sort === 'cost') list.sort((a, b) => (b.costUSD || 0) - (a.costUSD || 0));
@@ -3656,9 +3666,9 @@
     const current = sel.value;
     const counts = new Map();
     for (const m of S.history.sessions) {
-      if (!m.cwd) continue;
-      const k = m.cwd.toLowerCase();
-      const c = counts.get(k) || { path: m.cwd, n: 0 };
+      if (!m.folder) continue;
+      const k = folderKey(m);
+      const c = counts.get(k) || { path: m.folder, n: 0 };
       c.n++;
       counts.set(k, c);
     }
@@ -3669,8 +3679,142 @@
     }
   }
 
+  function setHistoryView(view) {
+    S.historyView = view === 'list' ? 'list' : 'folders';
+    store.set('historyView', S.historyView);
+    renderHistory();
+  }
+
+  function renderHistoryViewToggle() {
+    for (const b of $$('#history-view button')) b.setAttribute('aria-pressed', String(b.dataset.view === S.historyView));
+  }
+
+  function toggleHistoryFolder(key) {
+    if (S.historyOpen.has(key)) S.historyOpen.delete(key);
+    else S.historyOpen.add(key);
+    store.set('historyOpen', [...S.historyOpen]);
+    renderHistory();
+  }
+
+  // One row of the list, in either view. In the folder view it can be dragged onto another folder.
+  function historyRow(m, live, { grouped, draggable }) {
+    const open = live.has(m.sessionId);
+    const item = h('div', { class: `h-item${m.movedFrom ? ' moved' : ''}`, draggable: draggable ? 'true' : null },
+      h('button', {
+        class: 'h-row',
+        role: 'option',
+        'aria-selected': String(S.historySel === m.sessionId),
+        dataset: { sid: m.sessionId },
+        onclick: () => { S.historySel = m.sessionId; $$('#history-list .h-row').forEach((r) => r.setAttribute('aria-selected', String(r.dataset.sid === m.sessionId))); renderHistoryPreview(m); },
+        ondblclick: () => resumeFromHistory(m, false, 'chat'),
+      },
+      h('span', { class: 'h-title' }, m.title || 'Untitled conversation'),
+      h('span', { class: 'h-time', title: when(m.updatedAt) }, grouped ? when(m.updatedAt) : ago(m.updatedAt)),
+      h('span', { class: 'h-sub' },
+        open ? h('span', { class: 'live' }, 'Open now') : null,
+        // In the folder view the folder is the heading; the row says where it was started only when that differs.
+        draggable
+          ? (m.movedFrom ? h('span', { class: 'h-moved', title: `Started in ${m.movedFrom}; moved here in Claude Deck` }, `from ${shortPath(m.movedFrom, 1)}`) : null)
+          : h('span', { class: 'path', title: m.cwd || '' }, shortPath(m.cwd)),
+        h('span', null, `${m.userTurns} prompt${m.userTurns === 1 ? '' : 's'}`),
+        m.costUSD ? h('span', null, money(m.costUSD)) : null)),
+      m.movedFrom ? h('button', {
+        type: 'button',
+        class: 'ghost icon h-back',
+        title: `Put back in the folder it was started in (${m.movedFrom})`,
+        'aria-label': `Put ${m.title || 'this conversation'} back in ${m.movedFrom}`,
+        onclick: () => moveConversation(m, null),
+      }, Deck.icon('up', { size: 13 })) : null,
+      h('button', {
+        type: 'button',
+        class: 'ghost icon h-del',
+        disabled: open,
+        title: open ? 'Open right now. End or close it first, then delete it.' : 'Delete this conversation',
+        'aria-label': `Delete ${m.title || 'this conversation'}`,
+        onclick: () => deleteConversation(m),
+      }, trashIcon()));
+    if (draggable) {
+      item.addEventListener('dragstart', (e) => {
+        S.historyDrag = { sessionId: m.sessionId, folderKey: folderKey(m) };
+        e.dataTransfer.setData('text/plain', m.sessionId);
+        e.dataTransfer.effectAllowed = 'move';
+        item.classList.add('dragging');
+      });
+      item.addEventListener('dragend', () => { S.historyDrag = null; item.classList.remove('dragging'); for (const f of $$('#history-list .drop-target')) f.classList.remove('drop-target'); });
+    }
+    return item;
+  }
+
+  // The folders of these conversations, most recently active first (or by the sort chosen).
+  function historyFolderGroups(rows) {
+    const groups = new Map();
+    for (const m of rows) {
+      const key = folderKey(m);
+      let g = groups.get(key);
+      if (!g) { g = { key, path: m.folder || '', rows: [], latest: 0, turns: 0, cost: 0 }; groups.set(key, g); }
+      g.rows.push(m);
+      g.latest = Math.max(g.latest, m.updatedAt || 0);
+      g.turns += m.userTurns || 0;
+      g.cost += m.costUSD || 0;
+    }
+    const sort = $('#history-sort').value;
+    const by = sort === 'turns' ? (g) => g.turns : sort === 'cost' ? (g) => g.cost : (g) => g.latest;
+    return [...groups.values()].sort((a, b) => by(b) - by(a));
+  }
+
+  const FOLDER_PAGE = 100;
+
+  function historyFolderNode(g, live) {
+    const open = S.historyOpen.has(g.key);
+    const limit = S.historyFolderLimits[g.key] || FOLDER_PAGE;
+    const node = h('div', { class: `h-folder${open ? ' open' : ''}`, dataset: { folder: g.key } },
+      h('button', {
+        type: 'button',
+        class: 'h-folder-head',
+        'aria-expanded': String(open),
+        title: g.path ? `${g.path}\nDrop a conversation here to move it into this folder` : 'Conversations with no folder recorded',
+        onclick: () => toggleHistoryFolder(g.key),
+      },
+      h('span', { class: 'h-chevron', 'aria-hidden': 'true' }, Deck.icon('right', { size: 12 })),
+      h('span', { class: 'h-folder-name' }, h('bdi', null, g.path ? shortPath(g.path, 2) : 'No folder')),
+      h('span', { class: 'h-folder-count', title: `${g.rows.length} conversation${g.rows.length === 1 ? '' : 's'}` }, String(g.rows.length)),
+      h('span', { class: 'h-folder-time' }, g.latest ? ago(g.latest) : '')),
+      open ? h('div', { class: 'h-folder-body' },
+        g.rows.slice(0, limit).map((m) => historyRow(m, live, { grouped: false, draggable: true })),
+        g.rows.length > limit ? h('button', { class: 'ghost small h-more', onclick: () => { S.historyFolderLimits[g.key] = limit + FOLDER_PAGE; renderHistory(); } }, `Show ${Math.min(FOLDER_PAGE, g.rows.length - limit)} more`) : null) : null);
+    // A conversation dragged from another folder can be dropped anywhere on this one.
+    if (g.path) {
+      const accepts = () => S.historyDrag && S.historyDrag.folderKey !== g.key;
+      node.addEventListener('dragover', (e) => { if (!accepts()) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; node.classList.add('drop-target'); });
+      node.addEventListener('dragleave', (e) => { if (!node.contains(e.relatedTarget)) node.classList.remove('drop-target'); });
+      node.addEventListener('drop', (e) => {
+        if (!accepts()) return;
+        e.preventDefault();
+        node.classList.remove('drop-target');
+        const m = S.history.sessions.find((x) => x.sessionId === S.historyDrag.sessionId);
+        S.historyDrag = null;
+        if (m) moveConversation(m, g.path);
+      });
+    }
+    return node;
+  }
+
+  // Files a conversation under another folder (null: back where it was started), with Undo.
+  async function moveConversation(m, folder) {
+    const before = m.movedFrom ? m.folder : null;
+    const res = await run("Couldn't move the conversation", () => api('PUT', `/api/history/${m.sessionId}/folder`, { folder }));
+    if (!res) return;
+    S.history = { ...S.history, sessions: res.sessions, live: res.live };
+    S.historySel = m.sessionId;
+    S.historyReveal = m.sessionId;
+    renderHistory();
+    const now = S.history.sessions.find((x) => x.sessionId === m.sessionId) || m;
+    toast(folder ? `Moved to ${shortPath(folder, 2)}` : `Put back in ${shortPath(now.folder || '', 2)}`, 'info', { label: 'Undo', ms: 8000, run: () => moveConversation(now, before) });
+  }
+
   function renderHistory() {
     renderHistoryFolders();
+    renderHistoryViewToggle();
     const list = clear($('#history-list'));
     const rows = historyFiltered();
     const live = new Set(S.history.live);
@@ -3681,44 +3825,30 @@
       renderHistoryPreview(null);
       return;
     }
-    const grouped = $('#history-sort').value === 'recent';
-    let lastGroup = null;
-    for (const m of rows.slice(0, S.historyLimit)) {
-      if (grouped) {
-        const g = dayGroup(m.updatedAt);
-        if (g !== lastGroup) {
-          list.appendChild(h('div', { class: 'h-group' }, g));
-          lastGroup = g;
-        }
-      }
-      const open = live.has(m.sessionId);
-      list.appendChild(h('div', { class: 'h-item' },
-        h('button', {
-          class: 'h-row',
-          role: 'option',
-          'aria-selected': String(S.historySel === m.sessionId),
-          dataset: { sid: m.sessionId },
-          onclick: () => { S.historySel = m.sessionId; $$('#history-list .h-row').forEach((r) => r.setAttribute('aria-selected', String(r.dataset.sid === m.sessionId))); renderHistoryPreview(m); },
-          ondblclick: () => resumeFromHistory(m, false, 'chat'),
-        },
-        h('span', { class: 'h-title' }, m.title || 'Untitled conversation'),
-        h('span', { class: 'h-time', title: when(m.updatedAt) }, grouped ? when(m.updatedAt) : ago(m.updatedAt)),
-        h('span', { class: 'h-sub' },
-          open ? h('span', { class: 'live' }, 'Open now') : null,
-          h('span', { class: 'path', title: m.cwd || '' }, shortPath(m.cwd)),
-          h('span', null, `${m.userTurns} prompt${m.userTurns === 1 ? '' : 's'}`),
-          m.costUSD ? h('span', null, money(m.costUSD)) : null)),
-        h('button', {
-          type: 'button',
-          class: 'ghost icon h-del',
-          disabled: open,
-          title: open ? 'Open right now. End or close it first, then delete it.' : 'Delete this conversation',
-          'aria-label': `Delete ${m.title || 'this conversation'}`,
-          onclick: () => deleteConversation(m),
-        }, trashIcon())));
+    // A conversation chosen elsewhere (the palette, usage, a move): its folder opens so it's in view.
+    if (S.historyReveal) {
+      const m = rows.find((x) => x.sessionId === S.historyReveal);
+      if (m && !S.historyOpen.has(folderKey(m))) { S.historyOpen.add(folderKey(m)); store.set('historyOpen', [...S.historyOpen]); }
+      S.historyReveal = null;
     }
-    if (rows.length > S.historyLimit) {
-      list.appendChild(h('button', { class: 'ghost h-more', onclick: () => { S.historyLimit += 200; renderHistory(); } }, `Show ${Math.min(200, rows.length - S.historyLimit)} more`));
+    if (S.historyView === 'folders') {
+      for (const g of historyFolderGroups(rows)) list.appendChild(historyFolderNode(g, live));
+    } else {
+      const grouped = $('#history-sort').value === 'recent';
+      let lastGroup = null;
+      for (const m of rows.slice(0, S.historyLimit)) {
+        if (grouped) {
+          const g = dayGroup(m.updatedAt);
+          if (g !== lastGroup) {
+            list.appendChild(h('div', { class: 'h-group' }, g));
+            lastGroup = g;
+          }
+        }
+        list.appendChild(historyRow(m, live, { grouped, draggable: false }));
+      }
+      if (rows.length > S.historyLimit) {
+        list.appendChild(h('button', { class: 'ghost h-more', onclick: () => { S.historyLimit += 200; renderHistory(); } }, `Show ${Math.min(200, rows.length - S.historyLimit)} more`));
+      }
     }
     const selected = rows.find((m) => m.sessionId === S.historySel) || rows[0];
     S.historySel = selected.sessionId;
@@ -3762,6 +3892,7 @@
     if (!res) return;
     S.history = { ...S.history, sessions: res.sessions, live: res.live };
     S.historySel = res.sessionId;
+    S.historyReveal = res.sessionId;
     renderHistory();
     toast('Conversation restored');
   }
@@ -3794,6 +3925,8 @@
       m.firstPrompt && m.firstPrompt !== m.title ? h('div', { class: 'muted card-prompt' }, m.firstPrompt) : null,
       h('dl', { class: 'facts' },
         fact('Folder', m.cwd, true),
+        // Moved in History's folder view; it still resumes from its own folder above.
+        fact('Filed under', m.movedFrom ? m.folder : null, true),
         fact('Last active', when(m.updatedAt)),
         fact('Started', when(m.startedAt)),
         fact('Prompts', m.userTurns),
@@ -3879,7 +4012,7 @@
         if (n >= 25) break;
         if (!matches([m.title, m.firstPrompt, m.lastPrompt, m.cwd, m.sessionId], q)) continue;
         n++;
-        out.push({ kind: 'History', text: m.title || 'Untitled conversation', sub: `${shortPath(m.cwd)}  ${ago(m.updatedAt)}`, run: () => { setView('history'); S.historySel = m.sessionId; renderHistory(); } });
+        out.push({ kind: 'History', text: m.title || 'Untitled conversation', sub: `${shortPath(m.cwd)}  ${ago(m.updatedAt)}`, run: () => { setView('history'); S.historySel = m.sessionId; S.historyReveal = m.sessionId; renderHistory(); } });
       }
     }
     paletteItems = out.slice(0, 60);
@@ -4430,6 +4563,7 @@
     $('#history-search').addEventListener('input', () => { S.historyLimit = 150; renderHistory(); });
     $('#history-folder').addEventListener('change', () => { S.historyLimit = 150; renderHistory(); });
     $('#history-sort').addEventListener('change', () => renderHistory());
+    for (const b of $$('#history-view button')) b.addEventListener('click', () => setHistoryView(b.dataset.view));
     $('#btn-rescan').addEventListener('click', async () => {
       const data = await run("Couldn't rescan", () => api('POST', '/api/history/rebuild'));
       if (data) { S.history = { ...data, loaded: true }; renderHistory(); toast('History rescanned'); }

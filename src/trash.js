@@ -158,4 +158,11 @@ function purgeOld(now = Date.now()) {
   return removed;
 }
 
-module.exports = { trashSession, restore, purgeOld, sessionItems, TRASH_DAYS };
+// The conversations in the trash, by session id (an Undo brings them back to History).
+function trashedSessionIds() {
+  let names;
+  try { names = fs.readdirSync(trashDir()); } catch { return []; }
+  return names.map((name) => { const m = readJson(path.join(trashDir(), name, 'manifest.json'), null); return m && m.sessionId; }).filter((id) => UUID_RE.test(id || ''));
+}
+
+module.exports = { trashSession, restore, purgeOld, trashedSessionIds, sessionItems, TRASH_DAYS };
