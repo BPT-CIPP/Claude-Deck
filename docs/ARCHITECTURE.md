@@ -100,8 +100,10 @@ test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes),
   chats are possible because Claude's streaming JSON mode needs only pipes, not a terminal.
 - **No Claude API calls.** Everything shown is read from files Claude Code writes, and what the user
   types is relayed to their own `claude` process, so Claude Deck adds no cost. The plan usage meter
-  is the one outbound request it makes on its own: account metadata, no model runs. *Check for
-  updates* fetches from GitHub only when clicked.
+  is one outbound request it makes on its own: account metadata, no model runs. The other is the
+  update check: when the window opens (silent on any failure, `checkForUpdatesAtLaunch` in
+  `public/app.js`) and when *Check for updates* is clicked, it fetches from GitHub for a clean
+  `main` clone only, and updates only after the user says yes.
 - **A scheduled task, not a Windows service.** The server has to run as the signed-in user in their
   desktop session, to use their Claude sign-in and open Windows Terminal tabs and Edge windows. A
   service runs elsewhere, as another account, and would need a wrapper executable. The task runs

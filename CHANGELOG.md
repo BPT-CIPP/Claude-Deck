@@ -6,6 +6,31 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.13.0] - 2026-10-13
+
+### Added
+- **Claude Deck checks for updates when it opens.** For a copy cloned from GitHub (on `main`, with
+  access to the repository through the GitHub CLI), it asks **Update found: would you like to
+  update Claude Deck now?** when a newer version is out, then updates and restarts if you say yes.
+  If the check or the update can't run (no access, no GitHub CLI, offline, a copy that isn't
+  updated from here), it says nothing and Claude Deck carries on. A declined version isn't offered
+  again until the window is next opened. **Check for updates** in Preferences still explains any
+  problem.
+- **How to sign in again when Claude Code's sign-in expires.** When a chat fails because Claude Code
+  isn't signed in or its sign-in expired ("OAuth session expired"), the chat now says to open
+  PowerShell and run `claude auth login`, with a **Copy command** button. Typing `/login` in a chat,
+  which only works in Claude Code's terminal, shows the same instructions instead of "isn't
+  available in this environment".
+
+### Fixed
+- **The model menu in New session works again.** It opened, but clicks and hovers went through it
+  to the window underneath (showing that window's tooltips), so no model could be chosen. Browsers
+  block everything outside an open dialog, and the menu sat outside it; it now opens inside it.
+- **New session opens in the default folder you choose.** Choosing a folder with **Browse…** under
+  Preferences → New sessions → Default folder now saves it right away (it used to wait for
+  **Save**), and saving a default makes it where the next New session opens, even when it
+  remembered a folder from an earlier session.
+
 ## [1.12.0] - 2026-10-10
 
 ### Added
@@ -376,6 +401,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.13.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.9.1...v1.10.0
