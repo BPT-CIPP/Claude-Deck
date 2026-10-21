@@ -380,8 +380,8 @@ async function main() {
   }
 
   // History as the page lists it: every conversation, with the folder it's filed under
-  // (src/history-folders.js) and which are open right now.
-  const historyView = () => ({ sessions: historyFolders.annotate(history.list()), live: liveSessionIds() });
+  // (src/history-folders.js), the names folders are shown under, and which are open right now.
+  const historyView = () => ({ sessions: historyFolders.annotate(history.list()), folderNames: historyFolders.names(), live: liveSessionIds() });
 
   const routes = {
     'GET /api/ping': () => ({ ok: true, pid: process.pid, version: VERSION }),
@@ -575,6 +575,13 @@ async function main() {
       if (!history.get(p.sessionId)) throw new UserError('That conversation was not found in history.', 404);
       const b = await readBody(req);
       historyFolders.set(p.sessionId, b.folder === null || b.folder === undefined ? null : b.folder);
+      return historyView();
+    },
+    // { folder, name }: the name a folder is shown under in History ('' goes back to its path).
+    // Only History's label: the folder on disk isn't renamed.
+    'PUT /api/history/folder-name': async (req) => {
+      const b = await readBody(req);
+      historyFolders.rename(b.folder, b.name);
       return historyView();
     },
     // Delete a conversation: its files go to Claude Deck's trash (src/trash.js); Undo restores them.

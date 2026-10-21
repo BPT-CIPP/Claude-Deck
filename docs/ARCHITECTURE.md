@@ -56,7 +56,8 @@ src/prompt-history.js   Ctrl+R: Claude Code's own prompt history (history.jsonl,
 src/live.js             joins chats + terminal registry + tab status + sessions/<pid>.json; notify events
 src/history.js          incremental transcript indexer (titles, cost, token usage by hour, context
                         size; subagent transcripts on request) + transcript reader
-src/history-folders.js  History's folder view: which folder each conversation is filed under (its cwd, or where it was dragged)
+src/history-folders.js  History's folder view: which folder each conversation is filed under (its cwd, or where it was dragged),
+                        and the names folders are shown under
 src/launcher.js         claude argument building, model aliases, wt.exe new-tab / focus-tab, close / resume
 src/tab-host.js         runs inside each Windows Terminal tab; starts claude, reports pid and session id
 src/settings-files.js   Claude settings and CLAUDE.md: read, write (backup first), restore
@@ -137,7 +138,8 @@ test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes),
 Claude Deck's own data is in `%LOCALAPPDATA%\ClaudeDeck\` (or `CLAUDE_DECK_DATA`): `prefs.json`,
 `registry.json` (terminal sessions it launched), `chats.json` (open chats), `tabs\` (tab host status),
 `history-cache.json`, `history-folders.json` (conversations moved to another folder in History's
-folder view), `models.json` (Claude Code's model list and the version it came from),
+folder view), `history-folder-names.json` (names given to folders there; the folders on disk aren't
+renamed), `models.json` (Claude Code's model list and the version it came from),
 `backups\` (the last 30 versions of each settings file), `rewinds\` (files as
 they were before each of the last 20 restores, for Undo), `trash\` (deleted conversations, removed for
 good after 30 days), `attachments\<chat id>\` (copies of files dropped on a chat's reply box, which
