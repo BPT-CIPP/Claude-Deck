@@ -16,7 +16,9 @@ const win = process.platform === 'win32';
 
 test('a command runs in PowerShell in the given folder, with its output and exit code', { skip: !win }, async () => {
   const r = await runPowerShell('Write-Output (Get-Location).Path; Write-Error oops; exit 3', box.root);
-  assert.strictEqual(r.stdout, box.root);
+  // PowerShell prints the folder's long name; a temp folder can be given as a short (8.3) one,
+  // as on GitHub's runners (RUNNER~1 for runneradmin), so compare real paths.
+  assert.strictEqual(r.stdout.toLowerCase(), fs.realpathSync.native(box.root).toLowerCase());
   assert.match(r.stderr, /oops/);
   assert.strictEqual(r.exitCode, 3);
   assert.strictEqual(r.timedOut, false);
