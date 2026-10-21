@@ -711,6 +711,32 @@ test('queued messages can be taken back to edit, with their images, and Claude n
   await waitFor(() => lastOf('assistant') && lastOf('assistant').text === 'Echo: take me back, edited' || null, 'reply to the edited message');
 });
 
+test("Send now puts a message in while Claude works and has Claude take it next, as Claude Code's Ctrl+X Ctrl+S does", async () => {
+  mgr.send(id, 'slow first');
+  await waitFor(() => mgr.summary(mgr.chats.get(id)).status === 'busy' || null, 'busy');
+  const stoppedBefore = items().filter((i) => i.kind === 'note' && i.text === 'Stopped.').length;
+  const res = await mgr.sendNow(id, 'right now please');
+  assert.deepStrictEqual(res, { queued: true, sendNow: 'stopped' });
+  // The running turn made way (stopped, as 2.1.301 does), and the message was taken next.
+  await waitFor(() => items().filter((i) => i.kind === 'note' && i.text === 'Stopped.').length > stoppedBefore || null, 'the slow turn made way');
+  await waitFor(() => lastOf('assistant') && lastOf('assistant').text === 'Echo: right now please' || null, 'the message answered next');
+  await waitFor(() => mgr.summary(mgr.chats.get(id)).status === 'idle' || null, 'idle again');
+  assert.strictEqual(items().findLast((i) => i.kind === 'user').queued, false);
+  // Idle: just a send.
+  const plain = await mgr.sendNow(id, 'and now idle');
+  assert.strictEqual(plain.queued, false);
+  await waitFor(() => lastOf('assistant') && lastOf('assistant').text === 'Echo: and now idle' || null, 'answered as usual');
+  await assert.rejects(mgr.sendNow(id, '   '), /Type a message/);
+  // Nothing typed while Claude works: what's already waiting goes now.
+  mgr.send(id, 'slow again');
+  await waitFor(() => mgr.summary(mgr.chats.get(id)).status === 'busy' || null, 'busy again');
+  await assert.rejects(mgr.sendNow(id, ''), /Nothing is waiting/);
+  mgr.send(id, 'waiting in line');
+  assert.deepStrictEqual(await mgr.sendNow(id, ''), { queued: true, sendNow: 'stopped' });
+  await waitFor(() => lastOf('assistant') && lastOf('assistant').text === 'Echo: waiting in line' || null, 'the waiting message answered next');
+  await waitFor(() => mgr.summary(mgr.chats.get(id)).status === 'idle' || null, 'idle at the end');
+});
+
 test('after an interrupt, the chat shows busy while Claude works on the new message', async () => {
   mgr.send(id, 'slow one');
   await waitFor(() => mgr.summary(mgr.chats.get(id)).status === 'busy' || null, 'busy');

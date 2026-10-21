@@ -6,6 +6,16 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.16.0] - 2026-10-21
+
+### Added
+- **Send now, as in Claude Code.** While Claude works, **Ctrl+Enter** (or **Ctrl+X** then
+  **Ctrl+S**, Claude Code's own keys) sends your message and has Claude take it next instead of
+  after the turn: Claude Code stops what it's doing to make way, and anything queued ahead of it
+  still goes first. With nothing typed, the messages already queued go now. A **Send now** button
+  beside the reply box does the same while Claude works; Enter still queues, and **Ctrl+X** then
+  **Enter** queues too. When Claude is idle, all of these simply send.
+
 ## [1.15.0] - 2026-10-21
 
 ### Added
@@ -474,6 +484,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.16.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.12.0...v1.13.0

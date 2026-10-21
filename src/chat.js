@@ -969,7 +969,29 @@ class ChatManager extends EventEmitter {
     // Only while it waits in line: if it's taken back to edit, its images go back with it.
     if (wasBusy && images.length) chat.queuedImages.set(uuid, images.map((img) => ({ mediaType: img.mediaType, data: img.data, thumb: img.thumb })));
     this._changed(chat);
-    return { queued: chat.queued > 0 };
+    return { queued: chat.queued > 0, uuid };
+  }
+
+  // Claude Code's Send now (Ctrl+X Ctrl+S, or Ctrl+Enter, in its terminal): while Claude works,
+  // the message goes in and Claude is asked to take it next, instead of waiting for the turn to
+  // end. Claude Code decides how the running turn makes way (2.1.301 stops it, as an interrupt
+  // does, and starts the message right after; anything queued ahead of it still runs first).
+  // With nothing typed, the messages already waiting are sent now. Idle: a plain send.
+  // Verified with 2.1.301 (docs/CLAUDE-CODE-INTERNALS.md, "Send now").
+  async sendNow(id, input) {
+    const chat = this._get(id);
+    const { text, images } = normalizeMessage(input);
+    const typed = Boolean(text.trim() || images.length);
+    if (!chat.proc) throw new UserError('This chat has ended. Resume it to continue.');
+    if (!chat.busy && !chat.queued) {
+      if (!typed) throw new UserError('Type a message first.');
+      return this.send(id, input);
+    }
+    let uuid = null;
+    if (typed) ({ uuid } = this.send(id, input));
+    else if (!chat.items.some((it) => it.kind === 'user' && it.queued)) throw new UserError('Nothing is waiting to be sent.');
+    const res = await this._request(chat, { subtype: 'interrupt', send_now: true, ...(uuid ? { message_uuid: uuid } : {}) });
+    return { queued: true, sendNow: typeof res.send_now === 'string' ? res.send_now : null };
   }
 
   // A file dropped on the reply box that isn't an image: { name, data (base64) }. The page can't
