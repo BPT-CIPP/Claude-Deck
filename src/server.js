@@ -433,11 +433,13 @@ async function main() {
       return c;
     },
     'GET /api/chats/:id': (req, p) => chats.detail(p.id),
-    // { text, images?, interrupt? }: interrupt stops Claude's current turn and sends right away;
+    // { text, images?, interrupt?, sendNow? }: interrupt stops Claude's current turn and sends
+    // right away; sendNow is Claude Code's own Send now (Claude takes the message next);
     // otherwise a message sent while Claude works is queued.
     'POST /api/chats/:id/send': async (req, p) => {
       const b = await readBody(req);
       const message = { text: b.text, images: b.images, pasted: b.pasted };
+      if (b.sendNow === true) return chats.sendNow(p.id, message);
       return b.interrupt === true ? chats.sendInterrupting(p.id, message) : chats.send(p.id, message);
     },
     'GET /api/chats/:id/tasks/:taskId': (req, p) => chats.taskDetail(p.id, p.taskId),

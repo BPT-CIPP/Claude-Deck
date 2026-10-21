@@ -2554,7 +2554,9 @@
         h('p', { class: 'faint small' }, 'Not part of the conversation; Claude won\'t remember it.'));
     };
 
-    const submit = async (interrupt) => {
+    // sendNow: Claude Code's Send now (Ctrl+Enter, or Ctrl+X then Ctrl+S): while Claude works, it
+    // takes the message next instead of after the turn; with nothing typed, what's queued goes now.
+    const submit = async (interrupt, sendNow = false) => {
       // One send at a time: a second Enter while the first is on its way would send it twice.
       if (S.sending[it.id]) return;
       recall = null;
@@ -2562,6 +2564,7 @@
       const list = S.attachments[it.id];
       if (!text.trim() && !list.length) {
         if (interrupt) stopTurn(it);
+        else if (sendNow && hasQueued()) sendQueuedNow();
         return;
       }
       if (!list.length && /^\s*!/.test(text)) { runShell(text); return; }
@@ -2572,7 +2575,7 @@
       let res;
       try {
         const sent = pasted.expand(text, pastes.texts);
-        res = await run("Couldn't send", () => api('POST', `/api/chats/${it.id}/send`, { text: sent.text, pasted: sent.ranges, images, interrupt: interrupt === true }));
+        res = await run("Couldn't send", () => api('POST', `/api/chats/${it.id}/send`, { text: sent.text, pasted: sent.ranges, images, interrupt: interrupt === true, sendNow: sendNow === true }));
       } finally {
         delete S.sending[it.id];
       }
@@ -2583,6 +2586,34 @@
         S.attachments[it.id] = (S.attachments[it.id] || []).filter((a) => !list.includes(a));
         drawTray();
       }
+    };
+
+    // Send now with nothing typed: the messages already waiting in Claude's queue go now.
+    const sendQueuedNow = async () => {
+      S.sending[it.id] = true;
+      try {
+        const res = await run("Couldn't send the queued messages now", () => api('POST', `/api/chats/${it.id}/send`, { text: '', sendNow: true }));
+        if (res) toast('Claude takes the queued messages next.');
+      } finally {
+        delete S.sending[it.id];
+      }
+    };
+
+    // Ctrl+X starts a two-key chord, as in Claude Code: Ctrl+S sends now, Enter queues.
+    const CHORD_MS = 2000;
+    let chordAt = 0;
+    let chordTimer = null;
+    const endChord = () => {
+      chordAt = 0;
+      clearTimeout(chordTimer);
+      if (pasteHint.dataset.chord) { delete pasteHint.dataset.chord; pasteHint.hidden = true; hint.hidden = false; }
+    };
+    const startChord = () => {
+      chordAt = Date.now();
+      flashHint('Ctrl+X: now Ctrl+S sends now, Enter queues, Esc cancels');
+      pasteHint.dataset.chord = '1';
+      clearTimeout(chordTimer);
+      chordTimer = setTimeout(endChord, CHORD_MS);
     };
 
     // A message starting with ! is a shell command, as in Claude Code: the box says so.
@@ -2627,6 +2658,27 @@
       const plainKey = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && !e.isComposing;
       const ctrlOnly = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey;
       const now = findItem(`d:${it.id}`) || it;
+      // The second key of a Ctrl+X chord: Ctrl+S sends now, Enter queues, Esc cancels; anything
+      // else drops the chord and does what it always does.
+      if (chordAt && Date.now() - chordAt < CHORD_MS) {
+        endChord();
+        if (ctrlOnly && e.key.toLowerCase() === 's') { e.preventDefault(); submit(false, true); return; }
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!e.repeat) submit(false); return; }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); return; }
+        if (['Control', 'Meta', 'Shift', 'Alt'].includes(e.key)) { startChord(); return; } // the modifier on its way to the second key
+      } else if (chordAt) endChord();
+      // Ctrl+X with nothing selected starts the chord (with a selection it cuts, as anywhere).
+      if (ctrlOnly && e.key.toLowerCase() === 'x' && ta.selectionStart === ta.selectionEnd) {
+        e.preventDefault();
+        startChord();
+        return;
+      }
+      // Ctrl+Enter, as in Claude Code: send now.
+      if (ctrlOnly && e.key === 'Enter') {
+        e.preventDefault();
+        if (!e.repeat) submit(false, true);
+        return;
+      }
       // Shift+Tab, as in Claude Code: the next permission mode (ask before edits, accept edits, plan).
       if (e.key === 'Tab' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
         e.preventDefault();
@@ -2758,6 +2810,7 @@
     picker.addEventListener('change', () => { addFiles([...picker.files]); picker.value = ''; });
     const attachBtn = h('button', { type: 'button', class: 'ghost attach-btn', title: 'Attach images (or paste with Ctrl+V or Alt+V, or drop them here). Drop any other file here to add its path.', onclick: () => picker.click() }, 'Image');
     const sendBtn = h('button', { type: 'button', class: 'primary send-btn', onclick: () => submit(false) }, 'Send');
+    const sendNowBtn = h('button', { type: 'button', class: 'sendnow-btn', hidden: true, onclick: () => submit(false, true), title: "Send now, as Claude Code's Ctrl+X Ctrl+S: Claude takes this message next instead of after the turn; with nothing typed, the queued messages go now (Ctrl+Enter)" }, 'Send now');
     const interruptBtn = h('button', { type: 'button', class: 'danger interrupt-btn', hidden: true, onclick: () => submit(true), title: 'Stop what Claude is doing, and send your message now if you typed one' }, 'Interrupt');
     const ended = h('div', { class: 'composer-ended', hidden: true },
       h('span', null, 'This chat has ended.'),
@@ -2769,7 +2822,7 @@
       slash,
       ended,
       tray,
-      h('div', { class: 'composer-row' }, ta, h('div', { class: 'composer-buttons' }, attachBtn, sendBtn, interruptBtn), picker),
+      h('div', { class: 'composer-row' }, ta, h('div', { class: 'composer-buttons' }, attachBtn, sendBtn, sendNowBtn, interruptBtn), picker),
       hint,
       pasteHint);
     // Drop files anywhere on the reply box: images are attached, anything else goes in by path.
@@ -2891,13 +2944,14 @@
     // While Claude works, Enter queues and the button interrupts.
     c.querySelector('.send-btn').hidden = busy;
     c.querySelector('.send-btn').disabled = exited;
+    c.querySelector('.sendnow-btn').hidden = !busy;
     c.querySelector('.interrupt-btn').hidden = !busy;
     c.querySelector('.composer-hint').textContent = composerHint(busy);
   }
 
   function composerHint(busy) {
-    if (hasQueued()) return 'Claude is working. Your queued messages go when it finishes this step. Press ↑ to take them back and edit them.';
-    if (busy) return 'Claude is working. Enter queues your message for when it finishes this step. Interrupt stops it and sends your message now.';
+    if (hasQueued()) return 'Claude is working. Your queued messages go when it finishes this step. Press ↑ to take them back and edit them, or Ctrl+Enter to have Claude take them now.';
+    if (busy) return 'Claude is working. Enter queues your message for when it finishes this step. Send now (Ctrl+Enter, or Ctrl+X then Ctrl+S) has Claude take it next. Interrupt stops Claude.';
     return 'Enter sends. Shift+Enter adds a line. / commands, @ files, ! runs a shell command. ↑ or Ctrl+R recalls earlier prompts. Shift+Tab changes mode. Esc Esc goes back to an earlier message.';
   }
 

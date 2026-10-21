@@ -483,6 +483,9 @@ function streamMode() {
         if (sub === 'set_permission_mode') permissionMode = m.request.mode;
         if (sub === 'background_tasks' && backgroundNow) backgroundNow();
         let response = sub === 'initialize' ? { commands: [{ name: 'compact', description: 'Summarize the conversation', argumentHint: '' }, ...pluginCommands(sessionPlugins)], models: FAKE_MODELS, fast_mode_state: 'off', fast_mode_disabled_reason: 'sdk_opt_in_required' } : {};
+        // Like the real CLI (2.1.301): an interrupt reports what stays queued, and Send now says
+        // how the running turn made way (here, as there: it was stopped, and the queue carries on).
+        if (sub === 'interrupt') response = { still_queued: [...queuedUuids], ...(m.request.send_now === true ? { send_now: interrupted ? 'stopped' : 'nothing_to_send' } : {}) };
         // Shapes from the real CLI (2.1.284).
         if (sub === 'file_suggestions') {
           const q = String(m.request.query || '').toLowerCase();

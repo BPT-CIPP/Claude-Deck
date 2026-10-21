@@ -254,6 +254,20 @@ also accepts `cancel_queued: true` (cancels everything queued; the response list
 its response reports `still_queued` (uuids that survive a plain interrupt). The field descriptions
 inside `claude.exe` document these; verified by probe against the mock.
 
+✅ **Send now.** The terminal's Ctrl+X Ctrl+S (and Ctrl+Enter; `chat:sendNow` in its keybinding
+table, beside `ctrl+x enter` = `chat:queueSubmit`) is `control_request` `interrupt` with
+`send_now: true` and, optionally, `message_uuid` (the waiting message's uuid; without it every
+waiting message counts). From the field description inside `claude.exe` 2.1.301: it isn't a Stop
+(cancels nothing queued, ends no background task); with a message waiting behind a running turn the
+CLI chooses how that turn makes way, and the response's `send_now` says which; with nothing waiting
+it does nothing (`nothing_to_send`); a CLI without `interrupt_send_now_v1` handles it as a plain
+interrupt. Probed with 2.1.301 against the mock, a message queued behind a 6 s text turn and then
+behind a running Bash call: both times the response was `{still_queued: [<uuid>], send_now:
+'stopped'}`, the running turn ended as an interrupt does (`[Request interrupted by user]` or `… for
+tool use`, `result` `error_during_execution` with `aborted_streaming` / `aborted_tools`, lifecycle
+`cancelled` for its message), and the waiting message's `started` and `init` followed within 10 ms.
+`src/chat.js` `sendNow` sends the message, then this request with its uuid.
+
 ✅ **Changing effort mid-session.** There's no `set_effort`. `control_request` `apply_flag_settings`
 `{settings:{effortLevel}}` changes it for the running session, from the next API request on:
 `output_config.effort` in the request follows it (`low`, `high`, `xhigh`, `max` checked), and
