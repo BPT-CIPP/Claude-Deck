@@ -46,6 +46,30 @@ test('only a real session id and a full folder path are accepted', () => {
   assert.deepStrictEqual(folders.load(), {});
 });
 
+test("a folder can be given a name in History, which never renames it on disk", () => {
+  const real = path.join(box.root, 'Real Folder');
+  fs.mkdirSync(real);
+  assert.deepStrictEqual(folders.names(), {});
+  folders.rename(real, '  Client   work  ');
+  assert.deepStrictEqual(folders.names(), { [real.toLowerCase()]: 'Client work' }, 'keyed by the path in lower case, spaces tidied');
+  assert.ok(fs.existsSync(real), 'the folder on disk keeps its name');
+  folders.rename(real.toUpperCase(), 'Renamed again');
+  assert.deepStrictEqual(Object.values(folders.names()), ['Renamed again'], 'the same folder however it is cased');
+  // An empty name goes back to showing the path.
+  folders.rename(real, '');
+  assert.deepStrictEqual(folders.names(), {});
+  folders.rename(real, 'x');
+  folders.rename(real, null);
+  assert.deepStrictEqual(folders.names(), {});
+  assert.throws(() => folders.rename('relative', 'x'), /Choose a folder/);
+  assert.throws(() => folders.rename(real, 42), /must be text/);
+  assert.throws(() => folders.rename(real, 'x'.repeat(folders.MAX_NAME + 1)), /characters or fewer/);
+  // A file edited by hand: entries that aren't a full path and a name are left out.
+  fs.writeFileSync(path.join(box.dataDir, 'history-folder-names.json'), JSON.stringify({ 'c:\\kept': 'Kept', relative: 'x', 'c:\\blank': '  ', 'c:\\num': 3 }));
+  assert.deepStrictEqual(folders.names(), { 'c:\\kept': 'Kept' });
+  fs.rmSync(path.join(box.dataDir, 'history-folder-names.json'));
+});
+
 test('notes for conversations that are gone are forgotten', () => {
   folders.set(A, 'C:\\work\\other');
   folders.set(B, 'C:\\work\\demo');

@@ -700,7 +700,8 @@ html.lamps-dim .lamp.waiting { background: color-mix(in srgb, var(--waiting) 55%
   cursor: col-resize;
   z-index: 5;
 }
-.focus-splitter:hover, .focus-splitter.active, .focus-splitter:focus-visible { background: color-mix(in srgb, var(--focus-ring) 45%, transparent); outline: none; }
+.focus-splitter:hover, .focus-splitter.active, .focus-splitter:focus-visible,
+.split-splitter:hover, .split-splitter.active, .split-splitter:focus-visible { background: color-mix(in srgb, var(--focus-ring) 45%, transparent); outline: none; }
 
 /* Group plates: reversed, engraved. */
 .focus-group {
@@ -1214,7 +1215,10 @@ dialog.week-dialog { width: min(780px, calc(100vw - 32px)); }
 
 /* ---- history --------------------------------------------------------------------------------- */
 /* The same grammar as Sessions: the list on the frame, the reading shelf beside it. */
-.split { display: grid; grid-template-columns: clamp(300px, 24vw, 380px) minmax(0, 1fr); flex: 1; min-height: 0; }
+/* The list's width grows with the window until it's dragged (app.js sets --history-list-w then). */
+.split { --history-list-w: clamp(300px, 24vw, 380px); display: grid; grid-template-columns: var(--history-list-w) minmax(0, 1fr); flex: 1; min-height: 0; position: relative; }
+/* On the boundary, as in Sessions. */
+.split-splitter { position: absolute; top: 0; bottom: 0; left: calc(var(--history-list-w) - 3px); width: 6px; cursor: col-resize; z-index: 5; }
 .history-list { overflow-y: auto; padding: 4px 0 30px 8px; background: var(--frame); color: var(--frame-text); }
 .h-group { display: inline-block; margin: 14px 0 6px 4px; padding: 3px 9px; border-radius: 3px; background: var(--plate); color: var(--plate-text); }
 .h-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; width: 100%; text-align: left; border: 0; border-radius: 4px 0 0 4px; background: transparent; color: var(--frame-text); padding: 7px 12px 7px 10px; }
@@ -1230,10 +1234,17 @@ dialog.week-dialog { width: min(780px, calc(100vw - 32px)); }
 .h-more { margin: 10px; color: var(--frame-text); }
 /* Folder view: one folder per working directory, opened in place over its conversations. */
 .h-folder { margin: 2px 8px 2px 4px; border-radius: 4px; }
-.h-folder-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 8px; align-items: center; width: 100%; text-align: left; border: 0; border-radius: 4px; background: transparent; color: var(--frame-text); padding: 7px 10px 7px 8px; font-weight: 600; }
+.h-folder-top { position: relative; }
+.h-folder-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 8px; align-items: center; width: 100%; text-align: left; border: 0; border-radius: 4px; background: transparent; color: var(--frame-text); padding: 7px 36px 7px 8px; font-weight: 600; }
 .h-folder-head:hover { background: var(--frame-2); }
+/* Rename, at the end of the folder's line; shown on hover or focus, as a row's delete is. */
+.h-folder-rename { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); padding: 3px; line-height: 0; color: var(--frame-muted); opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
+.h-folder-top:hover .h-folder-rename, .h-folder-rename:focus-visible, .h-folder-head:focus-visible + .h-folder-rename { opacity: 1; }
+.history-list .h-folder-rename:hover { color: var(--frame-text); background: var(--frame-2); }
+.h-folder-input { width: 100%; font-weight: 600; }
+.h-folder-name.named { font-family: inherit; direction: ltr; }
 .h-chevron { display: inline-flex; line-height: 0; transition: transform var(--dur-fast) var(--ease); }
-.h-folder.open > .h-folder-head .h-chevron { transform: rotate(90deg); }
+.h-folder.open > .h-folder-top .h-chevron { transform: rotate(90deg); }
 .h-folder-name { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
 .h-folder-name > bdi { direction: ltr; unicode-bidi: isolate; }
 .h-folder-count { font-size: var(--fs-s); background: var(--plate); color: var(--plate-text); border-radius: 9px; padding: 0 7px; line-height: 18px; font-weight: 600; }
@@ -1495,6 +1506,7 @@ dialog.palette { width: min(660px, calc(100vw - 32px)); padding: 0; margin-top: 
   .shelf-instruments { margin-left: 0; flex-wrap: wrap; }
   .split, .fp-body { grid-template-columns: 1fr; }
   .history-list { max-height: 42vh; }
+  .split-splitter { display: none; }
   /* Sessions keep the conversation in view: the session list stays beside the chat instead of
      stacking above it (app.js narrows it to its lamps here, and the toggle widens it again, to at
      most 60% of the window), and the page stays one screen high so the conversation scrolls

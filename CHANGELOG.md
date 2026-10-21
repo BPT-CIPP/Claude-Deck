@@ -6,6 +6,19 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.17.0] - 2026-10-21
+
+### Added
+- **Name History's folders.** The pencil at the end of a folder's line in History (or **F2** on
+  it) gives it a name there, such as *Client work* in place of a long path. Enter saves, Esc
+  cancels, and an empty name shows the path again; the toast has **Undo**. Only History's name for
+  it changes: the folder on disk keeps its own name, so its conversations still resume there and
+  Claude Code's files aren't touched. The folder filter, moved conversations' "from …" and search
+  use the name too.
+- **History's list can be resized**, as the session list can: drag the line between the list and
+  the preview (or focus it and use ← and →), and double-click it to go back to the usual width.
+  The width is remembered.
+
 ## [1.16.0] - 2026-10-21
 
 ### Added
@@ -484,6 +497,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.17.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.13.0...v1.14.0

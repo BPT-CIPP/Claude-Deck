@@ -123,6 +123,16 @@ test('History files each conversation under its folder, and a move is remembered
   r = await call('PUT', `/api/history/${SID}/folder`, { folder: null });
   m = r.body.sessions.find((s) => s.sessionId === SID);
   assert.deepStrictEqual([m.folder, m.movedFrom], ['C:\\work\\filed', null], 'put back');
+  // A folder's name in History: returned with the list, and cleared with an empty name.
+  assert.deepStrictEqual(r.body.folderNames, {});
+  r = await call('PUT', '/api/history/folder-name', { folder: 'C:\\work\\filed', name: 'Filed work' });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(r.body.folderNames, { 'c:\\work\\filed': 'Filed work' });
+  assert.deepStrictEqual((await call('GET', '/api/history')).body.folderNames, { 'c:\\work\\filed': 'Filed work' });
+  assert.deepStrictEqual(fs.readFileSync(file), before, "naming the folder doesn't touch the transcript either");
+  assert.strictEqual((await call('PUT', '/api/history/folder-name', { folder: 'relative', name: 'x' })).status, 400);
+  r = await call('PUT', '/api/history/folder-name', { folder: 'C:\\work\\filed', name: '' });
+  assert.deepStrictEqual(r.body.folderNames, {});
 });
 
 test('restart hands over to a new server on the same port, exiting as "another copy is serving"', async () => {

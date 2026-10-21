@@ -18,7 +18,7 @@
     selected: null,
     opening: null, // { key, until } while a just-created session waits for its first state update
     filter: '',
-    history: { sessions: [], live: [], loaded: false },
+    history: { sessions: [], live: [], folderNames: {}, loaded: false },
     historySel: null,
     historyLimit: 150,
     historyView: store.get('historyView', 'folders'), // 'folders': one per working directory; 'list': all, newest first
@@ -3700,15 +3700,24 @@
     renderHistory();
   }
 
+  // What the server sends back after a change in History (a move, a rename, a delete): the list,
+  // the folders' names and which conversations are open.
+  function takeHistory(res) {
+    S.history = { ...S.history, sessions: res.sessions, live: res.live, folderNames: res.folderNames || {} };
+  }
+
   // A conversation's folder in History: where it was started, or where it was dragged to
   // (m.folder, from src/history-folders.js). Folders are keyed case-insensitively, as Windows is.
   const folderKey = (m) => (m.folder || '').toLowerCase();
+  // What a folder is called in History: the name given to it there, else the end of its path.
+  const folderLabel = (p, parts = 2) => (p && (S.history.folderNames || {})[p.toLowerCase()]) || (p ? shortPath(p, parts) : 'No folder');
 
   function historyFiltered() {
     const q = $('#history-search').value.trim();
     const folder = $('#history-folder').value;
+    const names = S.history.folderNames || {};
     const list = S.history.sessions.filter((m) => (!folder || folderKey(m) === folder)
-      && matches([m.title, m.firstPrompt, m.lastPrompt, m.cwd, m.folder, m.sessionId, m.gitBranch, m.tag], q));
+      && matches([m.title, m.firstPrompt, m.lastPrompt, m.cwd, m.folder, names[folderKey(m)], m.sessionId, m.gitBranch, m.tag], q));
     const sort = $('#history-sort').value;
     if (sort === 'turns') list.sort((a, b) => b.userTurns - a.userTurns);
     else if (sort === 'cost') list.sort((a, b) => (b.costUSD || 0) - (a.costUSD || 0));
@@ -3729,7 +3738,7 @@
     clear(sel);
     sel.appendChild(h('option', { value: '' }, 'All folders'));
     for (const [k, c] of [...counts.entries()].sort((a, b) => b[1].n - a[1].n)) {
-      sel.appendChild(h('option', { value: k, selected: k === current, title: c.path }, `${shortPath(c.path)} (${c.n})`));
+      sel.appendChild(h('option', { value: k, selected: k === current, title: c.path }, `${folderLabel(c.path)} (${c.n})`));
     }
   }
 
@@ -3768,7 +3777,7 @@
         open ? h('span', { class: 'live' }, 'Open now') : null,
         // In the folder view the folder is the heading; the row says where it was started only when that differs.
         draggable
-          ? (m.movedFrom ? h('span', { class: 'h-moved', title: `Started in ${m.movedFrom}; moved here in Claude Deck` }, `from ${shortPath(m.movedFrom, 1)}`) : null)
+          ? (m.movedFrom ? h('span', { class: 'h-moved', title: `Started in ${m.movedFrom}; moved here in Claude Deck` }, `from ${folderLabel(m.movedFrom, 1)}`) : null)
           : h('span', { class: 'path', title: m.cwd || '' }, shortPath(m.cwd)),
         h('span', null, `${m.userTurns} prompt${m.userTurns === 1 ? '' : 's'}`),
         m.costUSD ? h('span', null, money(m.costUSD)) : null)),
@@ -3821,18 +3830,30 @@
   function historyFolderNode(g, live) {
     const open = S.historyOpen.has(g.key);
     const limit = S.historyFolderLimits[g.key] || FOLDER_PAGE;
+    const named = Boolean(g.path && (S.history.folderNames || {})[g.key]);
+    const head = h('button', {
+      type: 'button',
+      class: 'h-folder-head',
+      'aria-expanded': String(open),
+      title: g.path ? `${named ? `${folderLabel(g.path)}: ` : ''}${g.path}\nDrop a conversation here to move it into this folder. F2 renames it.` : 'Conversations with no folder recorded',
+      onclick: () => toggleHistoryFolder(g.key),
+      onkeydown: (e) => { if (e.key === 'F2' && g.path) { e.preventDefault(); renameHistoryFolder(g, head); } },
+    },
+    h('span', { class: 'h-chevron', 'aria-hidden': 'true' }, Deck.icon('right', { size: 12 })),
+    // A name given in History reads as a name; a path stays in the path's own type.
+    h('span', { class: `h-folder-name${named ? ' named' : ''}` }, h('bdi', null, folderLabel(g.path))),
+    h('span', { class: 'h-folder-count', title: `${g.rows.length} conversation${g.rows.length === 1 ? '' : 's'}` }, String(g.rows.length)),
+    h('span', { class: 'h-folder-time' }, g.latest ? ago(g.latest) : ''));
     const node = h('div', { class: `h-folder${open ? ' open' : ''}`, dataset: { folder: g.key } },
-      h('button', {
-        type: 'button',
-        class: 'h-folder-head',
-        'aria-expanded': String(open),
-        title: g.path ? `${g.path}\nDrop a conversation here to move it into this folder` : 'Conversations with no folder recorded',
-        onclick: () => toggleHistoryFolder(g.key),
-      },
-      h('span', { class: 'h-chevron', 'aria-hidden': 'true' }, Deck.icon('right', { size: 12 })),
-      h('span', { class: 'h-folder-name' }, h('bdi', null, g.path ? shortPath(g.path, 2) : 'No folder')),
-      h('span', { class: 'h-folder-count', title: `${g.rows.length} conversation${g.rows.length === 1 ? '' : 's'}` }, String(g.rows.length)),
-      h('span', { class: 'h-folder-time' }, g.latest ? ago(g.latest) : '')),
+      h('div', { class: 'h-folder-top' },
+        head,
+        g.path ? h('button', {
+          type: 'button',
+          class: 'ghost icon h-folder-rename',
+          title: 'Rename this folder in History (F2). The folder on disk keeps its name.',
+          'aria-label': `Rename ${folderLabel(g.path)}`,
+          onclick: () => renameHistoryFolder(g, head),
+        }, Deck.icon('pen', { size: 13 })) : null),
       open ? h('div', { class: 'h-folder-body' },
         g.rows.slice(0, limit).map((m) => historyRow(m, live, { grouped: false, draggable: true })),
         g.rows.length > limit ? h('button', { class: 'ghost small h-more', onclick: () => { S.historyFolderLimits[g.key] = limit + FOLDER_PAGE; renderHistory(); } }, `Show ${Math.min(FOLDER_PAGE, g.rows.length - limit)} more`) : null) : null);
@@ -3858,12 +3879,56 @@
     const before = m.movedFrom ? m.folder : null;
     const res = await run("Couldn't move the conversation", () => api('PUT', `/api/history/${m.sessionId}/folder`, { folder }));
     if (!res) return;
-    S.history = { ...S.history, sessions: res.sessions, live: res.live };
+    takeHistory(res);
     S.historySel = m.sessionId;
     S.historyReveal = m.sessionId;
     renderHistory();
     const now = S.history.sessions.find((x) => x.sessionId === m.sessionId) || m;
-    toast(folder ? `Moved to ${shortPath(folder, 2)}` : `Put back in ${shortPath(now.folder || '', 2)}`, 'info', { label: 'Undo', ms: 8000, run: () => moveConversation(now, before) });
+    toast(folder ? `Moved to ${folderLabel(folder)}` : `Put back in ${folderLabel(now.folder)}`, 'info', { label: 'Undo', ms: 8000, run: () => moveConversation(now, before) });
+  }
+
+  // Renames a folder where it sits in the list, as a session's name is: Enter saves, Esc puts it
+  // back, and an empty name goes back to showing the folder's path. Only History's name for it.
+  function renameHistoryFolder(g, head) {
+    if (!head.isConnected) return;
+    const current = (S.history.folderNames || {})[g.key] || '';
+    const input = h('input', {
+      type: 'text',
+      class: 'h-folder-input',
+      value: current || shortPath(g.path, 1),
+      maxlength: '80',
+      spellcheck: 'false',
+      'aria-label': `Name for ${g.path} in History (leave empty to show its path)`,
+      title: `${g.path}\nEnter saves, Esc cancels. Leave it empty to show the path again.`,
+    });
+    let done = false;
+    const finish = async (keep) => {
+      if (done) return;
+      done = true;
+      const name = input.value.trim();
+      input.replaceWith(head);
+      head.focus();
+      if (!keep || name === current || (!current && name === shortPath(g.path, 1))) return;
+      const res = await run("Couldn't rename the folder", () => api('PUT', '/api/history/folder-name', { folder: g.path, name }));
+      if (!res) return;
+      takeHistory(res);
+      renderHistory();
+      const again = $(`#history-list .h-folder[data-folder="${CSS.escape(g.key)}"] .h-folder-head`);
+      if (again) again.focus();
+      toast(name ? `Renamed to ${name} in History` : 'Showing the folder path again', 'info',
+        { label: 'Undo', ms: 8000, run: async () => { const r = await run("Couldn't undo the rename", () => api('PUT', '/api/history/folder-name', { folder: g.path, name: current })); if (r) { takeHistory(r); renderHistory(); } } });
+    };
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener('blur', () => finish(true));
+    // Clicks and drags inside the box are for editing, not for the folder.
+    for (const ev of ['click', 'mousedown', 'dragstart']) input.addEventListener(ev, (e) => e.stopPropagation());
+    head.replaceWith(input);
+    input.focus();
+    input.select();
   }
 
   function renderHistory() {
@@ -3933,7 +3998,7 @@
     const res = await run("Couldn't delete the conversation", () => api('DELETE', `/api/history/${m.sessionId}`));
     if (!res) return;
     if (S.historySel === m.sessionId) S.historySel = next ? next.sessionId : null;
-    S.history = { ...S.history, sessions: res.sessions, live: res.live };
+    takeHistory(res);
     renderHistory();
     const nextRow = next && $(`#history-list .h-row[data-sid="${next.sessionId}"]`);
     if (nextRow) nextRow.focus();
@@ -3944,7 +4009,7 @@
   async function undoDelete(trashId) {
     const res = await run("Couldn't put the conversation back", () => api('POST', '/api/history/restore', { trashId }));
     if (!res) return;
-    S.history = { ...S.history, sessions: res.sessions, live: res.live };
+    takeHistory(res);
     S.historySel = res.sessionId;
     S.historyReveal = res.sessionId;
     renderHistory();
@@ -4530,24 +4595,31 @@
     }, 500);
   }
 
-  function wireFocusSplitter() {
-    const splitter = $('#focus-splitter');
-    const focusEl = $('#focus');
-    if (!splitter || !focusEl) return;
+  // A list beside a reading pane, resized by dragging the line between them (or with ← and → on
+  // it), remembered per view. Double-click puts it back: to `reset` px, or with reset null to the
+  // width the stylesheet gives it. The width lives in the CSS custom property `prop` on `container`.
+  function wireSplitter({ splitter, container, list, prop, storeKey, reset, min, max }) {
+    if (!splitter || !container) return;
 
-    let savedW = store.get('focus-sidebar-width', 290);
-    if (typeof savedW !== 'number' || savedW < 200 || savedW > 600) savedW = 290;
-    focusEl.style.setProperty('--focus-sidebar-w', `${savedW}px`);
+    const saved = store.get(storeKey, reset);
+    if (typeof saved === 'number' && saved >= 200 && saved <= 700) container.style.setProperty(prop, `${saved}px`);
+    else if (reset !== null) container.style.setProperty(prop, `${reset}px`);
+    // The width now: the one set here, or (none set yet) the list's own.
+    const current = () => parseInt(getComputedStyle(container).getPropertyValue(prop), 10) || Math.round(list.getBoundingClientRect().width) || reset || min;
+    const setWidth = (w) => {
+      const next = Math.max(min, Math.min(max, w));
+      container.style.setProperty(prop, `${next}px`);
+      store.set(storeKey, next);
+    };
 
     let dragging = false;
     let startX = 0;
-    let startW = savedW;
+    let startW = 0;
 
     splitter.addEventListener('mousedown', (e) => {
       dragging = true;
       startX = e.clientX;
-      const current = parseInt(getComputedStyle(focusEl).getPropertyValue('--focus-sidebar-w'), 10) || 290;
-      startW = current;
+      startW = current();
       splitter.classList.add('active');
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
@@ -4555,10 +4627,7 @@
 
     document.addEventListener('mousemove', (e) => {
       if (!dragging) return;
-      const delta = e.clientX - startX;
-      const newW = Math.max(220, Math.min(500, startW + delta));
-      focusEl.style.setProperty('--focus-sidebar-w', `${newW}px`);
-      store.set('focus-sidebar-width', newW);
+      setWidth(startW + e.clientX - startX);
     });
 
     document.addEventListener('mouseup', () => {
@@ -4571,22 +4640,21 @@
     });
 
     splitter.addEventListener('dblclick', () => {
-      focusEl.style.setProperty('--focus-sidebar-w', '290px');
-      store.set('focus-sidebar-width', 290);
+      if (reset !== null) { setWidth(reset); return; }
+      container.style.removeProperty(prop);
+      try { localStorage.removeItem(`deck-${storeKey}`); } catch { /* storage unavailable */ }
     });
 
     splitter.addEventListener('keydown', (e) => {
-      const current = parseInt(getComputedStyle(focusEl).getPropertyValue('--focus-sidebar-w'), 10) || 290;
-      if (e.key === 'ArrowLeft') {
-        const next = Math.max(220, current - 15);
-        focusEl.style.setProperty('--focus-sidebar-w', `${next}px`);
-        store.set('focus-sidebar-width', next);
-      } else if (e.key === 'ArrowRight') {
-        const next = Math.min(500, current + 15);
-        focusEl.style.setProperty('--focus-sidebar-w', `${next}px`);
-        store.set('focus-sidebar-width', next);
-      }
+      if (e.key === 'ArrowLeft') setWidth(current() - 15);
+      else if (e.key === 'ArrowRight') setWidth(current() + 15);
     });
+  }
+
+  function wireSplitters() {
+    wireSplitter({ splitter: $('#focus-splitter'), container: $('#focus'), list: $('#focus .track'), prop: '--focus-sidebar-w', storeKey: 'focus-sidebar-width', reset: 290, min: 220, max: 500 });
+    // History's list starts at the width the stylesheet gives it (it grows with the window).
+    wireSplitter({ splitter: $('#history-splitter'), container: $('#view-history .split'), list: $('#history-list'), prop: '--history-list-w', storeKey: 'history-list-width', reset: null, min: 240, max: 640 });
   }
 
   async function init() {
@@ -4650,7 +4718,7 @@
 
     wireRailCollapse();
     wireLampFlash();
-    wireFocusSplitter();
+    wireSplitters();
     wireLaunch();
     wireFolderPicker();
     wireUsage();
