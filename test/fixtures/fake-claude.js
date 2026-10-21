@@ -194,6 +194,7 @@ function streamMode() {
   const stopTask = new Map(); // task_id -> stop()
   const queuedUuids = new Set(); // messages waiting for their turn
   const cancelledUuids = new Set(); // messages taken back with cancel_async_message
+  let turnsUnderWay = 0; // messages that start a turn and haven't finished it: running or waiting
 
   // A background subagent, in the message shapes the real CLI uses: system task_* messages, plus
   // the subagent's own tool calls tagged with parent_tool_use_id. "delegate slow" runs ~3s.
@@ -484,8 +485,9 @@ function streamMode() {
         if (sub === 'background_tasks' && backgroundNow) backgroundNow();
         let response = sub === 'initialize' ? { commands: [{ name: 'compact', description: 'Summarize the conversation', argumentHint: '' }, ...pluginCommands(sessionPlugins)], models: FAKE_MODELS, fast_mode_state: 'off', fast_mode_disabled_reason: 'sdk_opt_in_required' } : {};
         // Like the real CLI (2.1.301): an interrupt reports what stays queued, and Send now says
-        // how the running turn made way (here, as there: it was stopped, and the queue carries on).
-        if (sub === 'interrupt') response = { still_queued: [...queuedUuids], ...(m.request.send_now === true ? { send_now: interrupted ? 'stopped' : 'nothing_to_send' } : {}) };
+        // how the running turn made way: with a message waiting behind a turn under way (started,
+        // or about to), the turn is stopped and the queue carries on; with nothing under way, nothing.
+        if (sub === 'interrupt') response = { still_queued: [...queuedUuids], ...(m.request.send_now === true ? { send_now: turnsUnderWay > 1 ? 'stopped' : 'nothing_to_send' } : {}) };
         // Shapes from the real CLI (2.1.284).
         if (sub === 'file_suggestions') {
           const q = String(m.request.query || '').toLowerCase();
@@ -550,21 +552,26 @@ function streamMode() {
         const lifecycle = (state) => { if (m.uuid) out({ type: 'command_lifecycle', command_uuid: m.uuid, state, session_id: sessionId }); };
         lifecycle('queued');
         if (m.uuid) queuedUuids.add(m.uuid);
+        if (m.shouldQuery !== false) turnsUnderWay++;
         turn = turn.then(async () => {
-          if (cancelledUuids.has(m.uuid)) return; // taken back before its turn
-          queuedUuids.delete(m.uuid);
-          lifecycle('started');
-          // Like the real CLI (2.1.284): shouldQuery false adds it without a reply (a result
-          // still arrives), and it goes along with the next message that does get one.
-          if (m.shouldQuery === false) {
-            earlier.push(prompt);
-            result({ num_turns: 0 }, false);
-          } else {
-            const before = earlier;
-            earlier = [];
-            await handle(prompt, images, before);
+          try {
+            if (cancelledUuids.has(m.uuid)) return; // taken back before its turn
+            queuedUuids.delete(m.uuid);
+            lifecycle('started');
+            // Like the real CLI (2.1.284): shouldQuery false adds it without a reply (a result
+            // still arrives), and it goes along with the next message that does get one.
+            if (m.shouldQuery === false) {
+              earlier.push(prompt);
+              result({ num_turns: 0 }, false);
+            } else {
+              const before = earlier;
+              earlier = [];
+              await handle(prompt, images, before);
+            }
+            lifecycle('completed');
+          } finally {
+            if (m.shouldQuery !== false) turnsUnderWay--;
           }
-          lifecycle('completed');
         });
       }
     }
