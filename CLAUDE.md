@@ -56,12 +56,13 @@ node tools/make-icons.js   # regenerate public/icons after changing the mascot g
 - **Claude Deck makes no Claude API calls.** It reads files Claude Code writes and relays what the
   user types. Tests and checks never hit the real API: use `test/fixtures/fake-claude.js`, or the
   real `claude.exe` against `test/fixtures/mock-anthropic-api.js` (`npm run sandbox`).
-- **The plan-usage call is the only outbound request Claude Deck makes on its own.** `src/usage.js`
-  reads the sign-in token from `.credentials.json` and never refreshes or rewrites it (Claude Code
-  owns it), and sends it only to that endpoint. Tests stub the fetcher. *Check for updates*
-  (`src/update.js`) runs `git fetch` from GitHub, signed in through `gh auth git-credential`, only
-  when the user clicks it, and only fast-forwards a clean copy on `main`; tests use local
-  repositories. (Installing a plugin or updating a marketplace downloads, but that's Claude Code's
+- **Two outbound requests happen on their own: the plan-usage call and the update check at launch.**
+  `src/usage.js` reads the sign-in token from `.credentials.json` and never refreshes or rewrites it
+  (Claude Code owns it), and sends it only to that endpoint. Tests stub the fetcher. The update check
+  (`src/update.js`) runs `git fetch` from GitHub, signed in through `gh auth git-credential`, once
+  each time the window opens and when the user clicks *Check for updates*. It fetches only for a
+  clean copy on `main` (anything else is refused before any network call), only fast-forwards after
+  the user says yes, and the launch check stays silent on any failure. Tests use local repositories. (Installing a plugin or updating a marketplace downloads, but that's Claude Code's
   own `claude plugin` command, run only when the user asks. Likewise `Start-ClaudeDeck.ps1 -Install`
   downloads a missing Node.js or Windows Terminal through `winget`, and runs Claude Code's installer
   from `https://claude.ai/install.ps1`, only after the user answers yes.)

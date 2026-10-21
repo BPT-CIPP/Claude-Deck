@@ -348,9 +348,11 @@
         list[(i + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length].focus();
       });
       // A popover, so it's drawn in the top layer: above a modal such as New session (which covers
-      // everything else on <body>), placed against the window, and not clipped by the modal.
+      // everything else on <body>), placed against the window, and not clipped by the modal. Inside
+      // that modal in the page, though: an open modal makes everything outside it inert, so a menu on
+      // <body> would be drawn on top but every click and hover would go to the dialog underneath.
       menu.setAttribute('popover', 'manual');
-      document.body.appendChild(menu);
+      (btn.closest('dialog[open]') || document.body).appendChild(menu);
       if (menu.showPopover) menu.showPopover();
       btn.setAttribute('aria-expanded', 'true');
       const r = btn.getBoundingClientRect();

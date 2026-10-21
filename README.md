@@ -94,8 +94,12 @@ After that, the shortcuts and `Start-ClaudeDeck.ps1` open the installed app too.
 
 ## Update
 
-Choose **Claude Deck Preferences → Dashboard → Check for updates**. If GitHub has a newer version, Claude Deck
-asks, gets it and restarts on it. It needs the GitHub CLI signed in (`gh auth login`), and it only
+Claude Deck checks for a newer version each time its window opens. If GitHub has one, it asks
+**Update found: would you like to update Claude Deck now?**, and if you say yes, gets it and
+restarts on it. If the check can't run (no access to the repository, no GitHub CLI, offline, or a
+copy that isn't updated from here), it says nothing and Claude Deck carries on. To check right away,
+and to see why a check fails, choose **Claude Deck Preferences → Dashboard → Check for updates**.
+If GitHub has a newer version, Claude Deck asks, gets it and restarts on it. It needs the GitHub CLI signed in (`gh auth login`), and it only
 updates a copy on `main` with no changes of its own; otherwise it leaves the copy alone and gives
 the command to update it by hand (with **Copy command**). To update by hand anyway:
 
@@ -214,8 +218,9 @@ them for its own tabs.
   type to your own `claude`. The one network request it makes on its own is the plan-usage check
   (account metadata from `api.anthropic.com`, the same request Claude Code's `/usage` makes; no
   model runs). It reads your Claude sign-in token for that, never changes it, and sends it nowhere
-  else. **Check for updates** fetches from GitHub with `git`, signed in through the GitHub CLI, only
-  when you click it.
+  else. The update check fetches from GitHub with `git`, signed in through the GitHub CLI, when the
+  window opens and when you click **Check for updates**, and only for a copy cloned from GitHub on
+  `main`. It changes nothing unless you choose to update.
 - **Reading Claude Code's model list.** When there's no list yet for the installed Claude Code
   version, Claude Deck starts Claude Code once in the background, reads the models it offers from
   its startup handshake, and closes it. No prompt is sent, so no model runs, no MCP servers are
