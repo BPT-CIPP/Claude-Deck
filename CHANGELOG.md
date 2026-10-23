@@ -6,6 +6,14 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.18.1] - 2026-10-23
+
+### Fixed
+- **A stale suggested prompt no longer reappears after you send.** Claude Code's suggested next
+  prompt (shown in an empty reply box; Tab takes it) arrives a moment after Claude finishes. A
+  message sent in that moment cleared the box, then the late suggestion showed up in it anyway,
+  for a prompt you'd already moved past. It's now left out; the next turn brings its own.
+
 ## [1.18.0] - 2026-10-23
 
 ### Added
@@ -542,6 +550,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.18.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.18.0...v1.18.1
 [1.18.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.17.0...v1.18.0
 [1.17.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.15.0...v1.16.0
