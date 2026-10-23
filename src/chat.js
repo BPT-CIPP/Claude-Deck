@@ -822,7 +822,10 @@ class ChatManager extends EventEmitter {
         }
         break;
       case 'prompt_suggestion':
-        // Claude Code's guess at your next prompt, shown in the empty reply box (Tab takes it).
+        // Claude Code's guess at your next prompt, shown in the empty reply box (Tab takes it). It
+        // comes a moment after the turn's result; if a message was sent in that moment, Claude is
+        // already on it and the guess is for a prompt that's gone, so it isn't shown.
+        if (chat.busy) break;
         chat.suggestion = clip(String(m.suggestion || '').trim(), 500) || null;
         this._changed(chat);
         break;

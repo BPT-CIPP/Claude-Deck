@@ -319,6 +319,19 @@ test("Claude Code's suggested next prompt is kept until you send something", () 
   assert.strictEqual(sum().suggestion, null);
 }));
 
+test("a suggestion that arrives after you've already sent something isn't shown", () => withChat(async ({ id, sum, say }) => {
+  await say('hello');
+  // Sent in the moment between the turn's result and its suggestion (the stand-in sends it 20 ms
+  // later): the suggestion is for a prompt box that has moved on.
+  mgr.send(id, 'slow one');
+  await new Promise((r) => setTimeout(r, 200));
+  assert.strictEqual(sum().status, 'busy', 'still on the slow turn');
+  assert.strictEqual(sum().suggestion, null, "the late suggestion isn't shown");
+  // The slow turn's own suggestion shows once it's done.
+  await waitFor(() => sum().suggestion || null, "the slow turn's suggestion", 8000);
+  assert.strictEqual(sum().status, 'idle');
+}));
+
 test('Ctrl+B sends what Claude is waiting on to the background, and it can still be stopped', () => withChat(async ({ id, sum, last }) => {
   mgr.send(id, 'delegate wait');
   await waitFor(() => sum().foregroundTasks === 1, 'a task Claude waits for');
