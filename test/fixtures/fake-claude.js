@@ -163,7 +163,11 @@ function streamMode() {
   };
   // Like the real CLI (2.1.281): total_cost_usd and modelUsage are running totals for the
   // conversation; usage is this turn's alone.
-  const result = (extra = {}, charge = true) => {
+  // A turn's result comes a moment after its reply, as from the real CLI, so the two arrive as
+  // separate reads: a test that takes "the reply is here" for "the turn is over" fails here, not
+  // only on a slow CI machine (where it did, 2026-10-23).
+  const result = async (...a) => { await new Promise((r) => setTimeout(r, 20)); resultNow(...a); };
+  const resultNow = (extra = {}, charge = true) => {
     if (charge) {
       cost += 0.01;
       tokens = { ...tokens, inputTokens: tokens.inputTokens + 100, outputTokens: tokens.outputTokens + 20, cacheReadInputTokens: tokens.cacheReadInputTokens + 1000 };
@@ -172,8 +176,9 @@ function streamMode() {
     const usage = charge ? { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0 } : { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
     const modelUsage = cost ? { 'claude-fake': { ...tokens, costUSD: cost, contextWindow: 200000 } } : {};
     out({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: cost, usage, modelUsage, duration_ms: 5, session_id: sessionId, queued_turn_count: 0, fast_mode_state: fastMode ? 'on' : 'off', ...extra });
-    // Like the real CLI with promptSuggestions (schema in 2.1.284): a guess at the next prompt.
-    if (suggestions && charge) out({ type: 'prompt_suggestion', suggestion: 'Run the tests', uuid: crypto.randomUUID(), session_id: sessionId });
+    // Like the real CLI with promptSuggestions (schema in 2.1.284): a guess at the next prompt, made
+    // after the turn (a request of its own there), so it comes a moment after the result.
+    if (suggestions && charge) setTimeout(() => out({ type: 'prompt_suggestion', suggestion: 'Run the tests', uuid: crypto.randomUUID(), session_id: sessionId }), 20);
   };
   const ask = (request) => new Promise((resolve) => {
     const id = crypto.randomUUID();
@@ -564,7 +569,7 @@ function streamMode() {
             // still arrives), and it goes along with the next message that does get one.
             if (m.shouldQuery === false) {
               earlier.push(prompt);
-              result({ num_turns: 0 }, false);
+              resultNow({ num_turns: 0 }, false);
             } else {
               const before = earlier;
               earlier = [];
