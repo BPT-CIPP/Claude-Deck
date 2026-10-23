@@ -176,8 +176,9 @@ function streamMode() {
     const usage = charge ? { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0 } : { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
     const modelUsage = cost ? { 'claude-fake': { ...tokens, costUSD: cost, contextWindow: 200000 } } : {};
     out({ type: 'result', subtype: 'success', is_error: false, result: '', total_cost_usd: cost, usage, modelUsage, duration_ms: 5, session_id: sessionId, queued_turn_count: 0, fast_mode_state: fastMode ? 'on' : 'off', ...extra });
-    // Like the real CLI with promptSuggestions (schema in 2.1.284): a guess at the next prompt.
-    if (suggestions && charge) out({ type: 'prompt_suggestion', suggestion: 'Run the tests', uuid: crypto.randomUUID(), session_id: sessionId });
+    // Like the real CLI with promptSuggestions (schema in 2.1.284): a guess at the next prompt, made
+    // after the turn (a request of its own there), so it comes a moment after the result.
+    if (suggestions && charge) setTimeout(() => out({ type: 'prompt_suggestion', suggestion: 'Run the tests', uuid: crypto.randomUUID(), session_id: sessionId }), 20);
   };
   const ask = (request) => new Promise((resolve) => {
     const id = crypto.randomUUID();

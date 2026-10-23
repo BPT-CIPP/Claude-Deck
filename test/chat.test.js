@@ -312,6 +312,8 @@ test('fast mode needs Allow API billing, since it bills extra usage', () => with
 
 test("Claude Code's suggested next prompt is kept until you send something", () => withChat(async ({ id, sum, say }) => {
   await say('hello');
+  // The suggestion is a line of its own, after the turn's result.
+  await waitFor(() => sum().suggestion || null, 'the suggestion, after the result');
   assert.strictEqual(sum().suggestion, 'Run the tests');
   mgr.send(id, 'something else');
   assert.strictEqual(sum().suggestion, null);
