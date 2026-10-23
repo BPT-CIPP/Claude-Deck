@@ -280,6 +280,38 @@ mock, which logs each request's `output_config` (a direct probe, and through Cla
 doesn't use it: replies are shown once each message is complete, because text arriving a chunk at
 a time read as choppy.
 
+## The terminal interface under a pseudo-console (terminals in the window)
+
+How `claude.exe` behaves as the client of `conhost.exe --headless` (src/terminals.js,
+src/pty-host.ps1), checked against 2.1.303:
+
+- ✅ It draws its full interface: it sees a real console (`isTTY`), so nothing differs from Windows
+  Terminal. On start it asks for win32-input-mode (`CSI ?9001 h`) and focus events (`?1004`),
+  bracketed paste (`?2004`), mouse reporting (`?1000`/`?1002`/`?1003`/`?1006`), queries the kitty
+  keyboard protocol (`CSI ? u`) and, once past its dialogs, switches to the alternate screen
+  (`?1049 h`). xterm.js answers none of the Windows-only ones, and conhost then takes plain VT
+  input (arrows as `CSI B`, Enter as CR, Ctrl+C as 0x03), which is what works.
+- ✅ Resizing is the ConPTY signal pipe (`--signal`, three little-endian words: 8, columns, rows);
+  conhost answers with `CSI 8 ; rows ; cols t` and draws the whole screen again, so the page can
+  replay kept output at the old size and then resize.
+- ✅ Ctrl+C once shows "Press Ctrl-C again to exit"; twice within a moment exits (exit code 0,
+  which conhost passes on as its own). End session sends both, and ends the process tree by force
+  after 3 s if that didn't do it.
+- ✅ `CLAUDE_CODE_CHILD_SESSION` in the environment (Claude Code sets it for processes it starts)
+  makes the terminal interface say "Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION
+  marker": no transcript, and no `sessions/<pid>.json`, so nothing for Claude Deck to read. The
+  terminal's environment drops it, as it drops `CLAUDECODE`. (Stream-json chats keep their
+  transcript regardless.)
+- ✅ A fresh `CLAUDE_CONFIG_DIR` (the sandbox) starts with the first-run dialogs: text style
+  (Enter), "Quick safety check … trust this folder?" (↓ Enter), and with an API key in the
+  environment "Detected a custom API key … use it?" (↑ Enter). It records the answers in its
+  `.claude.json`, so a `--keep` sandbox doesn't ask again. A `--session-id` passed on the command
+  line is honored once the dialogs are past.
+- ⚠️ Claude's pid: conhost starts the client itself, so Claude is conhost's child
+  (`Win32_Process.ParentProcessId`), and that pid is the one in `sessions/<pid>.json` (claude.exe
+  is a single native binary, no wrapper). Found by the host with CIM within about 3 s; the live
+  view also matches a record by the expected session id, for a host where CIM can't run.
+
 ## Plugins
 
 Claude Deck manages plugins only through Claude Code's CLI (`src/plugins.js`), never by editing

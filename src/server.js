@@ -27,6 +27,7 @@ const { Registry } = require('./registry');
 const { Launcher, normalizeOptions, buildClaudeArgs, displayCommand, preflight, requireClaude, EFFORTS, PERMISSION_MODES, COLORS, MODEL_ALIASES } = require('./launcher');
 const { Live, isSameProcess } = require('./live');
 const { ChatManager } = require('./chat');
+const { TerminalManager } = require('./terminals');
 const { Timeline } = require('./timeline');
 const trash = require('./trash');
 const update = require('./update');
@@ -235,7 +236,8 @@ async function main() {
   const history = new HistoryIndex();
   const launcher = new Launcher({ registry });
   const chats = new ChatManager({ history });
-  const live = new Live({ registry, history, chats });
+  const terminals = new TerminalManager();
+  const live = new Live({ registry, history, chats, terminals });
   const timeline = new Timeline({ history });
   const usage = new UsageMonitor();
   const plugins = new PluginManager();
@@ -301,8 +303,9 @@ async function main() {
     server.close();
     live.stop();
     usage.stop();
-    // Chats are child processes; end them cleanly so their transcripts are complete and resumable.
-    await chats.endAll();
+    // Chats and terminals in the window are child processes; end them cleanly so their transcripts
+    // are complete and resumable.
+    await Promise.all([chats.endAll(), terminals.endAll()]);
     history.saveNow();
     const rt = readJson(runtimeFile(), null);
     if (rt && rt.pid === process.pid) {
@@ -324,14 +327,15 @@ async function main() {
     shutdown(EXIT_ANOTHER_COPY);
   }
 
-  // Stop a while after the last dashboard window closes, but never while a chat is running
-  // (chats live inside this process), and never when started resident (start with Windows).
+  // Stop a while after the last dashboard window closes, but never while a chat or a terminal in
+  // the window is running (they live inside this process), and never when started resident (start
+  // with Windows).
   function scheduleIdleExit() {
     clearTimeout(idleTimer);
     if (clients.size || opts.resident) return;
     idleTimer = setTimeout(() => {
       if (clients.size || !prefsStore.load().stopWhenClosed) return;
-      if (chats.runningCount() > 0) scheduleIdleExit();
+      if (chats.runningCount() + terminals.runningCount() > 0) scheduleIdleExit();
       else shutdown();
     }, IDLE_EXIT_MS);
   }
@@ -363,13 +367,19 @@ async function main() {
     if (pid && isPidAlive(pid)) throw new UserError("Claude hasn't stopped yet, so the conversation wasn't continued here. Once it has, open History and choose Resume here.", 409);
   }
 
-  // Who has this conversation open: one of our chats, a terminal/external Claude, or nobody.
+  // Who has this conversation open: one of our chats, a terminal (in the window, a Windows Terminal
+  // tab, or outside Claude Deck), or nobody.
   function timelineOwner(sessionId) {
     const chat = chats.findBySession(sessionId);
     if (chat) return { kind: 'chat', chat };
-    const inTerminal = live.state.sessions.some((s) => s.kind === 'terminal' && s.state === 'running' && s.sessionId === sessionId)
+    const inTerminal = live.state.sessions.some((s) => s.kind !== 'chat' && s.state === 'running' && s.sessionId === sessionId)
       || live.state.external.some((x) => x.sessionId === sessionId && isPidAlive(x.pid));
     return { kind: inTerminal ? 'terminal' : null };
+  }
+
+  // "Here in Claude Deck" is a chat or a terminal in the window, as Claude Deck Preferences say.
+  function startHere(options) {
+    return prefsStore.load().runHereAs === 'terminal' ? terminals.create(options) : chats.create(options);
   }
 
   function liveSessionIds() {
@@ -520,6 +530,61 @@ async function main() {
       const pid = s.claudePid;
       launcher.close(p.id);
       await waitForExit(pid, 8000);
+      const c = startHere(next);
+      live.poke(0);
+      return c;
+    },
+
+    // Terminals in the window (src/terminals.js): Claude Code's own interface, drawn by the page.
+    'POST /api/terminals': async (req) => {
+      const t = terminals.create(await readBody(req));
+      live.poke(0);
+      recheckClaudeSoon();
+      return t;
+    },
+    'GET /api/terminals/:id': (req, p) => terminals.detail(p.id),
+    // { data, binary? }: keystrokes or pasted text; binary for bytes that aren't text (mouse reports).
+    'POST /api/terminals/:id/input': async (req, p) => {
+      const b = await readBody(req);
+      return terminals.write(p.id, b.data, { binary: b.binary === true });
+    },
+    'POST /api/terminals/:id/resize': async (req, p) => {
+      const b = await readBody(req);
+      return terminals.resize(p.id, b.cols, b.rows);
+    },
+    // Ends Claude; the terminal stays listed as ended. { remove: true } takes it off the list (an
+    // ended one's Remove).
+    'POST /api/terminals/:id/end': async (req, p) => {
+      await terminals.end(p.id, { remove: (await readBody(req)).remove === true });
+      return { ok: true };
+    },
+    'POST /api/terminals/:id/resume': (req, p) => terminals.resume(p.id),
+    'PATCH /api/terminals/:id': async (req, p) => {
+      const b = await readBody(req);
+      return terminals.update(p.id, { name: b.name, color: COLORS.includes(b.color) ? b.color : undefined });
+    },
+    // Continue a terminal's conversation in a Windows Terminal tab, or as a chat, instead.
+    'POST /api/terminals/:id/to-terminal': async (req, p) => {
+      const t = terminals.detail(p.id);
+      if (!t.sessionId) throw new UserError('This terminal has no conversation to continue yet.');
+      const next = { ...terminals.optionsOf(p.id), mode: 'resume', resumeId: t.sessionId, cwd: t.cwd, name: t.name, color: t.color };
+      preflight(next);
+      await terminals.end(p.id, { remove: true });
+      let entry;
+      try {
+        entry = launcher.launch(next);
+      } catch (err) {
+        throw new UserError(`${err.message} The terminal has ended; resume the conversation from History.`, err instanceof UserError ? err.status : 500);
+      }
+      live.poke(0);
+      return entry;
+    },
+    'POST /api/terminals/:id/to-chat': async (req, p) => {
+      const t = terminals.detail(p.id);
+      if (!t.sessionId) throw new UserError('This terminal has no conversation to continue yet.');
+      const next = { ...terminals.optionsOf(p.id), mode: 'resume', resumeId: t.sessionId, cwd: t.cwd, name: t.name, color: t.color };
+      preflight(next);
+      await terminals.end(p.id, { remove: true });
       const c = chats.create(next);
       live.poke(0);
       return c;
@@ -537,7 +602,7 @@ async function main() {
       preflight(next);
       process.kill(x.pid);
       await waitForExit(x.pid, 8000);
-      const c = chats.create(next);
+      const c = startHere(next);
       live.poke(0);
       return c;
     },
@@ -634,7 +699,7 @@ async function main() {
       const owner = timelineOwner(p.sessionId);
       const plan = timeline.plan(p.sessionId, b.messageId);
       if (b.preview === true) return { owner: owner.kind, files: plan.map((a) => ({ path: a.path, action: a.action })) };
-      if (owner.kind === 'terminal') throw new UserError('This conversation is open in Windows Terminal. Use /rewind there, or close that session and try again.', 409);
+      if (owner.kind === 'terminal') throw new UserError('This conversation is open in a terminal. Use /rewind there, or end that session and try again.', 409);
       if (owner.kind !== 'chat') return timeline.restore(p.sessionId, b.messageId);
       // A running chat: restore through Claude so its own file history stays in step.
       const dry = await chats.rewindFiles(owner.chat.id, b.messageId, true);
@@ -662,7 +727,7 @@ async function main() {
         cwd: meta.cwd,
         name: typeof body.name === 'string' ? body.name : '',
       };
-      const result = body.target === 'terminal' ? launcher.launch(options) : chats.create(options);
+      const result = body.target === 'terminal' ? launcher.launch(options) : startHere(options);
       live.poke(0);
       recheckClaudeSoon();
       return result;
@@ -775,6 +840,9 @@ async function main() {
         updating = false;
       }
     },
+    // { tool: 'git' | 'gh' }: installs a program updating needs (err.prerequisite from /api/update),
+    // with winget, after the person chose Install. -> { label, path }.
+    'POST /api/update/install': async (req) => update.installTool((await readBody(req)).tool),
   };
 
   const compiled = Object.entries(routes).map(([key, handler]) => {
@@ -802,12 +870,13 @@ async function main() {
         'X-Content-Type-Options': 'nosniff',
       };
       if (file.endsWith('.html')) {
-        // No inline styles for the dashboard: it sets styles through the CSSOM (Deck.h's style
-        // object), which the policy allows; a style attribute or <style> element would be refused.
-        // The offline page is one self-contained file (the service worker caches it, headers
-        // included), so its own <style> stays allowed.
-        const styles = path.basename(file) === 'offline.html' ? "'self' 'unsafe-inline'" : "'self'";
-        headers['Content-Security-Policy'] = `default-src 'self'; script-src 'self'; style-src ${styles}; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'`;
+        // Scripts come only from this server. Styles too, plus inline ones: the dashboard itself
+        // sets styles through the CSSOM (Deck.h's style object), but the terminal in the window
+        // (xterm.js, public/vendor/xterm) adds <style> elements of its own for its colors and
+        // cell sizes, which a policy without 'unsafe-inline' refuses. The page never uses
+        // innerHTML, so no text from a transcript or a chat can become a style. The offline page
+        // is one self-contained file with its own <style>.
+        headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'";
         headers['X-Frame-Options'] = 'DENY';
       }
       res.writeHead(200, headers);
@@ -861,6 +930,24 @@ async function main() {
       return undefined;
     }
 
+    // A terminal's screen, as an event stream (src/terminals.js attach): the token comes as a
+    // query parameter here too, for the same reason.
+    const screen = req.method === 'GET' && /^\/api\/terminals\/([^/]+)\/stream$/.exec(url.pathname);
+    if (screen) {
+      if (!sameToken(url.searchParams.get('t'), token)) return sendJson(res, 401, { error: 'Not authorized.' });
+      const id = decodePart(screen[1]);
+      if (!terminals.get(id)) return sendJson(res, 404, { error: 'That terminal is no longer listed.' });
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+      res.write('retry: 1000\n\n');
+      const detach = terminals.attach(id, res);
+      const heartbeat = setInterval(() => res.write(': keep-alive\n\n'), 20000);
+      req.on('close', () => {
+        clearInterval(heartbeat);
+        detach();
+      });
+      return undefined;
+    }
+
     if (!sameToken(req.headers['x-deck-token'], token)) return sendJson(res, 401, { error: 'Not authorized.' });
 
     for (const r of compiled) {
@@ -874,8 +961,9 @@ async function main() {
       } catch (err) {
         const status = err instanceof UserError ? err.status : 500;
         if (status === 500) console.error(err);
-        // command: a command for the person to run themselves (see src/update.js).
-        return sendJson(res, status, { error: err.message || String(err), ...(status !== 500 && err.command ? { command: err.command } : {}) });
+        // command: a command for the person to run themselves; prerequisite: a program to offer to
+        // install (both from src/update.js).
+        return sendJson(res, status, { error: err.message || String(err), ...(status !== 500 && err.command ? { command: err.command } : {}), ...(status !== 500 && err.prerequisite ? { prerequisite: err.prerequisite } : {}) });
       }
     }
     return sendJson(res, 404, { error: 'Unknown endpoint.' });

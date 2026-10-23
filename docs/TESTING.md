@@ -99,6 +99,14 @@ browser tab the browser keeps them. To test them, open the sandbox address with
 **Terminal sessions** open real Windows Terminal windows. If you're an agent, say so before running
 one.
 
+**Terminals in the window** (Preferences → New sessions → Run here as → A terminal) run the real
+`claude.exe` under `conhost.exe --headless`. In a fresh sandbox, Claude Code's first-run dialogs
+come first (text style, trust the folder, use the API key: all keys, as in its terminal); `--keep`
+remembers the answers. `test/terminals.test.js` covers the server side with the stand-in under
+conhost (Windows only; skipped elsewhere). The sandbox started from inside a Claude Code session
+passes `CLAUDE_CODE_CHILD_SESSION` down; the terminal drops it, or Claude Code would keep no
+transcript there (docs/CLAUDE-CODE-INTERNALS.md).
+
 ## Probing Claude Code directly
 
 To check how Claude Code behaves (a new message, field or file) without any cost, run it against the

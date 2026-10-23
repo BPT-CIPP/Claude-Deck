@@ -9,9 +9,11 @@ Guidance for Claude Code working in this repository.
 ## Project overview
 
 Claude Deck is a Windows dashboard for Claude Code sessions: in-app chats (Claude Code driven over
-its streaming JSON protocol) plus tracked Windows Terminal sessions, history, a change timeline,
-and a Claude Code settings editor. **No build step, no npm dependencies**: plain Node.js on the
-server (`src/`) and plain browser scripts in the page (`public/`). `package.json` names the checks
+its streaming JSON protocol), terminals in the window (Claude Code's own interface over
+`conhost.exe --headless`, drawn by a vendored xterm.js), tracked Windows Terminal sessions, history,
+a change timeline, and a Claude Code settings editor. **No build step, no npm dependencies**: plain
+Node.js on the server (`src/`) and plain browser scripts in the page (`public/`; `public/vendor/`
+holds the two third-party files, copied in as they are). `package.json` names the checks
 and the `start` / `serve` commands; those start the real server (on the usual port and data
 folder), so never use them to test a change.
 
@@ -48,21 +50,29 @@ node tools/make-icons.js   # regenerate public/icons after changing the mascot g
   make them.
 - **No npm dependencies and no new executables.** Managed PCs commonly run Defender's attack surface
   reduction rule that blocks executables that aren't prevalent (Electron and node-pty were tried and
-  blocked). Everything runs on `node.exe`, `wt.exe`, Edge, `claude.exe`, `git` (with the GitHub CLI,
-  for *Check for updates*) and Windows built-ins (`powershell.exe`, `reg.exe`, `where.exe`,
-  `schtasks.exe`, `explorer.exe`, `choice.exe`, `conhost.exe`, `taskkill.exe`, and `winget.exe` for the installer's
-  prerequisites; see docs/ARCHITECTURE.md). Don't work around it, for
-  example with runtime-compiled C# or P/Invoke.
+  blocked). Everything runs on `node.exe`, `wt.exe`, Edge, `claude.exe`, `git` (for *Check for
+  updates*; the GitHub CLI too, only if GitHub asks for a sign-in) and Windows built-ins
+  (`powershell.exe`, `reg.exe`, `where.exe`, `schtasks.exe`, `explorer.exe`, `choice.exe`,
+  `conhost.exe` (also, `--headless`, as the pseudo-console behind terminals in the window:
+  `src/pty-host.ps1`, .NET built-ins only), `taskkill.exe`, and `winget.exe` for the installer's
+  prerequisites and, when the user chooses Install, the updater's (Git, the GitHub CLI); see
+  docs/ARCHITECTURE.md).
+  Don't work around it, for example with runtime-compiled C# or P/Invoke. Third-party page code
+  is vendored as plain files only (`public/vendor/`: the settings schema, xterm.js) and
+  listed in docs/ARCHITECTURE.md; ask before adding any.
 - **Claude Deck makes no Claude API calls.** It reads files Claude Code writes and relays what the
   user types. Tests and checks never hit the real API: use `test/fixtures/fake-claude.js`, or the
   real `claude.exe` against `test/fixtures/mock-anthropic-api.js` (`npm run sandbox`).
 - **Two outbound requests happen on their own: the plan-usage call and the update check at launch.**
   `src/usage.js` reads the sign-in token from `.credentials.json` and never refreshes or rewrites it
   (Claude Code owns it), and sends it only to that endpoint. Tests stub the fetcher. The update check
-  (`src/update.js`) runs `git fetch` from GitHub, signed in through `gh auth git-credential`, once
-  each time the window opens and when the user clicks *Check for updates*. It fetches only for a
-  clean copy on `main` (anything else is refused before any network call), only fast-forwards after
-  the user says yes, and the launch check stays silent on any failure. Tests use local repositories. (Installing a plugin or updating a marketplace downloads, but that's Claude Code's
+  (`src/update.js`) runs `git fetch` from GitHub (public: no sign-in; if GitHub asks for one, it goes
+  through `gh auth git-credential` and nothing else), once each time the window opens and when the
+  user clicks *Check for updates*. It fetches only for a clean copy on `main` (anything else is
+  refused before any network call), only fast-forwards after the user says yes, and the launch
+  check stays silent on any failure except a missing program it needs (Git; the GitHub CLI only
+  when GitHub asked for a sign-in), which it offers to install with `winget`, once per window and
+  only on the user's yes. Tests use local repositories and never run winget. (Installing a plugin or updating a marketplace downloads, but that's Claude Code's
   own `claude plugin` command, run only when the user asks. Likewise `Start-ClaudeDeck.ps1 -Install`
   downloads a missing Node.js or Windows Terminal through `winget`, and runs Claude Code's installer
   from `https://claude.ai/install.ps1`, only after the user answers yes.)
@@ -79,13 +89,15 @@ node tools/make-icons.js   # regenerate public/icons after changing the mascot g
 - **Never test against the live server.** A chat's `claude.exe` is a child of the server, so
   restarting it ends those chats, possibly including the session doing the work. Use
   `npm run sandbox`, and leave restarting the real one to the user.
-- **`Start-ClaudeDeck.ps1` stays Windows PowerShell 5.1 compatible and plain ASCII** (5.1 misreads
-  UTF-8 without a BOM). `npm run syntax` parses it with 5.1.
+- **`Start-ClaudeDeck.ps1` and `src/pty-host.ps1` stay Windows PowerShell 5.1 compatible and plain
+  ASCII** (5.1 misreads UTF-8 without a BOM). `npm run syntax` parses both with 5.1.
 - **Nothing machine-specific in the repo.** No usernames, absolute paths, tokens or one PC's
   quirks. Resolve locations at run time (`src/paths.js`, `src/claude-locate.js`); personal notes go
   in `CLAUDE.local.md`.
 - **No native dialogs from the server** (they open behind the dashboard), and **never `innerHTML`**
-  in the page (transcript and chat text is untrusted; build DOM with `Deck.h()`).
+  in the page (transcript and chat text is untrusted; build DOM with `Deck.h()`). The page's
+  content security policy allows inline styles only because xterm.js needs them; that's the one
+  reason, and `innerHTML` staying out is what keeps it safe.
 
 ## The Claude Code internals rule: not optional
 

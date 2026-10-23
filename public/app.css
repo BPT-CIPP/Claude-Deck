@@ -819,6 +819,23 @@ button.ghost.head-menu-btn:hover, .head-menu-btn[aria-expanded="true"] { color: 
 .convo { overflow-y: auto; scrollbar-gutter: stable both-edges; padding: 24px 32px 56px; flex: 1; min-height: 0; }
 /* The conversation fills its pane at the usual two sizes: lines get longer in a wider window. */
 .convo-inner { min-width: 0; }
+
+/* ---- a terminal in the window ---------------------------------------------------------------- */
+/* Claude Code's own interface (xterm.js, public/vendor/xterm) in place of the conversation and
+   reply box. The box fills what's left under the line plate; the terminal is fitted to it. */
+.term-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); padding: 8px 12px 10px 16px; }
+.term-pane[hidden] { display: none; }
+.term-box { flex: 1; min-height: 0; position: relative; }
+.term-box .xterm { height: 100%; }
+/* xterm marks its element "focus" while the cursor is in it, which is also the Sessions view's
+   grid class above (.focus): the terminal must not become that grid. */
+.term-box .xterm.focus { display: block; }
+/* xterm.css paints the viewport black under its own overlay (which gets the theme's background);
+   where the overlay doesn't reach (a few pixels under the last row), the page's own shows. */
+.term-box .xterm .xterm-viewport { background-color: var(--bg); scrollbar-width: thin; }
+/* After Claude Code ends: what happened and the way on, where the prompt was. */
+.term-ended { flex: none; display: flex; gap: 12px; align-items: center; padding: 8px 2px 0; color: var(--muted); font-size: var(--fs-s); }
+.term-ended[hidden] { display: none; }
 /* The reply bar and the panels over it span the same width as the conversation. */
 .focus-detail { --column: none; }
 .msg { margin: 0 0 18px; }

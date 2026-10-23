@@ -1,6 +1,7 @@
 'use strict';
 // Check for updates, against throwaway git repositories: a bare one standing in for GitHub and a
-// clone standing in for an installed Claude Deck. No network; no GitHub CLI (auth is left out).
+// clone standing in for an installed Claude Deck. No network; no GitHub CLI (auth is left out), and
+// winget is never run for real.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -112,7 +113,50 @@ test("a copy that wasn't cloned with git says so", async () => {
   await assert.rejects(checkForUpdates({ root: plain, auth: [] }), /wasn't installed with git clone/);
 });
 
-test('GitHub not reachable: says to check the GitHub CLI sign-in', async () => {
+test('GitHub not reachable: says to check the connection, with nothing to install', async () => {
   git(install, 'remote', 'set-url', 'origin', path.join(box.root, 'missing.git'));
-  await assert.rejects(check(), /gh auth status/);
+  const err = await refusal(check());
+  assert.match(err.message, /Couldn't get the latest version from GitHub .*internet connection/);
+  assert.strictEqual(err.prerequisite, undefined);
+  git(install, 'remote', 'set-url', 'origin', origin);
+});
+
+test('no Git on this PC: says so, as a prerequisite the page offers to install', async () => {
+  const err = await refusal(check({ find: () => null }));
+  assert.strictEqual(err.prerequisite, 'git');
+  assert.match(err.message, /Git isn't installed/);
+});
+
+test('signs in through the GitHub CLI only when it is there, and by its full path', () => {
+  const { authArgs } = require('../src/update');
+  assert.deepStrictEqual(authArgs(null), ['-c', 'credential.helper='], 'no GitHub CLI: no credential helper at all');
+  assert.deepStrictEqual(authArgs('C:\\Program Files\\GitHub CLI\\gh.exe'), ['-c', 'credential.helper=', '-c', "credential.helper=!'C:\\Program Files\\GitHub CLI\\gh.exe' auth git-credential"]);
+});
+
+test('GitHub asking for a sign-in: the GitHub CLI to install, or to sign in with', () => {
+  const { fetchFailure } = require('../src/update');
+  // What git 2.x says for a repository that isn't public, with prompts off and no helper (seen 2026-10-23).
+  const asked = Object.assign(new Error("fatal: could not read Username for 'https://github.com': terminal prompts disabled"), { stderr: "fatal: could not read Username for 'https://github.com': terminal prompts disabled\n" });
+  const noGh = fetchFailure(asked, null);
+  assert.strictEqual(noGh.prerequisite, 'gh');
+  assert.match(noGh.message, /GitHub CLI, which isn't installed/);
+  const withGh = fetchFailure(asked, 'C:\\gh.exe');
+  assert.strictEqual(withGh.prerequisite, undefined);
+  assert.strictEqual(withGh.command, 'gh auth login');
+  const offline = fetchFailure(new Error('fatal: unable to access: Could not resolve host: github.com'), null);
+  assert.strictEqual(offline.prerequisite, undefined);
+  assert.match(offline.message, /internet connection/);
+});
+
+test('installing a prerequisite: only Git or the GitHub CLI, nothing to do when it is there, and a clear message when winget fails', async () => {
+  const { installTool } = require('../src/update');
+  assert.throws(() => installTool('node'), /only installs Git or the GitHub CLI/);
+  assert.deepStrictEqual(await installTool('gh', { find: () => 'C:\\gh.exe', winget: 'no-such-winget.exe' }), { label: 'the GitHub CLI', path: 'C:\\gh.exe' });
+  await assert.rejects(installTool('git', { find: () => null, winget: 'no-such-winget.exe' }), /winget isn't available on this PC/);
+  // Something that runs and exits without installing it (node, given winget's arguments).
+  await assert.rejects(installTool('git', { find: () => null, winget: process.execPath }), /winget didn't install Git.*git-scm\.com/);
+  // Found once winget is done: installed.
+  let calls = 0;
+  const found = await installTool('git', { find: () => (calls++ ? 'C:\\Program Files\\Git\\cmd\\git.exe' : null), winget: process.execPath });
+  assert.strictEqual(found.path, 'C:\\Program Files\\Git\\cmd\\git.exe');
 });

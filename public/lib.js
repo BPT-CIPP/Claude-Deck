@@ -41,6 +41,7 @@
       const err = new Error((data && data.error) || `Request failed (${res.status})`);
       err.status = res.status;
       if (data && typeof data.command === 'string') err.command = data.command;
+      if (data && typeof data.prerequisite === 'string') err.prerequisite = data.prerequisite;
       throw err;
     }
     return data;

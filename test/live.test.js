@@ -126,9 +126,48 @@ test("an ended session's time is when its conversation was last active, as Histo
   registry.remove('tab-ended');
 });
 
+test('a terminal in the window gets its status from the record of the pid its host found, or by session id, and notifies', () => {
+  const registry = new Registry();
+  for (const e of registry.all()) registry.remove(e.id);
+  const { EventEmitter } = require('events');
+  const terminals = new EventEmitter();
+  const learned = [];
+  const term = { id: 'term1', kind: 'embedded', name: 'Here', color: 'cyan', cwd: 'C:\\work', state: 'running', exitCode: null, launchedAt: Date.now(), statusSince: Date.now(), sessionId: SID, claudePid: null, command: 'claude', cols: 120, rows: 30, note: null, launchError: null };
+  terminals.list = () => [term];
+  terminals.learn = (id, what) => learned.push([id, what]);
+  writeRecord({ status: 'busy' });
+  const live = new Live({ registry, history: new HistoryIndex(), terminals });
+  const notes = [];
+  live.on('notify', (n) => notes.push(n));
+  // No pid from the host yet: the record is found by the conversation's id, and the pid learned.
+  live._compute();
+  let s = live.state.sessions.find((x) => x.id === 'term1');
+  assert.deepStrictEqual([s.kind, s.state, s.status, s.claudePid], ['embedded', 'running', 'busy', claudePid]);
+  assert.deepStrictEqual(learned, [['term1', { claudePid, sessionId: SID }]]);
+  assert.strictEqual(live.state.external.length, 0, 'the claimed record is not an outside session');
+  // With the pid known, the record is read by it; a change of status notifies, as for a tab.
+  term.claudePid = claudePid;
+  writeRecord({ status: 'waiting', waitingFor: 'permission prompt' });
+  live._compute();
+  s = live.state.sessions.find((x) => x.id === 'term1');
+  assert.strictEqual(s.waitingFor, 'permission prompt');
+  assert.deepStrictEqual(notes.map((n) => [n.kind, n.label]), [['waiting', 'Here']]);
+  // Ended: no status, and the record (if any) is somebody else's.
+  term.state = 'exited';
+  term.exitCode = 0;
+  live._compute();
+  s = live.state.sessions.find((x) => x.id === 'term1');
+  assert.deepStrictEqual([s.state, s.status], ['exited', null]);
+  assert.deepStrictEqual(notes.map((n) => n.kind), ['waiting', 'exited']);
+  clearTimeout(live.pokeTimer);
+});
+
 test('prefs reject unknown keys, wrong types and bad enum values', () => {
   assert.throws(() => prefs.save({ nope: 1 }), /Unknown preference/);
   assert.throws(() => prefs.save({ notifySound: 'yes' }), /wrong type/);
   assert.throws(() => prefs.save({ windowMode: 'tabs' }), /must be one of/);
+  assert.throws(() => prefs.save({ runHereAs: 'tab' }), /must be one of/);
+  assert.strictEqual(prefs.save({ runHereAs: 'terminal' }).runHereAs, 'terminal');
+  prefs.save({ runHereAs: 'chat' });
   assert.strictEqual(prefs.save({ windowName: '  ' }).windowName, 'ClaudeDeck');
 });

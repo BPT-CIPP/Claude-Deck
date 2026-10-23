@@ -6,6 +6,51 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.18.0] - 2026-10-23
+
+### Added
+- **A second chat interface: the Inlaid CLI.** Claude Code's own terminal interface, with
+  every command, dialog and key exactly as in its terminal (`/config`, `/mcp`, `/login`, plan
+  mode, Shift+Tab, Ctrl+B, Esc Esc, image paste with Ctrl+V), drawn in the dashboard in place of
+  the chat. New session's **Chat interface** picks it or **Claude Deck native** (the chat as
+  before) for each session; **Claude Deck Preferences → New sessions → Chat interface** sets the
+  one New session starts on, and the one Ctrl+Shift+N, *Resume here* and *Continue here* use
+  (native, unless changed). The session list, lamps, notifications,
+  History and Changes work for both. **End session** leaves the terminal listed under *Ended*
+  with its last screen, ready to **Resume** (or **Remove**), and the list survives a server
+  restart as chats do (the conversation then shows from its transcript). As in any Claude Code
+  terminal, the conversation reaches History once a prompt has been sent; a session that only
+  ran `/config` or `/mcp` has no transcript. A terminal's session menu has **Continue in Windows
+  Terminal** and **Continue as a chat**; Ctrl+W ends it (with Undo), as for a chat. In the
+  terminal, **Ctrl+Shift+C** copies the selection and **Ctrl+Shift+V** pastes; Ctrl+Tab,
+  Ctrl+Shift+N, F2 and Alt+1–4 stay Claude Deck's, every other key is Claude Code's.
+- Under the hood: the pseudo-console is Windows' own `conhost.exe --headless` (what Windows
+  Terminal uses), held by a small Windows PowerShell script (`src/pty-host.ps1`, .NET built-ins
+  only); the page draws it with xterm.js (`public/vendor/xterm`, MIT). No new executable, nothing
+  compiled, nothing installed: the managed-PC rules in CLAUDE.md still hold. Like chats, these
+  terminals end when the server stops.
+- **Updating says what's missing, and offers to install it.** If Git isn't installed, the update
+  check (when the window opens, or **Check for updates**) says so and offers **Install**, which
+  installs it with `winget` (Windows may ask for permission) and checks again. The same goes for
+  the GitHub CLI, but only when GitHub asks for a sign-in (a private fork); then you sign in with
+  `gh auth login`.
+
+### Changed
+- **The update needs only Git.** The repository is public, so fetching it needs no sign-in, and
+  the GitHub CLI is no longer a requirement. If GitHub does ask for a sign-in, it still goes
+  through the GitHub CLI, found by its full path (so one installed after the server started works
+  too). "Couldn't get the latest version" now says to check the connection, not the GitHub CLI.
+- New session's **Run it** section is now **Chat interface**: *Claude Deck native* or *Inlaid
+  CLI*. Starting a new session in a Windows Terminal tab is no longer offered there; a
+  conversation still continues in one with **Resume in terminal** (History) or **Continue in
+  terminal** (a session's menu). A preset saved with "In a Windows Terminal tab" now starts in
+  the Inlaid CLI.
+- The dashboard's content security policy now allows inline styles (`style-src 'unsafe-inline'`),
+  which xterm.js needs for its colors and cell sizes. Scripts are still only the server's own,
+  and the page still never uses `innerHTML`.
+- In the session list, a Windows Terminal tab now reads *Windows Terminal* (a terminal in the
+  window reads *Terminal*).
+
 ## [1.17.0] - 2026-10-21
 
 ### Added
@@ -497,6 +542,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.18.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.17.0...v1.18.0
 [1.17.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.14.0...v1.15.0

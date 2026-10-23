@@ -53,7 +53,12 @@ const env = {
   ANTHROPIC_API_KEY: 'sk-ant-mock-not-a-real-key',
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
 };
-delete env.CLAUDECODE; // when run from inside a Claude Code session
+// When run from inside a Claude Code session: its markers would make the sandbox's Claude think
+// it's a child session (no transcript in the terminal interface) and NO_COLOR would make it draw
+// without colors, neither of which a Claude Deck started normally sees.
+for (const name of Object.keys(env)) {
+  if (name === 'CLAUDECODE' || name === 'CLAUDE_PID' || name === 'NO_COLOR' || (name.startsWith('CLAUDE_CODE_') && name !== 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')) delete env[name];
+}
 // Allow API billing is on here, so nothing else may point Claude somewhere real: a cloud-provider
 // switch (Bedrock, Vertex, ...) or another credential in this PC's environment would bypass the mock.
 for (const name of require('../src/billing').BILLING_VARS) if (name !== 'ANTHROPIC_API_KEY') delete env[name];

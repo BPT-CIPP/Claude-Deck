@@ -89,6 +89,8 @@ process.on('SIGINT', () => {});
 if (process.stdin.isTTY) {
   process.stdin.setRawMode(true);
   process.stdin.on('data', (d) => { if (String(d).toLowerCase() === 'q') process.exit(0); });
+  // For the terminal-in-the-window tests: says when the console is resized, and to what.
+  process.stdout.on('resize', () => console.log(`size: ${process.stdout.columns}x${process.stdout.rows}`));
 }
 setInterval(() => {}, 1000);
 

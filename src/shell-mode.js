@@ -75,4 +75,4 @@ function runPowerShell(command, cwd, { timeoutMs = TIMEOUT_MS } = {}) {
   });
 }
 
-module.exports = { runPowerShell, decodeClixml, TIMEOUT_MS };
+module.exports = { runPowerShell, decodeClixml, killTree, TIMEOUT_MS };

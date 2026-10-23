@@ -8,13 +8,13 @@ How Claude Deck fits together, where each piece lives, and why the design constr
 
 ```
 Edge app window ──HTTP + server-sent events (per-install token)──► node src/server.js (127.0.0.1 only)
-                                                                     │                │
-            chats: claude.exe in stream-json mode (stdin/stdout JSON) │                │ terminal sessions:
-                                                                     │                │ wt.exe new-tab …
-                                                                     │                ▼
-                                                                     │   Windows Terminal tab:
-                                                                     │   node src/tab-host.js ─► claude.exe
-                                                                     │
+                                                                     │        │         │
+            chats: claude.exe in stream-json mode (stdin/stdout JSON) │        │         │ Windows Terminal tabs:
+                                                                     │        │         │ wt.exe new-tab …
+      terminals in the window: powershell src/pty-host.ps1 ──────────┘        │         ▼
+        └─► conhost.exe --headless ─► claude.exe (keys in, screen out,        │   node src/tab-host.js ─► claude.exe
+            drawn by xterm.js in the page)                                    │
+                                                                              │
                     reads ~/.claude/sessions/<pid>.json   live status of every Claude process
                     reads ~/.claude/projects/*/*.jsonl    titles, prompts, transcripts, cost, checkpoints
 ```
@@ -26,6 +26,16 @@ Edge app window ──HTTP + server-sent events (per-install token)──► nod
 - **Chats** (`src/chat.js`) are `claude.exe` child processes of the server, driven over stdin and
   stdout with Claude Code's streaming JSON protocol, the one the Agent SDK uses. That's why chats end
   when the server stops, and why the server stays up while any chat is open.
+- **Terminals in the window** (`src/terminals.js`) run `claude.exe` with its full terminal interface
+  inside the dashboard: Windows' own `conhost.exe --headless` is the pseudo-console (the same thing
+  Windows Terminal uses underneath), started by a small Windows PowerShell script
+  (`src/pty-host.ps1`) that inherits the server's pipes to it, holds the pipe conhost takes window
+  resizes on, and reports conhost's and Claude's pids back over a named pipe. Keystrokes go down
+  the pipe, the screen comes back as VT sequences, and the page draws it with xterm.js
+  (`public/vendor/xterm`). The last 512 KB of output is kept, so a page that connects again sees the
+  screen as it is. *Run here as* in Preferences makes these what "here in Claude Deck" starts. Like
+  chats, they're children of the server and end when it stops, and like chats they stay listed as
+  ended (`terminals.json`), to resume or remove.
 - **Terminal sessions** (`src/launcher.js`) open a Windows Terminal tab running `src/tab-host.js`,
   which starts `claude.exe` with the full terminal interface. The launch spec (command, args, env)
   goes to the tab through a JSON file, so paths with spaces, quotes or `;` arrive exactly as
@@ -51,6 +61,10 @@ src/chat.js             in-app chats: stream-json, permission/question answers, 
                         mode, plugin reloads, sleep left out of working time; the terminal's own
                         features (MCP servers, @ files, /btw, Ctrl+B, Esc Esc rewind, plan approval,
                         thinking, edit diffs, the to-do list, fast mode)
+src/terminals.js        terminals in the window: Claude Code's own interface over conhost --headless (keys in,
+                        screen out, resize, replay for a page that connects again), ended with Ctrl+C twice
+src/pty-host.ps1        Windows PowerShell 5.1: starts conhost --headless with the signal pipe for resizes, finds
+                        Claude's pid, relays resize and kill from the server over a named pipe
 src/shell-mode.js       a chat's !command, in Windows PowerShell
 src/prompt-history.js   Ctrl+R: Claude Code's own prompt history (history.jsonl, paste cache), read only
 src/live.js             joins chats + terminal registry + tab status + sessions/<pid>.json; notify events
@@ -68,7 +82,8 @@ src/trash.js            deleting a conversation: moves its files to the trash, U
 src/subagents.js        reads a subagent's own transcript as it grows: steps, model, token usage
 src/usage.js            plan usage limits (the one automatic outbound request; the sign-in token is read-only)
 src/billing.js          billing guard: refuses sessions that would bill an API or cloud account
-src/update.js           Check for updates: git fetch through `gh auth git-credential`, fast-forward a clean main
+src/update.js           Check for updates: git fetch (sign-in, if GitHub asks, through `gh auth git-credential`),
+                        fast-forward a clean main; installs a missing Git or GitHub CLI with winget when asked
 src/app-install.js      finds the installed Edge app; sign-in task status and toggle
 src/models.js           the model menus: Claude Code's own model list (versions), kept per Claude Code version
 src/claude-locate.js    finds claude.exe; its version, auto-update status and `claude update`
@@ -76,6 +91,8 @@ src/claude-config.js    a chat's Config window: Claude Code's /config options (i
 src/prefs.js, registry.js, paths.js, util.js
 public/                 index.html, app.css, lib.js, markdown.js, pasted-text.js, app.js, settings-ui.js,
                         tour.js, spinner-verbs.js, tick-worker.js, manifest.webmanifest, sw.js, offline.html, icons/, vendor/
+public/vendor/xterm/    xterm.js 6.0.0 and its fit addon (MIT), the terminal in the window; refresh from npm's
+                        @xterm/xterm and @xterm/addon-fit tarballs (lib/xterm.js, css/xterm.css, lib/addon-fit.js)
 tools/check-syntax.js   parses every .js file, and Start-ClaudeDeck.ps1 with Windows PowerShell 5.1
 tools/sandbox.js        a throwaway Claude Deck against a mock API, for testing (see TESTING.md)
 tools/make-icons.js     generates public/icons/*.png and claude-deck.ico (pure Node)
@@ -99,9 +116,24 @@ test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes),
   runs its PowerShell supervisor under: `-WindowStyle Hidden` doesn't hide a console that Windows
   Terminal hosts, as it does when Terminal is the default terminal app). `-Install` runs `winget.exe`
   (part of Windows' App Installer) only to install a missing Node.js or Windows Terminal, and Claude
-  Code's own installer for a missing Claude Code, each after the user says yes. *Check for updates* also runs `git`, signed in
-  through the GitHub CLI (`gh auth git-credential`), both of which a contributor already has. In-app
+  Code's own installer for a missing Claude Code, each after the user says yes. *Check for updates* also runs `git`; the
+  repository is public, so that's all it needs. If GitHub asks for a sign-in anyway (a private
+  fork), git signs in through the GitHub CLI (`gh auth git-credential`, by its full path, as the
+  only credential helper). A missing Git, or a missing GitHub CLI when GitHub asked for a sign-in,
+  is offered for install in the page, and `winget.exe` installs it (`Git.Git`, `GitHub.cli`) only
+  after the user chooses Install. A server started before the install still has its old PATH, so
+  `src/update.js` also looks where winget puts them. In-app
   chats are possible because Claude's streaming JSON mode needs only pipes, not a terminal.
+  Terminals in the window need a pseudo-console, and Node has none built in: `node-pty` was the
+  blocked executable. Windows' own `conhost.exe --headless -- <command>` is one, though: it reads
+  keystrokes from its stdin and writes the screen to its stdout as VT sequences, both plain pipes,
+  and a client started that way sees a real console. The one thing a pipe can't carry is the
+  handle conhost takes window resizes on (`--signal`), so `src/pty-host.ps1` creates that pipe with
+  .NET's own `AnonymousPipeServerStream` (inheritable), starts conhost with it, and relays resizes
+  from the server over a named pipe; nothing is compiled or installed. In the page, the screen is
+  drawn by xterm.js, vendored as plain files (`public/vendor/xterm`); it adds `<style>` elements
+  for its colors and cell sizes, which is why the page's content security policy allows inline
+  styles (scripts stay the server's own, and the page never uses `innerHTML`).
 - **No Claude API calls.** Everything shown is read from files Claude Code writes, and what the user
   types is relayed to their own `claude` process, so Claude Deck adds no cost. The plan usage meter
   is one outbound request it makes on its own: account metadata, no model runs. The other is the
@@ -137,6 +169,8 @@ test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes),
 
 Claude Deck's own data is in `%LOCALAPPDATA%\ClaudeDeck\` (or `CLAUDE_DECK_DATA`): `prefs.json`,
 `registry.json` (terminal sessions it launched), `chats.json` (open chats), `tabs\` (tab host status),
+`terminals.json` (terminals in the window, listed again as ended after a restart), `terminals\`
+(their launch specs, each removed when its run ends),
 `history-cache.json`, `history-folders.json` (conversations moved to another folder in History's
 folder view), `history-folder-names.json` (names given to folders there; the folders on disk aren't
 renamed), `models.json` (Claude Code's model list and the version it came from),
