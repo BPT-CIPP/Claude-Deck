@@ -381,7 +381,7 @@
   function emptyState() {
     return h('div', { class: 'empty' },
       h('h2', null, 'No Claude sessions running'),
-      h('p', null, 'Start one here and reply to it right from the dashboard, or run it in Windows Terminal. Sessions you start in other terminals show up here too.'),
+      h('p', null, "Start one here and reply to it right from the dashboard, in Claude Deck's own chat or Claude Code's own interface. Sessions you start in other terminals show up here too."),
       h('button', { class: 'primary', onclick: () => openLaunch() }, 'New session'),
       h('p', { class: 'faint', style: { marginTop: '14px' } }, 'Or pick up an old conversation from History.'));
   }
@@ -3719,6 +3719,7 @@
   const L = { color: 'slate', model: null };
   let previewTimer = null;
 
+  // The Chat interface picked in New session: 'chat' (Claude Deck native) or 'cli' (Inlaid CLI).
   function launchWhere() {
     return $('input[name="l-where"]:checked').value;
   }
@@ -3749,7 +3750,10 @@
     if (o.cwd) $('#l-cwd').value = o.cwd;
     $('#l-name').value = o.name || '';
     $$('input[name="l-mode"]').forEach((r) => { r.checked = r.value === (o.mode === 'continue' ? 'continue' : 'new'); });
-    if (o.where) $$('input[name="l-where"]').forEach((r) => { r.checked = r.value === o.where; });
+    // Presets saved before 1.18.0 say 'terminal' (a Windows Terminal tab, no longer offered here):
+    // the Inlaid CLI is the same interface, in the window.
+    const where = o.where === 'terminal' ? 'cli' : o.where;
+    if (where) $$('input[name="l-where"]').forEach((r) => { r.checked = r.value === where; });
     mountModelPicker(o.model);
     $('#l-effort').value = o.effort || '';
     $('#l-perm').value = o.permissionMode || '';
@@ -3803,15 +3807,15 @@
     clear($('#l-star')).appendChild(Deck.icon('star', { filled: pinned }));
     $('#l-star').setAttribute('aria-pressed', String(pinned));
     $('#l-worktree-name').disabled = !$('#l-worktree').checked;
-    const where = launchWhere();
-    $('#l-go').textContent = where !== 'chat' ? 'Open in terminal' : hereIsTerminal() ? 'Start terminal' : 'Start chat';
+    const native = launchWhere() === 'chat';
+    $('#l-go').textContent = native ? 'Start chat' : 'Start CLI session';
     clearTimeout(previewTimer);
     previewTimer = setTimeout(async () => {
       try {
         const opts = launchOptions();
-        // A chat sends the first prompt as a message; a terminal puts it on the command line.
-        const { command } = await api('POST', '/api/preview-command', where === 'chat' && !hereIsTerminal() ? { ...opts, prompt: '' } : opts);
-        $('#l-preview').textContent = where === 'chat' && !hereIsTerminal() ? `${command}  (plus Claude Deck's streaming flags; the first prompt is sent as a message)` : command;
+        // A native chat sends the first prompt as a message; the CLI puts it on the command line.
+        const { command } = await api('POST', '/api/preview-command', native ? { ...opts, prompt: '' } : opts);
+        $('#l-preview').textContent = native ? `${command}  (plus Claude Deck's streaming flags; the first prompt is sent as a message)` : command;
       } catch (err) {
         $('#l-preview').textContent = err.message;
       }
@@ -3821,13 +3825,13 @@
   async function openLaunch(prefill) {
     const dlg = $('#dlg-launch');
     $('#l-error').hidden = true;
-    $('#l-here-text').textContent = hereIsTerminal() ? "Here in Claude Deck, in a terminal with Claude Code's own interface" : 'Here in Claude Deck, so you can reply from the dashboard';
     const folders = await run("Couldn't load recent folders", () => api('GET', '/api/folders'));
     if (folders) S.folders = folders;
     const presetSel = clear($('#l-preset'));
     presetSel.appendChild(h('option', { value: '' }, 'None'));
     S.prefs.presets.forEach((p, i) => presetSel.appendChild(h('option', { value: String(i) }, p.name)));
-    applyLaunchOptions({ cwd: store.get('lastCwd', S.prefs.defaultFolder), color: 'slate', where: store.get('launchWhere', 'chat'), ...(prefill || {}) });
+    // The chat interface starts on the one chosen in Claude Deck Preferences.
+    applyLaunchOptions({ cwd: store.get('lastCwd', S.prefs.defaultFolder), color: 'slate', where: hereIsTerminal() ? 'cli' : 'chat', ...(prefill || {}) });
     $('#l-prompt').value = '';
     renderFolderChips();
     dlg.showModal();
@@ -3859,13 +3863,11 @@
     $('#l-error').hidden = true;
     try {
       const o = launchOptions();
-      const where = launchWhere();
-      const res = await api('POST', where !== 'chat' ? '/api/launch' : hereIsTerminal() ? '/api/terminals' : '/api/chats', o);
+      const cli = launchWhere() === 'cli';
+      const res = await api('POST', cli ? '/api/terminals' : '/api/chats', o);
       store.set('lastCwd', o.cwd);
-      store.set('launchWhere', where);
       $('#dlg-launch').close();
-      if (where !== 'chat') toast('Session started in Windows Terminal');
-      else if (res.kind === 'embedded') openTerminal(res.id);
+      if (cli) openTerminal(res.id);
       else openChat(res.id, !o.prompt.trim());
     } catch (err) {
       $('#l-error').textContent = err.message;
@@ -4552,9 +4554,9 @@
     const presetList = h('div', { class: 'pc' }, p.presets.length ? p.presets.map((pr) => h('div', { class: 'fav' }, h('span', null, pr.name), h('button', { class: 'ghost small', onclick: async () => { await savePrefs({ presets: S.prefs.presets.filter((x) => x.name !== pr.name) }, true); renderPrefs(); } }, 'Delete'))) : h('small', { class: 'faint' }, 'Save a preset from the New session window.'));
     root.appendChild(h('section', { class: 'pref-section' },
       h('h2', null, 'New sessions'),
-      prefRow('Run here as', 'What "Here in Claude Deck" means: in New session, Ctrl+Shift+N, Resume here and Continue here',
-        h('label', { class: 'radio' }, h('input', { type: 'radio', name: 'p-here', checked: p.runHereAs === 'chat', onchange: () => savePrefs({ runHereAs: 'chat' }) }), "A chat: the dashboard's own reply box, cards for permission prompts and questions, meters, the subagents panel"),
-        h('label', { class: 'radio' }, h('input', { type: 'radio', name: 'p-here', checked: p.runHereAs === 'terminal', onchange: () => savePrefs({ runHereAs: 'terminal' }) }), "A terminal: Claude Code's own interface in a terminal in the window, with every command, dialog and key as in Claude Code"),
+      prefRow('Chat interface', 'The one New session starts on, and the one Ctrl+Shift+N, Resume here and Continue here use',
+        h('label', { class: 'radio' }, h('input', { type: 'radio', name: 'p-here', checked: p.runHereAs === 'chat', onchange: () => savePrefs({ runHereAs: 'chat' }) }), "Claude Deck native: the dashboard's own reply box, cards for permission prompts and questions, meters, the subagents panel"),
+        h('label', { class: 'radio' }, h('input', { type: 'radio', name: 'p-here', checked: p.runHereAs === 'terminal', onchange: () => savePrefs({ runHereAs: 'terminal' }) }), "Inlaid CLI: Claude Code's own interface in the window, with every command, dialog and key as in Claude Code"),
         h('small', { class: 'faint' }, 'Sessions already running stay as they are. Either kind can continue as the other from its session menu.')),
       prefRow('Default folder', 'Where Ctrl+Shift+N starts a session. New session starts here too, until you start a session somewhere else',
         h('div', { class: 'row' }, folderInput,
@@ -4628,14 +4630,39 @@
     toast("The server didn't come back. Start Claude Deck again from its shortcut.", 'error');
   }
 
+  // Updating needs a program this PC doesn't have (src/update.js err.prerequisite): say so and offer
+  // to install it with winget. Then checks again (retry), or, for the GitHub CLI, says to sign in.
+  const PREREQUISITES = {
+    git: { title: 'Install Git?', body: "Claude Deck updates itself from GitHub with Git, and Git isn't installed on this PC." },
+    gh: { title: 'Install the GitHub CLI?', body: "GitHub asked for a sign-in before it would hand over Claude Deck (the repository isn't public to you). Claude Deck signs in through the GitHub CLI, which isn't installed on this PC." },
+  };
+  async function offerPrerequisite(err, retry) {
+    const p = PREREQUISITES[err.prerequisite];
+    if (!p) return;
+    const ok = await Deck.confirm({ title: p.title, body: `${p.body} Install it now? It comes from winget, Windows' own package manager, and Windows may ask for permission.`, ok: 'Install' });
+    if (!ok) return;
+    toast(`Installing ${err.prerequisite === 'git' ? 'Git' : 'the GitHub CLI'}… this can take a few minutes.`);
+    const res = await run("Couldn't install it", () => api('POST', '/api/update/install', { tool: err.prerequisite }));
+    if (!res) return;
+    if (err.prerequisite === 'gh') {
+      toast('The GitHub CLI is installed. Sign in by running gh auth login in PowerShell, then check for updates again.', 'info', { label: 'Copy command', ms: 30000, run: () => copy('gh auth login', 'Command copied') });
+      return;
+    }
+    toast(`${res.label} is installed.`);
+    if (retry) retry();
+  }
+
   // Checks GitHub for a newer Claude Deck (src/update.js); if there is one, asks, then updates this
   // copy and restarts on it.
   async function checkForUpdates(btn) {
     // When this copy can't be updated from here, the message includes the command to do it by
-    // hand, and the toast stays up with a button to copy it.
+    // hand, and the toast stays up with a button to copy it. A missing program is offered instead.
     const ask = (apply) => api('POST', '/api/update', { apply }).catch((err) => {
-      toast(`Couldn't ${apply ? 'update Claude Deck' : 'check for updates'}: ${err.message}`, 'error',
-        err.command ? { label: 'Copy command', ms: 30000, run: () => copy(err.command, 'Command copied') } : undefined);
+      if (err.prerequisite) offerPrerequisite(err, () => checkForUpdates(btn));
+      else {
+        toast(`Couldn't ${apply ? 'update Claude Deck' : 'check for updates'}: ${err.message}`, 'error',
+          err.command ? { label: 'Copy command', ms: 30000, run: () => copy(err.command, 'Command copied') } : undefined);
+      }
       return null;
     });
     btn.disabled = true;
@@ -4658,15 +4685,27 @@
     reloadWhenRestarted(res.pid);
   }
 
-  // At launch: when GitHub has a newer Claude Deck for this copy (a git clone on main, with access to
-  // the repository through the GitHub CLI), offer it. Everything that can go wrong (no access, no
-  // git or gh, offline, a copy that isn't updated from here) ends silently, by request: Check for
-  // updates in Preferences is the place that explains problems. A version declined isn't offered
-  // again until the window is next opened.
+  // At launch: when GitHub has a newer Claude Deck for this copy (a git clone on main), offer it.
+  // A program the update needs and this PC doesn't have (Git; the GitHub CLI only if GitHub asks for
+  // a sign-in) is offered for install, once per window. Everything else that can go wrong (offline,
+  // a copy that isn't updated from here) ends silently, by request: Check for updates in
+  // Preferences is the place that explains problems. A version declined isn't offered again until
+  // the window is next opened.
   async function checkForUpdatesAtLaunch() {
     const offered = 'deck-update-offered';
     let check;
-    try { check = await api('POST', '/api/update', { apply: false }); } catch { return; }
+    try {
+      check = await api('POST', '/api/update', { apply: false });
+    } catch (err) {
+      if (!err.prerequisite) return;
+      try {
+        if (sessionStorage.getItem('deck-prerequisite-offered') === err.prerequisite) return;
+        sessionStorage.setItem('deck-prerequisite-offered', err.prerequisite);
+      } catch { /* storage unavailable: offer it anyway */ }
+      while (document.querySelector('.tour, dialog[open]')) await new Promise((r) => setTimeout(r, 1000));
+      offerPrerequisite(err, checkForUpdatesAtLaunch);
+      return;
+    }
     if (!check || !check.available) return;
     const version = String(check.to || '');
     try {

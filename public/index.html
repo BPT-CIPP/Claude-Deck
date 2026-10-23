@@ -148,7 +148,7 @@
       <div class="chips" id="l-folders"></div>
 
       <div class="grid-2">
-        <label class="field"><span>Name <em>optional</em></span><input type="text" id="l-name" placeholder="Shown in the session list and the tab"></label>
+        <label class="field"><span>Name <em>optional</em></span><input type="text" id="l-name" placeholder="Shown in the session list"></label>
         <label class="field"><span>Preset</span>
           <div class="row"><select id="l-preset"><option value="">None</option></select><button type="button" class="ghost" id="l-save-preset">Save as preset</button></div>
         </label>
@@ -156,9 +156,9 @@
 
       <div class="grid-2">
         <fieldset class="field">
-          <legend>Run it</legend>
-          <label class="radio"><input type="radio" name="l-where" value="chat" checked> <span id="l-here-text">Here in Claude Deck, so you can reply from the dashboard</span></label>
-          <label class="radio"><input type="radio" name="l-where" value="terminal"> In a Windows Terminal tab</label>
+          <legend>Chat interface</legend>
+          <label class="radio" title="Replies, permission prompts and questions in Claude Deck's own reply box and cards"><input type="radio" name="l-where" value="chat" checked> Claude Deck native</label>
+          <label class="radio" title="Claude Code's own terminal interface, inside this window: every command, dialog and key as in Claude Code"><input type="radio" name="l-where" value="cli"> Inlaid CLI</label>
         </fieldset>
         <fieldset class="field">
           <legend>Start with</legend>
@@ -186,7 +186,7 @@
         <label class="field"><span>Extra command-line arguments</span><input type="text" id="l-extra" spellcheck="false" placeholder='e.g. --verbose --append-system-prompt "Be brief"'></label>
       </details>
 
-      <label class="field"><span>First prompt <em>optional</em></span><textarea id="l-prompt" rows="3" placeholder="Claude starts on this as soon as the tab opens"></textarea></label>
+      <label class="field"><span>First prompt <em>optional</em></span><textarea id="l-prompt" rows="3" placeholder="Claude starts on this as soon as the session opens"></textarea></label>
 
       <div class="command-preview"><span>Runs</span><code id="l-preview">claude</code></div>
       <p class="form-error" id="l-error" role="alert" hidden></p>

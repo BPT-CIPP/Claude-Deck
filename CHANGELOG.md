@@ -6,15 +6,16 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
-## [1.18.0] - 2026-10-22
+## [1.18.0] - 2026-10-23
 
 ### Added
-- **Sessions can run as terminals inside the window.** Claude Code's own terminal interface, with
+- **A second chat interface: the Inlaid CLI.** Claude Code's own terminal interface, with
   every command, dialog and key exactly as in its terminal (`/config`, `/mcp`, `/login`, plan
   mode, Shift+Tab, Ctrl+B, Esc Esc, image paste with Ctrl+V), drawn in the dashboard in place of
-  the chat. **Claude Deck Preferences → New sessions → Run here as** chooses what *Here in Claude
-  Deck* means: a chat (as before, the default) or a terminal; it applies to New session,
-  Ctrl+Shift+N, *Resume here* and *Continue here*. The session list, lamps, notifications,
+  the chat. New session's **Chat interface** picks it or **Claude Deck native** (the chat as
+  before) for each session; **Claude Deck Preferences → New sessions → Chat interface** sets the
+  one New session starts on, and the one Ctrl+Shift+N, *Resume here* and *Continue here* use
+  (native, unless changed). The session list, lamps, notifications,
   History and Changes work for both. **End session** leaves the terminal listed under *Ended*
   with its last screen, ready to **Resume** (or **Remove**), and the list survives a server
   restart as chats do (the conversation then shows from its transcript). As in any Claude Code
@@ -28,8 +29,22 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   only); the page draws it with xterm.js (`public/vendor/xterm`, MIT). No new executable, nothing
   compiled, nothing installed: the managed-PC rules in CLAUDE.md still hold. Like chats, these
   terminals end when the server stops.
+- **Updating says what's missing, and offers to install it.** If Git isn't installed, the update
+  check (when the window opens, or **Check for updates**) says so and offers **Install**, which
+  installs it with `winget` (Windows may ask for permission) and checks again. The same goes for
+  the GitHub CLI, but only when GitHub asks for a sign-in (a private fork); then you sign in with
+  `gh auth login`.
 
 ### Changed
+- **The update needs only Git.** The repository is public, so fetching it needs no sign-in, and
+  the GitHub CLI is no longer a requirement. If GitHub does ask for a sign-in, it still goes
+  through the GitHub CLI, found by its full path (so one installed after the server started works
+  too). "Couldn't get the latest version" now says to check the connection, not the GitHub CLI.
+- New session's **Run it** section is now **Chat interface**: *Claude Deck native* or *Inlaid
+  CLI*. Starting a new session in a Windows Terminal tab is no longer offered there; a
+  conversation still continues in one with **Resume in terminal** (History) or **Continue in
+  terminal** (a session's menu). A preset saved with "In a Windows Terminal tab" now starts in
+  the Inlaid CLI.
 - The dashboard's content security policy now allows inline styles (`style-src 'unsafe-inline'`),
   which xterm.js needs for its colors and cell sizes. Scripts are still only the server's own,
   and the page still never uses `innerHTML`.

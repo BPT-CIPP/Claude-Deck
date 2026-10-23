@@ -50,11 +50,13 @@ node tools/make-icons.js   # regenerate public/icons after changing the mascot g
   make them.
 - **No npm dependencies and no new executables.** Managed PCs commonly run Defender's attack surface
   reduction rule that blocks executables that aren't prevalent (Electron and node-pty were tried and
-  blocked). Everything runs on `node.exe`, `wt.exe`, Edge, `claude.exe`, `git` (with the GitHub CLI,
-  for *Check for updates*) and Windows built-ins (`powershell.exe`, `reg.exe`, `where.exe`,
-  `schtasks.exe`, `explorer.exe`, `choice.exe`, `conhost.exe` (also, `--headless`, as the
-  pseudo-console behind terminals in the window: `src/pty-host.ps1`, .NET built-ins only),
-  `taskkill.exe`, and `winget.exe` for the installer's prerequisites; see docs/ARCHITECTURE.md).
+  blocked). Everything runs on `node.exe`, `wt.exe`, Edge, `claude.exe`, `git` (for *Check for
+  updates*; the GitHub CLI too, only if GitHub asks for a sign-in) and Windows built-ins
+  (`powershell.exe`, `reg.exe`, `where.exe`, `schtasks.exe`, `explorer.exe`, `choice.exe`,
+  `conhost.exe` (also, `--headless`, as the pseudo-console behind terminals in the window:
+  `src/pty-host.ps1`, .NET built-ins only), `taskkill.exe`, and `winget.exe` for the installer's
+  prerequisites and, when the user chooses Install, the updater's (Git, the GitHub CLI); see
+  docs/ARCHITECTURE.md).
   Don't work around it, for example with runtime-compiled C# or P/Invoke. Third-party page code
   is vendored as plain files only (`public/vendor/`: the settings schema, xterm.js) and
   listed in docs/ARCHITECTURE.md; ask before adding any.
@@ -64,10 +66,13 @@ node tools/make-icons.js   # regenerate public/icons after changing the mascot g
 - **Two outbound requests happen on their own: the plan-usage call and the update check at launch.**
   `src/usage.js` reads the sign-in token from `.credentials.json` and never refreshes or rewrites it
   (Claude Code owns it), and sends it only to that endpoint. Tests stub the fetcher. The update check
-  (`src/update.js`) runs `git fetch` from GitHub, signed in through `gh auth git-credential`, once
-  each time the window opens and when the user clicks *Check for updates*. It fetches only for a
-  clean copy on `main` (anything else is refused before any network call), only fast-forwards after
-  the user says yes, and the launch check stays silent on any failure. Tests use local repositories. (Installing a plugin or updating a marketplace downloads, but that's Claude Code's
+  (`src/update.js`) runs `git fetch` from GitHub (public: no sign-in; if GitHub asks for one, it goes
+  through `gh auth git-credential` and nothing else), once each time the window opens and when the
+  user clicks *Check for updates*. It fetches only for a clean copy on `main` (anything else is
+  refused before any network call), only fast-forwards after the user says yes, and the launch
+  check stays silent on any failure except a missing program it needs (Git; the GitHub CLI only
+  when GitHub asked for a sign-in), which it offers to install with `winget`, once per window and
+  only on the user's yes. Tests use local repositories and never run winget. (Installing a plugin or updating a marketplace downloads, but that's Claude Code's
   own `claude plugin` command, run only when the user asks. Likewise `Start-ClaudeDeck.ps1 -Install`
   downloads a missing Node.js or Windows Terminal through `winget`, and runs Claude Code's installer
   from `https://claude.ai/install.ps1`, only after the user answers yes.)

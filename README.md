@@ -37,8 +37,11 @@ also edits your Claude Code settings.
 | **Claude Code**, signed in | the sessions themselves | [Claude Code docs](https://code.claude.com/docs). Check that `claude` works in a terminal first. |
 | **Windows Terminal** | sessions you run in a terminal tab (in-app chats work without it) | built into Windows 11; otherwise `winget install Microsoft.WindowsTerminal` |
 | **Microsoft Edge** | the app window and taskbar pin (otherwise it opens in your default browser) | built into Windows |
-| **Git** | to download and update Claude Deck | `winget install Git.Git` |
-| **GitHub CLI**, signed in | only for **Check for updates** (Git signs in to GitHub through it) | `winget install GitHub.cli`, then `gh auth login` |
+| **Git** | to download and update Claude Deck (Claude Deck offers to install it if it's missing when it checks for updates) | `winget install Git.Git` |
+
+The GitHub CLI isn't needed: the repository is public. Only a copy cloned from a private fork
+needs it, signed in (`gh auth login`), and Claude Deck offers to install it if GitHub asks for a
+sign-in.
 
 No administrator rights are needed on a standard Windows setup. Tested with Claude Code 2.1.284 and
 Node.js 24 on Windows 11. Newer Claude Code versions usually work; see
@@ -96,12 +99,15 @@ After that, the shortcuts and `Start-ClaudeDeck.ps1` open the installed app too.
 
 Claude Deck checks for a newer version each time its window opens. If GitHub has one, it asks
 **Update found: would you like to update Claude Deck now?**, and if you say yes, gets it and
-restarts on it. If the check can't run (no access to the repository, no GitHub CLI, offline, or a
-copy that isn't updated from here), it says nothing and Claude Deck carries on. To check right away,
-and to see why a check fails, choose **Claude Deck Preferences → Dashboard → Check for updates**.
-If GitHub has a newer version, Claude Deck asks, gets it and restarts on it. It needs the GitHub CLI signed in (`gh auth login`), and it only
-updates a copy on `main` with no changes of its own; otherwise it leaves the copy alone and gives
-the command to update it by hand (with **Copy command**). To update by hand anyway:
+restarts on it. If Git isn't installed, it says so and offers **Install** (with `winget`; Windows
+may ask for permission), then checks again. If the check can't run for any other reason (offline,
+or a copy that isn't updated from here), it says nothing and Claude Deck carries on. To check right
+away, and to see why a check fails, choose **Claude Deck Preferences → Dashboard → Check for
+updates**. If GitHub has a newer version, Claude Deck asks, gets it and restarts on it. It needs
+only Git (if GitHub asks for a sign-in, as for a private fork, it offers to install the GitHub CLI,
+then you sign in with `gh auth login`), and it only updates a copy on `main` with no changes of its
+own; otherwise it leaves the copy alone and gives the command to update it by hand (with **Copy
+command**). To update by hand anyway:
 
 ```powershell
 cd <your Claude-Deck folder>
@@ -155,21 +161,24 @@ New to Claude Code? The first time Claude Deck opens, a two-minute guided tour l
 of the page and explains it. Take it again any time from **Claude Deck Preferences → Dashboard →
 Take the tour**, or **Ctrl+K → Take the guided tour**.
 
-Each session runs one of three ways, your choice when you start it:
+Each session runs in Claude Deck with one of two chat interfaces, picked under **Chat interface**
+when you start it:
 
-- **Chat in Claude Deck** (the default). Claude runs inside Claude Deck. You read and reply in the
-  dashboard, answer permission prompts and questions, stop a turn, or switch model or permission
-  mode, then pick another session from the list.
-- **Terminal in Claude Deck.** Claude Code's own terminal interface, inside the dashboard window
-  in place of the chat: every command, dialog and key exactly as in its terminal (`/config`,
-  `/mcp`, `/login`, plan mode, Shift+Tab, Ctrl+B, Esc Esc, Ctrl+V for an image). The session
-  list, lamps, notifications, History and Changes work as for a chat. Choose it under **Claude
-  Deck Preferences → New sessions → Run here as**, which applies to *Here in Claude Deck* in New
-  session, Ctrl+Shift+N, *Resume here* and *Continue here*. In the terminal, **Ctrl+Shift+C**
+- **Claude Deck native** (the default). You read and reply in the dashboard, answer permission
+  prompts and questions, stop a turn, or switch model or permission mode, then pick another
+  session from the list.
+- **Inlaid CLI.** Claude Code's own terminal interface, inside the dashboard window in place of
+  the chat: every command, dialog and key exactly as in its terminal (`/config`, `/mcp`,
+  `/login`, plan mode, Shift+Tab, Ctrl+B, Esc Esc, Ctrl+V for an image). The session list, lamps,
+  notifications, History and Changes work as for a native chat. In the CLI, **Ctrl+Shift+C**
   copies the selection and **Ctrl+Shift+V** pastes; Ctrl+Tab, Ctrl+Shift+N, F2 and Alt+1–4 stay
   Claude Deck's, every other key is Claude Code's.
-- **Windows Terminal tab.** The full terminal interface, one tab per session in a shared window.
-  The dashboard tracks it, and **Open terminal** brings its tab forward.
+
+**Claude Deck Preferences → New sessions → Chat interface** sets the one New session starts on,
+and the one Ctrl+Shift+N, *Resume here* and *Continue here* use. A conversation can also continue
+in a **Windows Terminal tab** (the full terminal interface, one tab per session in a shared
+window): **Resume in terminal** in History, or **Continue in terminal** in a session's menu. The
+dashboard tracks the tab, and **Open terminal** brings it forward.
 
 Any kind can switch to another (**Continue in terminal** / **Continue here** / **Continue as a
 chat**) and keep the same conversation. Claude sessions you started elsewhere show up too, and
@@ -189,7 +198,7 @@ chat**) and keep the same conversation. Claude sessions you started elsewhere sh
 | **Questions** | When Claude asks a multiple-choice question, pick one or more options or type your own answer. |
 | **Subagents** | When Claude starts a subagent, a panel opens above the conversation listing the subagents it started, from the moment each starts: type, model, time, current step, tool calls and tokens. Click one for everything it did, live: its instructions, every step with results, and token usage (input, output, cache). **Stop** ends a running one. **✕** closes the panel until another subagent starts; **Subagents** in the session menu opens it again. |
 | **Changes** | **Changes** in the session menu shows the files Claude changed in each turn, with line counts and diffs. **Restore to before this turn** puts those files back (it lists what it will do first), and **Undo** reverses the restore. The conversation itself isn't changed. |
-| **New session** | Where to run it (here in Claude Deck, as a chat or a terminal per Preferences, or in a Windows Terminal tab), folder (browse, pinned, recent), name, color, new or continue-latest, model, effort, permission mode, git worktree, extra folders, extra arguments and a first prompt. Shows the exact `claude` command. Save setups as presets. |
+| **New session** | The chat interface (Claude Deck native or Inlaid CLI), folder (browse, pinned, recent), name, color, new or continue-latest, model, effort, permission mode, git worktree, extra folders, extra arguments and a first prompt. Shows the exact `claude` command. Save setups as presets. |
 | **History** | Every past conversation, filed by folder: one folder per working directory, as Claude Code keeps them, most recently active first. Click a folder to open it in place and see its conversations; drag a conversation onto another folder to move it there (Claude Code's own files aren't touched, and it still resumes from the folder it was started in; a moved conversation says where it came from, with a button to put it back). The pencil at the end of a folder's line (or **F2** on it) gives the folder a name in History, such as *Client work* for a long path; the folder on disk keeps its own name, and an empty name shows the path again. **List** shows everything in one list by day instead; the choice is remembered. Search and the folder filter work in both, and find folders by their names too. Drag the line between the list and the preview to make the list wider or narrower, as in Sessions (double-click it to go back to the usual width). Preview a conversation, then **Resume here**, **Resume in terminal** or **Fork a copy**. The trash button deletes a conversation you don't need (with **Undo**; open conversations can't be deleted). |
 | **Plan usage** | On the bar across the top: your current session and weekly limits, the same numbers as `/usage` in Claude Code. Click for every limit and reset time. **Most tokens this week**, at the bottom of that dropdown, lists the conversations that used the most (subagents included) since your plan's weekly limit reset, or in the last 7 days; **Show all** lists every one. |
 | **Notifications** | A desktop notification (and optional chime) when a session needs you or finishes. The taskbar icon's mascot sweats while anything is working and gets an amber dot when a session needs you. |
@@ -228,7 +237,7 @@ them for its own tabs.
   type to your own `claude`. The one network request it makes on its own is the plan-usage check
   (account metadata from `api.anthropic.com`, the same request Claude Code's `/usage` makes; no
   model runs). It reads your Claude sign-in token for that, never changes it, and sends it nowhere
-  else. The update check fetches from GitHub with `git`, signed in through the GitHub CLI, when the
+  else. The update check fetches from GitHub with `git` (no sign-in: the repository is public), when the
   window opens and when you click **Check for updates**, and only for a copy cloned from GitHub on
   `main`. It changes nothing unless you choose to update.
 - **Reading Claude Code's model list.** When there's no list yet for the installed Claude Code

@@ -21,7 +21,7 @@
       title: 'Start a session',
       body: [
         'Everything starts here. Choose the folder you want Claude to work in, such as a project or a folder of scripts. Claude only works inside the folder you pick.',
-        'Leave Run it on "Here in Claude Deck" to chat with Claude in this window. You can type your first request now or after it starts.',
+        'Leave Chat interface on "Claude Deck native" to chat with Claude in this window, or pick "Inlaid CLI" for Claude Code\'s own terminal interface, also in this window. You can type your first request now or after it starts.',
       ],
     },
     {

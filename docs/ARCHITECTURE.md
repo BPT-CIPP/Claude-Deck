@@ -82,7 +82,8 @@ src/trash.js            deleting a conversation: moves its files to the trash, U
 src/subagents.js        reads a subagent's own transcript as it grows: steps, model, token usage
 src/usage.js            plan usage limits (the one automatic outbound request; the sign-in token is read-only)
 src/billing.js          billing guard: refuses sessions that would bill an API or cloud account
-src/update.js           Check for updates: git fetch through `gh auth git-credential`, fast-forward a clean main
+src/update.js           Check for updates: git fetch (sign-in, if GitHub asks, through `gh auth git-credential`),
+                        fast-forward a clean main; installs a missing Git or GitHub CLI with winget when asked
 src/app-install.js      finds the installed Edge app; sign-in task status and toggle
 src/models.js           the model menus: Claude Code's own model list (versions), kept per Claude Code version
 src/claude-locate.js    finds claude.exe; its version, auto-update status and `claude update`
@@ -115,8 +116,13 @@ test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes),
   runs its PowerShell supervisor under: `-WindowStyle Hidden` doesn't hide a console that Windows
   Terminal hosts, as it does when Terminal is the default terminal app). `-Install` runs `winget.exe`
   (part of Windows' App Installer) only to install a missing Node.js or Windows Terminal, and Claude
-  Code's own installer for a missing Claude Code, each after the user says yes. *Check for updates* also runs `git`, signed in
-  through the GitHub CLI (`gh auth git-credential`), both of which a contributor already has. In-app
+  Code's own installer for a missing Claude Code, each after the user says yes. *Check for updates* also runs `git`; the
+  repository is public, so that's all it needs. If GitHub asks for a sign-in anyway (a private
+  fork), git signs in through the GitHub CLI (`gh auth git-credential`, by its full path, as the
+  only credential helper). A missing Git, or a missing GitHub CLI when GitHub asked for a sign-in,
+  is offered for install in the page, and `winget.exe` installs it (`Git.Git`, `GitHub.cli`) only
+  after the user chooses Install. A server started before the install still has its old PATH, so
+  `src/update.js` also looks where winget puts them. In-app
   chats are possible because Claude's streaming JSON mode needs only pipes, not a terminal.
   Terminals in the window need a pseudo-console, and Node has none built in: `node-pty` was the
   blocked executable. Windows' own `conhost.exe --headless -- <command>` is one, though: it reads

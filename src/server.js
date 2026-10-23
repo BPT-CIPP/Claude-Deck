@@ -840,6 +840,9 @@ async function main() {
         updating = false;
       }
     },
+    // { tool: 'git' | 'gh' }: installs a program updating needs (err.prerequisite from /api/update),
+    // with winget, after the person chose Install. -> { label, path }.
+    'POST /api/update/install': async (req) => update.installTool((await readBody(req)).tool),
   };
 
   const compiled = Object.entries(routes).map(([key, handler]) => {
@@ -958,8 +961,9 @@ async function main() {
       } catch (err) {
         const status = err instanceof UserError ? err.status : 500;
         if (status === 500) console.error(err);
-        // command: a command for the person to run themselves (see src/update.js).
-        return sendJson(res, status, { error: err.message || String(err), ...(status !== 500 && err.command ? { command: err.command } : {}) });
+        // command: a command for the person to run themselves; prerequisite: a program to offer to
+        // install (both from src/update.js).
+        return sendJson(res, status, { error: err.message || String(err), ...(status !== 500 && err.command ? { command: err.command } : {}), ...(status !== 500 && err.prerequisite ? { prerequisite: err.prerequisite } : {}) });
       }
     }
     return sendJson(res, 404, { error: 'Unknown endpoint.' });
