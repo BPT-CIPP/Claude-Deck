@@ -180,7 +180,10 @@ when you start it:
   `/login`, plan mode, Shift+Tab, Ctrl+B, Esc Esc, Ctrl+V for an image). The session list, lamps,
   notifications, History and Changes work as for a native chat. In the CLI, **Ctrl+Shift+C**
   copies the selection and **Ctrl+Shift+V** pastes; Ctrl+Tab, Ctrl+Shift+N, F2 and Alt+1–4 stay
-  Claude Deck's, every other key is Claude Code's.
+  Claude Deck's, every other key is Claude Code's. A big paste takes a moment: Windows' console
+  takes pasted text at about 10 KB a second (as in Windows Terminal), and Claude Code shows it
+  once it's all in; a note says it's on its way. For very large pastes, a native chat takes them
+  at once.
 
 **Claude Deck Preferences → New sessions → Chat interface** sets the one New session starts on,
 and the one Ctrl+Shift+N, *Resume here* and *Continue here* use. A conversation can also continue

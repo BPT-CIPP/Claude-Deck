@@ -345,6 +345,17 @@ src/pty-host.ps1), checked against 2.1.303:
   environment "Detected a custom API key … use it?" (↑ Enter). It records the answers in its
   `.claude.json`, so a `--keep` sandbox doesn't ask again. A `--session-id` passed on the command
   line is honored once the dialogs are past.
+- ✅ **Pasting is slow in proportion to size: about 10 KB/s** (measured 2026-10-23, 2.1.308,
+  Windows 11 26100). A bracketed paste written to conhost's input in one go reaches the client in
+  1 KB pieces about 60 ms apart: 3 KB took 146 ms to reach a Node client reading raw console
+  input, 40 KB took 2.3 s; Claude Code showed "[Pasted text #1 +39 lines]" 374 ms after a 3 KB
+  paste and 4.1 s after a 40 KB one. Deck's own hops (page → server → pipe) add milliseconds. The
+  pacing is between conhost's VT input conversion and the client's reads of console input, one
+  key record at a time (Node's libuv does that; Claude Code's runtime, Bun, uses libuv on
+  Windows). ⚠️ Windows Terminal feeds the same ConPTY input pipe, so a paste into Claude Code
+  there should be paced the same; not measured. Claude Code reads the clipboard itself only for
+  images (`Get-Clipboard` in its screenshot path), never for text, so there's no shortcut for a
+  text paste. The page shows a note while a big paste is in flight (`public/app.js`, typeInto).
 - ⚠️ Claude's pid: conhost starts the client itself, so Claude is conhost's child
   (`Win32_Process.ParentProcessId`), and that pid is the one in `sessions/<pid>.json` (claude.exe
   is a single native binary, no wrapper). Found by the host with CIM within about 3 s; the live
