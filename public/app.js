@@ -3264,9 +3264,17 @@
   }
 
   // Keystrokes go in order, one request at a time; what's typed meanwhile goes with the next.
+  // Windows' console input takes a paste at about 10 KB/s however it's fed (docs/CLAUDE-CODE-INTERNALS.md,
+  // "Pasting is slow"), and nothing shows until all of it is in: a note says it's on its way.
+  const PASTE_NOTE_FROM = 6000;
+  const PASTE_BYTES_PER_S = 10000;
   function typeInto(t, data, binary) {
     if (binary) t.pendingBinary += data;
     else t.pending += data;
+    if (!binary && data.length >= PASTE_NOTE_FROM) {
+      const seconds = Math.ceil(data.length / PASTE_BYTES_PER_S);
+      toast(`Pasting ${Math.round(data.length / 1024)} KB into Claude Code: about ${seconds} second${seconds === 1 ? '' : 's'}. Windows' console takes pasted text at about 10 KB a second.`, 'info', { ms: seconds * 1000 + 1500 });
+    }
     pumpTerminal(t);
   }
 

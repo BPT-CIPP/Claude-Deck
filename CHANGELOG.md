@@ -6,6 +6,16 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.19.1] - 2026-10-23
+
+### Changed
+- **A big paste into the Inlaid CLI says it's on its way.** Windows' console takes pasted text at
+  about 10 KB a second however it's fed (Windows Terminal included), and Claude Code shows nothing
+  until all of it is in, so a 50 KB paste looks stuck for 5 seconds. From 6 KB up, a note now says
+  how much is being pasted and roughly how long it takes. The rate itself is Windows' and Claude
+  Code's, not Claude Deck's: the page-to-server hop adds milliseconds (measured; see
+  docs/CLAUDE-CODE-INTERNALS.md). A native chat takes a paste of any size at once.
+
 ## [1.19.0] - 2026-10-23
 
 ### Added
@@ -575,6 +585,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.19.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.19.0...v1.19.1
 [1.19.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.18.1...v1.19.0
 [1.18.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.18.0...v1.18.1
 [1.18.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.17.0...v1.18.0
