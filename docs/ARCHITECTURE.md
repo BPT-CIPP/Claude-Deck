@@ -86,7 +86,8 @@ src/update.js           Check for updates: git fetch (sign-in, if GitHub asks, t
                         fast-forward a clean main; installs a missing Git or GitHub CLI with winget when asked
 src/app-install.js      finds the installed Edge app; sign-in task status and toggle
 src/models.js           the model menus: Claude Code's own model list (versions), kept per Claude Code version
-src/claude-locate.js    finds claude.exe; its version, auto-update status and `claude update`
+src/claude-locate.js    finds claude.exe; its version (and its file's stamp, to notice an update), auto-update
+                        status, the newest release on npm, and `claude update`
 src/claude-config.js    a chat's Config window: Claude Code's /config options (its own list), current values (read only)
 src/prefs.js, registry.js, paths.js, util.js
 public/                 index.html, app.css, lib.js, markdown.js, pasted-text.js, app.js, settings-ui.js,
@@ -100,6 +101,8 @@ tools/changelog.js      checks CHANGELOG.md has the package.json version; prints
 tools/release-manifest.js  every file in a release with its SHA-256; checks a copy against it
 test/*.test.js          node:test suite; test/helpers.js sandboxes CLAUDE_CONFIG_DIR and CLAUDE_DECK_DATA
 test/fixtures/          fake-claude.js (terminal, stream-json and plugin modes), mock-anthropic-api.js
+test/compat/            npm run compat: Claude Deck's code against the real claude.exe and the mock API; nightly
+                        on GitHub against the newest Claude Code (.github/workflows/claude-code-compat.yml)
 ```
 
 ## Why it's built this way

@@ -1,0 +1,99 @@
+# Nightly: does Claude Deck still work with the newest Claude Code?
+#
+# Installs the newest Claude Code from npm and runs test/compat (npm run compat): Claude Deck's own
+# chat, terminal, History and live-status code driven against the real claude.exe, with the mock
+# API standing in for Anthropic, so nothing is billed and no account is needed. When it fails, it
+# opens an issue labelled claude-code-compat (or comments on the open one) naming the Claude Code
+# version and what broke; when it passes again, it closes that issue. Run it by hand from the
+# Actions tab, optionally for one Claude Code version.
+name: claude-code-compat
+
+on:
+  schedule:
+    - cron: '17 8 * * *' # daily, 08:17 UTC
+  # A change to the check itself is tried on the pull request (no issue is filed from one).
+  pull_request:
+    paths:
+      - 'test/compat/**'
+      - 'test/fixtures/mock-anthropic-api.js'
+      - '.github/workflows/claude-code-compat.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Claude Code version to check (an npm version or tag)'
+        required: false
+        default: latest
+
+# Reading the code, and the issue that reports a failure.
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: claude-code-compat
+  cancel-in-progress: false
+
+jobs:
+  compat:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Install Claude Code
+        shell: bash
+        env:
+          WANTED: ${{ inputs.version || 'latest' }}
+        run: |
+          npm install -g "@anthropic-ai/claude-code@$WANTED"
+          claude --version
+
+      - name: Compatibility checks
+        id: compat
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run compat 2>&1 | tee compat.log
+
+      - name: Report a failure
+        if: failure() && steps.compat.outcome == 'failure' && github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          version=$(claude --version)
+          {
+            echo "The nightly compatibility check failed with **Claude Code $version**."
+            echo
+            echo "Failing checks (each names the part of Claude Deck that depends on it):"
+            echo
+            echo '```'
+            sed -n '/failing tests:/,$p' compat.log | head -c 60000
+            echo '```'
+            echo
+            echo "Run: $RUN_URL"
+            echo
+            echo "Reproduce on Windows: \`npm install -g @anthropic-ai/claude-code@${version%% *}\`, then \`npm run compat\`. What Claude Code changed goes in docs/CLAUDE-CODE-INTERNALS.md with the fix."
+          } > report.md
+          gh label create claude-code-compat --color D93F0B --description "Nightly check against the newest Claude Code" 2>/dev/null || true
+          open=$(gh issue list --label claude-code-compat --state open --json number --jq '.[0].number')
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body-file report.md
+          else
+            gh issue create --title "Claude Code ${version%% *} breaks part of Claude Deck" --label claude-code-compat --body-file report.md
+          fi
+
+      - name: Close the issue once it passes again
+        if: success() && github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          open=$(gh issue list --label claude-code-compat --state open --json number --jq '.[0].number')
+          if [ -n "$open" ]; then
+            gh issue close "$open" --comment "Passes again with Claude Code $(claude --version)."
+          fi

@@ -107,6 +107,34 @@ conhost (Windows only; skipped elsewhere). The sandbox started from inside a Cla
 passes `CLAUDE_CODE_CHILD_SESSION` down; the terminal drops it, or Claude Code would keep no
 transcript there (docs/CLAUDE-CODE-INTERNALS.md).
 
+## Compatibility with the real Claude Code: `npm run compat`
+
+The unit tests use a stand-in for Claude Code, so they can't tell you when a new Claude Code changes
+something Claude Deck relies on. `test/compat/claude-code.compat.js` can. It drives Claude Deck's
+own code against the installed `claude.exe`, with the mock API standing in for Anthropic (no cost,
+no account):
+
+- chats (`src/chat.js`): replies, streaming, Stop, the queue, permission prompts, questions, and
+  the header's controls;
+- History (the transcript), live status (`sessions/<pid>.json`);
+- the Inlaid CLI (`src/terminals.js`, under `conhost --headless`);
+- `claude --help`'s effort levels and permission modes against Claude Deck's own lists.
+
+Each test's name says which part of Claude Deck depends on it. None makes Claude run a shell, so
+it's safe on a managed PC. It takes about 20 seconds. `CLAUDE_COMPAT_PATH=<claude.exe>` checks
+another copy.
+
+**Nightly on GitHub** (`.github/workflows/claude-code-compat.yml`, 08:17 UTC): the newest Claude
+Code from npm, on Windows. A failure opens an issue labelled `claude-code-compat` (or comments on
+the open one) with the version and the failing checks, and the next passing run closes it. Run it
+by hand from the Actions tab, for any version. It also runs on a pull request that changes the
+check, without filing anything.
+
+When it fails: install that version (`npm install -g @anthropic-ai/claude-code@<version>`), run
+`npm run compat`, find what changed, fix Claude Deck, and record the change in
+[CLAUDE-CODE-INTERNALS.md](CLAUDE-CODE-INTERNALS.md). When Claude Deck starts relying on something
+new from Claude Code, add a check for it here.
+
 ## Probing Claude Code directly
 
 To check how Claude Code behaves (a new message, field or file) without any cost, run it against the

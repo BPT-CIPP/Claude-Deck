@@ -9,7 +9,34 @@ const { sandbox } = require('./helpers');
 const box = sandbox();
 const models = require('../src/models');
 const { MODEL_ALIASES } = require('../src/launcher');
-const { autoUpdateStatus, locateClaude } = require('../src/claude-locate');
+const { autoUpdateStatus, locateClaude, compareVersions, latestRelease, binaryStamp } = require('../src/claude-locate');
+
+test('versions compare as numbers, read from what claude --version prints', () => {
+  assert.ok(compareVersions('2.1.309', '2.1.308 (Claude Code)') > 0);
+  assert.ok(compareVersions('2.1.10', '2.1.9') > 0, 'not as text');
+  assert.strictEqual(compareVersions('2.1.308', '2.1.308 (Claude Code)'), 0);
+  assert.ok(compareVersions('2.1.299', '2.2.0') < 0);
+  assert.strictEqual(compareVersions('garbage', '2.1.308'), 0, "can't tell: not newer");
+});
+
+test("the newest release is the one on Claude Code's own update channel", async () => {
+  // npm's dist-tags for @anthropic-ai/claude-code, as of 2026-10-23.
+  const fetcher = async () => ({ latest: '2.1.309', stable: '2.1.308', next: '2.1.309' });
+  assert.deepStrictEqual(await latestRelease('latest', { fetcher }), { version: '2.1.309', channel: 'latest' });
+  assert.deepStrictEqual(await latestRelease('stable', { fetcher }), { version: '2.1.308', channel: 'stable' });
+  assert.strictEqual(await latestRelease('beta', { fetcher }), null, 'a channel npm has no tag for');
+  assert.strictEqual(await latestRelease('latest', { fetcher: async () => ({ latest: 'soon' }) }), null, 'not a version');
+  await assert.rejects(latestRelease('latest', { fetcher: async () => { throw new Error('offline'); } }), /offline/);
+});
+
+test("a file's stamp changes when the file does, and is null when it's missing", () => {
+  const file = path.join(box.root, 'stamp-me.exe');
+  fs.writeFileSync(file, 'one');
+  const first = binaryStamp(file);
+  fs.writeFileSync(file, 'two, longer');
+  assert.notStrictEqual(binaryStamp(file), first);
+  assert.strictEqual(binaryStamp(path.join(box.root, 'missing.exe')), null);
+});
 
 test.after(() => box.cleanup());
 

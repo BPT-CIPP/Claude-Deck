@@ -58,6 +58,37 @@ the signed-out case, so `src/chat.js` matches the text too (`AUTH_ERROR`) and ad
 instructions (`claude auth login`) either way, and answers a typed `/login` with them instead of
 sending it.
 
+## Updating
+
+Read from Claude Code 2.1.308's own code (the JavaScript bundled in `claude.exe`), 2026-10-23:
+
+- ✅ **Only the terminal interface updates Claude Code.** The three places that run the
+  automatic update check (the npm updater, the native installer's, and the package-manager one)
+  are all components of the interactive terminal interface. Streaming mode (`--input-format
+  stream-json`, what chats use) never draws that interface, so **chats never update Claude Code**.
+  Checked by running too: a stream-json session left open for 2 minutes didn't touch the update
+  lock. An Inlaid CLI session did take it (`.update.lock` held its pid).
+- ✅ The check runs about 10 s after the interface starts, then at most every 5 minutes. It takes
+  `~/.claude/.update.lock` (the holder's pid; a lock older than 5 minutes is stale) and records the
+  outcome in `~/.claude/.last-update-result.json`: `{ timestamp, path: "npm-global" | "npm-local" |
+  "native", outcome, status, version_from, version_to, error_code }`.
+- ✅ Anthropic can cap the version it updates to remotely (`tengu_max_version_config`), and it
+  respects `minimumVersion` / `requiredMaximumVersion` in managed settings. So a version can be on
+  npm before Claude Code will install it (2.1.309 was on npm's `latest` while 2.1.308 sessions
+  didn't take it).
+- ✅ **On Windows, an npm install can't replace `claude.exe` while any process is running it**
+  (EBUSY/EPERM on `claude.exe`): Claude Code reports `update_apply_exe_locked` and, in the
+  interface, stops trying for the session after two such failures. Every open chat runs
+  `claude.exe`, so with chats open an npm-installed Claude Code can't update. (The native
+  installer puts each version in its own folder, so it isn't affected.) ⚠️ The exact text
+  `claude update` prints in that case wasn't seen; `src/server.js` matches EBUSY, EPERM and
+  "locked".
+- ✅ `claude update` (or `upgrade`) checks and installs in one go; there's no check-only option.
+- ✅ npm's `https://registry.npmjs.org/-/package/@anthropic-ai/claude-code/dist-tags` lists the
+  release channels: `{ latest, stable, next }`. `autoUpdatesChannel` in settings picks `latest`
+  (the default) or `stable`. Claude Deck reads this to say a newer version is out; Claude Code
+  still decides whether to install it.
+
 ## CLI flags Claude Deck uses
 
 ✅ From `claude --help`: `--session-id`, `--resume <id>`, `--continue`, `--fork-session`, `--model`,
@@ -302,6 +333,13 @@ src/pty-host.ps1), checked against 2.1.303:
   marker": no transcript, and no `sessions/<pid>.json`, so nothing for Claude Deck to read. The
   terminal's environment drops it, as it drops `CLAUDECODE`. (Stream-json chats keep their
   transcript regardless.)
+- ✅ The first-run questions can be answered in `.claude.json` beforehand (2.1.308; what
+  `test/compat` does): `hasCompletedOnboarding: true` skips the text-style screen;
+  `projects["C:/path/with/forward/slashes"].hasTrustDialogAccepted: true` skips the trust
+  question for that folder; `customApiKeyResponses: { approved: [<the key's last 20
+  characters>], rejected: [] }` skips "Detected a custom API key". Answered by keys instead, the
+  trust question needs a moment after it appears: a ↓ sent before Claude Code reads input is lost,
+  and Enter then picks its default, "No, exit" (exit code 0).
 - ✅ A fresh `CLAUDE_CONFIG_DIR` (the sandbox) starts with the first-run dialogs: text style
   (Enter), "Quick safety check … trust this folder?" (↓ Enter), and with an API key in the
   environment "Detected a custom API key … use it?" (↑ Enter). It records the answers in its
