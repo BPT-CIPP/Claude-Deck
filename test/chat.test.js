@@ -36,6 +36,14 @@ test.after(async () => {
   box.cleanup();
 });
 
+// The tests below take turns on one chat. A reply and the turn's result are separate lines, which a
+// slow machine (CI) can deliver apart, so a test that ends on Claude's reply can leave the turn
+// still finishing. Each test starts once the chat is quiet again, instead of on the last one's tail.
+test.afterEach(async () => {
+  const chat = id && mgr.chats.get(id);
+  if (chat && chat.proc) await waitFor(() => mgr.summary(chat).status === 'idle' || null, 'the chat idle before the next test');
+});
+
 test('starts a chat, sends the first prompt, gets the reply', async () => {
   const s = mgr.create({ cwd, name: 'Demo', model: 'sonnet', prompt: 'hello there' });
   id = s.id;
@@ -666,7 +674,8 @@ test('interrupt-and-send stops the running turn, then sends the new message', as
   await mgr.sendInterrupting(id, 'change of plan');
   await waitFor(() => lastOf('assistant') && lastOf('assistant').text === 'Echo: change of plan', 'reply to the new message');
   assert.ok(items().some((i) => i.kind === 'note' && i.text === 'Stopped.' && i.n > items().find((x) => x.text === 'slow please').n), 'the slow turn was stopped');
-  assert.ok(turnsDone() >= before + 2);
+  // Both turns' results: the reply's own result can arrive just after the reply.
+  await waitFor(() => turnsDone() >= before + 2 || null, 'both turns finished');
 });
 
 test('a message sent while Claude works is marked queued until Claude picks it up', async () => {
@@ -702,6 +711,8 @@ test('queued messages can be taken back to edit, with their images, and Claude n
     assert.strictEqual(it.queued, false);
   }
   await waitFor(() => lastOf('assistant') && lastOf('assistant').text === 'Slow reply done.' || null, 'the slow turn finishes');
+  // Idle comes with the turn's result, a separate line from the reply (see the interrupt test).
+  await waitFor(() => mgr.summary(mgr.chats.get(id)).status === 'idle' || null, 'idle once the turn has finished');
   await new Promise((r) => setTimeout(r, 300));
   assert.ok(!items().some((i) => i.kind === 'assistant' && /take me back|and me/.test(i.text)), 'Claude never answered them');
   assert.strictEqual(mgr.summary(mgr.chats.get(id)).status, 'idle');
@@ -726,6 +737,8 @@ test("Send now puts a message in while Claude works and has Claude take it next,
   const plain = await mgr.sendNow(id, 'and now idle');
   assert.strictEqual(plain.queued, false);
   await waitFor(() => lastOf('assistant') && lastOf('assistant').text === 'Echo: and now idle' || null, 'answered as usual');
+  // Idle again (with the turn's result) before checking what Send now does with nothing typed then.
+  await waitFor(() => mgr.summary(mgr.chats.get(id)).status === 'idle' || null, 'idle after it');
   await assert.rejects(mgr.sendNow(id, '   '), /Type a message/);
   // Nothing typed while Claude works: what's already waiting goes now.
   mgr.send(id, 'slow again');
@@ -747,7 +760,9 @@ test('after an interrupt, the chat shows busy while Claude works on the new mess
   await new Promise((r) => setTimeout(r, 300));
   assert.strictEqual(mgr.summary(mgr.chats.get(id)).status, 'busy', 'still working on "slow two"');
   await waitFor(() => lastOf('assistant') && lastOf('assistant').text === 'Slow reply done.' || null, 'second slow reply');
-  assert.strictEqual(mgr.summary(mgr.chats.get(id)).status, 'idle');
+  // The reply and the turn's result are separate lines, which a slow machine can deliver apart:
+  // the chat goes idle with the result, not with the reply.
+  await waitFor(() => mgr.summary(mgr.chats.get(id)).status === 'idle' || null, 'idle once the turn has finished');
 });
 
 test('subagents are tracked with their activity, and finish with a summary', async () => {

@@ -163,7 +163,11 @@ function streamMode() {
   };
   // Like the real CLI (2.1.281): total_cost_usd and modelUsage are running totals for the
   // conversation; usage is this turn's alone.
-  const result = (extra = {}, charge = true) => {
+  // A turn's result comes a moment after its reply, as from the real CLI, so the two arrive as
+  // separate reads: a test that takes "the reply is here" for "the turn is over" fails here, not
+  // only on a slow CI machine (where it did, 2026-10-23).
+  const result = async (...a) => { await new Promise((r) => setTimeout(r, 20)); resultNow(...a); };
+  const resultNow = (extra = {}, charge = true) => {
     if (charge) {
       cost += 0.01;
       tokens = { ...tokens, inputTokens: tokens.inputTokens + 100, outputTokens: tokens.outputTokens + 20, cacheReadInputTokens: tokens.cacheReadInputTokens + 1000 };
@@ -564,7 +568,7 @@ function streamMode() {
             // still arrives), and it goes along with the next message that does get one.
             if (m.shouldQuery === false) {
               earlier.push(prompt);
-              result({ num_turns: 0 }, false);
+              resultNow({ num_turns: 0 }, false);
             } else {
               const before = earlier;
               earlier = [];
