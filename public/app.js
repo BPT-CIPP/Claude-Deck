@@ -4488,27 +4488,66 @@
     return section;
   }
 
-  function claudeUpdateHint(a) {
+  // The version Claude Code reports ("2.1.308 (Claude Code)"), as just the number.
+  const versionNumber = (v) => (String(v || '').match(/\d+\.\d+\.\d+/) || [''])[0];
+
+  function claudeUpdateHint(c) {
+    const a = c.autoUpdate;
     if (!a) return '';
     if (!a.enabled) return `Automatic updates are off (${a.blockedBy} is set). New models, such as a new Sonnet, show up once Claude Code is updated.`;
-    return `Claude Code updates itself in the background${a.channel === 'stable' ? ', from the stable channel' : ''}. New models show up in the model menus once it has.`;
+    const newer = c.updateAvailable ? `Claude Code ${c.latest.version} is out; this PC has ${versionNumber(c.version)}. ` : '';
+    return `${newer}Claude Code updates itself only from its own terminal interface (the Inlaid CLI or a Windows Terminal tab), and only when no session is using it; native chats don't update it. Claude Deck looks for a newer version${a.channel === 'stable' ? ' on the stable channel' : ''} and offers it. New models show up in the model menus once it's updated.`;
   }
 
   // Claude Code's own `claude update`. Open chats keep the version they started with until resumed.
+  // btn: the Preferences button, if that's where it was asked from.
   async function updateClaude(btn) {
-    btn.disabled = true;
-    btn.textContent = 'Checking…';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Checking…';
+    } else {
+      toast('Updating Claude Code…');
+    }
     try {
       const res = await run("Couldn't update Claude Code", () => api('POST', '/api/claude/update'));
       if (!res) return;
       S.boot.claude = res.claude;
       const changed = res.claude.version !== res.before;
-      if (!res.ok) toast(`Claude Code couldn't update: ${res.output.split('\n').pop()}`, 'error');
-      else toast(changed ? `Claude Code updated to ${res.claude.version}. Resume open chats to use it.` : `Claude Code is up to date (${res.claude.version || 'unknown version'})`);
+      if (res.locked) toast("Claude Code couldn't replace its program while sessions are using it. End your open chats and CLI sessions (or Restart server in Claude Deck Preferences), then update again.", 'error', { ms: 15000 });
+      else if (!res.ok) toast(`Claude Code couldn't update: ${res.output.split('\n').pop()}`, 'error');
+      else if (changed) toast(`Claude Code updated to ${versionNumber(res.claude.version)}. Resume open chats to use it.`);
+      // npm has a newer one than Claude Code installed: Anthropic releases each version gradually.
+      else if (res.claude.updateAvailable) toast(`Claude Code says ${versionNumber(res.claude.version)} is the newest for this PC for now. Anthropic releases new versions gradually, so ${res.claude.latest.version} should arrive soon.`);
+      else toast(`Claude Code is up to date (${versionNumber(res.claude.version) || 'unknown version'})`);
       if (changed) S.boot.models = await api('GET', '/api/models');
       if (S.view === 'prefs') renderPrefs();
     } finally {
-      if (btn.isConnected) { btn.disabled = false; btn.textContent = 'Update Claude Code now'; }
+      if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = 'Update Claude Code now'; }
+    }
+  }
+
+  // A newer Claude Code is out (src/server.js checkLatestClaude): offer it once per version and
+  // window, after the tour and any open dialog. Native chats never update Claude Code themselves.
+  // It counts as offered once it's on screen, so a reload during the tour doesn't lose it.
+  let claudeOfferWaiting = false;
+  async function offerClaudeUpdate() {
+    const key = 'deck-claude-update-offered';
+    const due = () => {
+      const c = S.boot && S.boot.claude;
+      if (!c || !c.updateAvailable) return null;
+      try { if (sessionStorage.getItem(key) === c.latest.version) return null; } catch { /* storage unavailable */ }
+      return c;
+    };
+    if (claudeOfferWaiting || !due()) return;
+    claudeOfferWaiting = true;
+    try {
+      while (document.querySelector('.tour, dialog[open]')) await new Promise((r) => setTimeout(r, 1000));
+      const c = due(); // still newer, after the wait?
+      if (!c) return;
+      try { sessionStorage.setItem(key, c.latest.version); } catch { /* storage unavailable */ }
+      toast(`Claude Code ${c.latest.version} is out (this PC has ${versionNumber(c.version)}). Native chats don't update Claude Code on their own.`, 'info', { label: 'Update now', ms: 20000, run: () => updateClaude() });
+    } finally {
+      claudeOfferWaiting = false;
     }
   }
 
@@ -4526,7 +4565,7 @@
         h('div', { class: 'row' }, pathInput,
           h('button', { class: 'ghost', onclick: async () => { await savePrefs({ claudePath: pathInput.value.trim() }, true); const info = await run("Couldn't check Claude Code", () => api('POST', '/api/claude/detect')); if (info) { S.boot.claude = info; renderPrefs(); toast(info.path ? `Found ${info.version || 'Claude Code'}` : 'Claude Code was not found', info.path ? 'info' : 'error'); } } }, 'Save and check')),
         detected),
-      claude.path ? prefRow('Updates', claudeUpdateHint(claude.autoUpdate),
+      claude.path ? prefRow('Updates', claudeUpdateHint(claude),
         h('div', { class: 'row' },
           h('button', { class: 'ghost', title: "Runs Claude Code's own claude update", onclick: (e) => updateClaude(e.currentTarget) }, 'Update Claude Code now'))) : null));
 
@@ -4775,7 +4814,12 @@
     // Claude Code reported a different model list (a new version, say): menus opened from now on use it.
     es.addEventListener('models', (e) => { S.boot.models = JSON.parse(e.data); });
     // Claude Code turned up after the server started (installed since): Preferences shows it.
-    es.addEventListener('claude', (e) => { S.boot.claude = JSON.parse(e.data); if (S.view === 'prefs') renderPrefs(); });
+    // Claude Code turned up after the server started, was updated, or has a newer version out.
+    es.addEventListener('claude', (e) => {
+      S.boot.claude = JSON.parse(e.data);
+      if (S.view === 'prefs') renderPrefs();
+      offerClaudeUpdate();
+    });
     es.addEventListener('open', () => {
       setConn(true);
       // After a reconnect, reload the open chat in case events were missed. If the server that
@@ -5032,6 +5076,7 @@
     setTimeout(() => {
       if (!store.get('tourSeen', false)) startTour();
       checkForUpdatesAtLaunch();
+      offerClaudeUpdate();
     }, 400);
     // Keep "for 3m" style labels fresh.
     setInterval(() => { if (S.view === 'sessions' && !document.hidden) { renderSessions(); renderUsage(); } }, 30000);

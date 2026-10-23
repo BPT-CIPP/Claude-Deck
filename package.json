@@ -1,6 +1,6 @@
 {
   "name": "claude-deck",
-  "version": "1.18.1",
+  "version": "1.19.0",
   "description": "A Windows dashboard for running, watching and resuming Claude Code sessions, as in-app chats or Windows Terminal tabs.",
   "private": true,
   "main": "src/server.js",
@@ -11,7 +11,8 @@
     "changelog": "node tools/changelog.js check",
     "test": "node --test \"test/*.test.js\"",
     "verify": "node tools/check-syntax.js && node tools/changelog.js check && node --test \"test/*.test.js\"",
-    "sandbox": "node tools/sandbox.js"
+    "sandbox": "node tools/sandbox.js",
+    "compat": "node --test --test-concurrency=1 \"test/compat/*.compat.js\""
   },
   "engines": {
     "node": ">=22"

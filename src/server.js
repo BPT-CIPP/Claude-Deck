@@ -32,7 +32,7 @@ const { Timeline } = require('./timeline');
 const trash = require('./trash');
 const update = require('./update');
 const billing = require('./billing');
-const { locateClaude, claudeVersion, autoUpdateStatus, runUpdate } = require('./claude-locate');
+const { locateClaude, claudeVersion, autoUpdateStatus, runUpdate, binaryStamp, compareVersions, latestRelease } = require('./claude-locate');
 const models = require('./models');
 const { readJson, writeJsonAtomic, isPidAlive, UserError } = require('./util');
 
@@ -48,6 +48,9 @@ const RESTART_WAIT_MS = 30 * 1000;
 // 3 = another copy is serving (wait, and take over if it stops). A restart exits with 3.
 const EXIT_STOPPED = 0;
 const EXIT_ANOTHER_COPY = 3;
+// How often Claude Code's file is looked at for an update, and npm asked for a newer release.
+const CLAUDE_CHANGE_MS = 60 * 1000;
+const CLAUDE_LATEST_MS = 6 * 3600 * 1000;
 // Room for a message with several images (up to 5 MB each, base64-encoded).
 const MAX_BODY = 60 * 1024 * 1024;
 const EDGE_PATHS = [
@@ -248,17 +251,29 @@ async function main() {
   let port = opts.port;
   let idleTimer = null;
   let claudeInfo = null;
+  // The newest Claude Code on its release channel, once checked (checkLatestClaude):
+  // { version, channel, checkedAt }.
+  let claudeLatest = null;
+
+  function withLatest(info) {
+    info.latest = claudeLatest;
+    info.updateAvailable = Boolean(claudeLatest && info.version && compareVersions(claudeLatest.version, info.version) > 0);
+    return info;
+  }
 
   async function detectClaude() {
     const found = locateClaude(prefsStore.load().claudePath);
-    claudeInfo = found ? { ...found, version: await claudeVersion(found.path) } : { path: null, source: null, version: null };
+    claudeInfo = found ? { ...found, version: await claudeVersion(found.path), stamp: binaryStamp(found.path) } : { path: null, source: null, version: null, stamp: null };
+    // A version that couldn't be read (claude.exe half-written mid-update) is read again next time.
+    if (!claudeInfo.version) claudeInfo.stamp = null;
     claudeInfo.autoUpdate = autoUpdateStatus();
-    return claudeInfo;
+    return withLatest(claudeInfo);
   }
   // Claude Code installed after the server started: while it's missing, look again when the page
-  // loads or a session starts, and tell open pages once it turns up.
+  // loads or a session starts, and tell open pages once it turns up. Once found, notice when it's
+  // updated (noticeClaudeChange).
   async function recheckClaude() {
-    if (claudeInfo && claudeInfo.path) return claudeInfo;
+    if (claudeInfo && claudeInfo.path) return noticeClaudeChange();
     const info = await detectClaude();
     if (info.path) {
       broadcast('claude', info);
@@ -267,6 +282,35 @@ async function main() {
     return info;
   }
   const recheckClaudeSoon = () => { recheckClaude().catch((err) => console.error('checking Claude Code failed:', err)); };
+  // Claude Code was updated (by itself from an interactive session, by claude update, or by hand):
+  // its file changed, so read the version again, tell open pages, and get that version's models.
+  // Checked when the page loads and every minute; a stat, so cheap.
+  async function noticeClaudeChange() {
+    if (!claudeInfo || !claudeInfo.path) return claudeInfo;
+    const stamp = binaryStamp(claudeInfo.path);
+    // Missing for a moment while an update swaps the file: look again next time.
+    if (!stamp || stamp === claudeInfo.stamp) return claudeInfo;
+    const before = claudeInfo.version;
+    const info = await detectClaude();
+    broadcast('claude', info);
+    if (info.version && info.version !== before) refreshModels();
+    return info;
+  }
+
+  // Claude Code updates itself only from its terminal interface (docs/CLAUDE-CODE-INTERNALS.md,
+  // "Updating"), never in the streaming mode chats use, so on a PC that only uses chats it would
+  // stay on one version. Claude Deck looks up the newest release itself, from npm's public list
+  // of release channels, at start and every 6 hours, so the page can offer the update. Not when
+  // Claude Code's updates are turned off, nor with CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC set
+  // (Claude Code's own switch for this kind of request; the sandbox and the tests set it).
+  async function checkLatestClaude() {
+    if (!claudeInfo || !claudeInfo.path || !claudeInfo.autoUpdate.enabled || process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC) return;
+    let release = null;
+    try { release = await latestRelease(claudeInfo.autoUpdate.channel); } catch { return; /* offline: next time */ }
+    if (!release) return;
+    claudeLatest = { ...release, checkedAt: Date.now() };
+    broadcast('claude', withLatest(claudeInfo));
+  }
 
   // The model menus, with versions from Claude Code's own list (src/models.js).
   const modelMenu = () => models.menu(models.load().models, MODEL_ALIASES);
@@ -795,14 +839,17 @@ async function main() {
     },
     'GET /api/models': () => modelMenu(),
     // Claude Code's own `claude update`, only when the user asks. Running chats keep the version
-    // they started with until they're resumed. { ok, output, before, claude }.
+    // they started with until they're resumed. { ok, output, before, claude, locked }: locked when
+    // Windows wouldn't let an npm install replace claude.exe, because sessions are using it.
     'POST /api/claude/update': async () => {
       const before = (claudeInfo || (await detectClaude())).version;
       const claude = requireClaude(prefsStore.load());
       const res = await runUpdate(claude.path);
       const info = await detectClaude();
       if (info.version !== before) await refreshModels({ force: true });
-      return { ok: res.ok, output: res.output, before, claude: info };
+      broadcast('claude', info);
+      const locked = !res.ok && /\bEBUSY\b|resource busy or locked|executable is locked|\bEPERM\b/i.test(res.output);
+      return { ok: res.ok, output: res.output, before, claude: info, locked };
     },
     'GET /api/app': async () => {
       const installed = appInstall.findInstalledApp(port);
@@ -1002,7 +1049,9 @@ async function main() {
   try { historyFolders.prune([...history.list().map((m) => m.sessionId), ...trash.trashedSessionIds()]); } catch (err) { console.error('tidying history folders failed:', err); }
   live.start();
   usage.start();
-  detectClaude().then(() => refreshModels()).catch((err) => console.error('checking Claude Code failed:', err));
+  detectClaude().then(() => { refreshModels(); checkLatestClaude(); }).catch((err) => console.error('checking Claude Code failed:', err));
+  setInterval(recheckClaudeSoon, CLAUDE_CHANGE_MS).unref();
+  setInterval(() => { checkLatestClaude().catch((err) => console.error('checking for a newer Claude Code failed:', err)); }, CLAUDE_LATEST_MS).unref();
   scheduleIdleExit();
 
   console.log(`Claude Deck running at ${dashboardUrl(port, token)}`);

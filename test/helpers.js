@@ -18,6 +18,9 @@ function sandbox() {
   // whether it's in this process's environment, Windows' stored one or managed settings.
   for (const name of require('../src/billing').BILLING_VARS) delete process.env[name];
   process.env.CLAUDE_DECK_SKIP_SYSTEM_SETTINGS = '1';
+  // No looking up Claude Code's newest release on npm (src/server.js checkLatestClaude); servers
+  // the tests start inherit this.
+  process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
   return {
     root,
     claudeDir,

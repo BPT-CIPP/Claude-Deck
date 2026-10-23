@@ -135,12 +135,20 @@ release exactly, `git checkout vX.Y.Z` first.
 
 ### Updating Claude Code
 
-Claude Code updates itself in the background, and Claude Deck uses whichever version is installed.
+Claude Deck uses whichever Claude Code version is installed, and notices within a minute when that
+changes. Claude Code updates itself only from its own terminal interface (the Inlaid CLI, a Windows
+Terminal tab or a terminal of your own), never from native chats. With an npm install, it also
+can't update while any session is running it. So Claude Deck checks for a newer version itself, at
+start and every 6 hours, and when there is one says **Claude Code X is out** with **Update now**.
+That runs Claude Code's own `claude update`, which Claude Code may hold back for a while: Anthropic
+releases each version gradually. If sessions are using Claude Code, the update can't replace it;
+end them (or **Restart server**), then update again.
+
 **Claude Deck Preferences → Claude Code** shows the version, whether it updates itself (it doesn't
-if `DISABLE_AUTOUPDATER` or `DISABLE_UPDATES` is set) and **Update Claude Code now**, which runs
-Claude Code's own `claude update` to check right away. Open chats keep the version they started
-with; resume them to use the new one. New models (a new Sonnet, say) appear in the model menus once
-Claude Code has updated.
+if `DISABLE_AUTOUPDATER` or `DISABLE_UPDATES` is set, and then Claude Deck doesn't check either),
+whether a newer one is out, and **Update Claude Code now**. Open chats keep the version they
+started with; resume them to use the new one. New models (a new Sonnet, say) appear in the model
+menus once Claude Code has updated.
 
 ## Uninstall
 
@@ -239,7 +247,10 @@ them for its own tabs.
   model runs). It reads your Claude sign-in token for that, never changes it, and sends it nowhere
   else. The update check fetches from GitHub with `git` (no sign-in: the repository is public), when the
   window opens and when you click **Check for updates**, and only for a copy cloned from GitHub on
-  `main`. It changes nothing unless you choose to update.
+  `main`. It changes nothing unless you choose to update. And at start and every 6 hours it reads
+  the newest Claude Code version from npm's public list of releases (no sign-in, nothing sent
+  about you), to tell you when there's an update; it's skipped if Claude Code's own updates are off
+  or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set.
 - **Reading Claude Code's model list.** When there's no list yet for the installed Claude Code
   version, Claude Deck starts Claude Code once in the background, reads the models it offers from
   its startup handshake, and closes it. No prompt is sent, so no model runs, no MCP servers are

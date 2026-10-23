@@ -6,6 +6,31 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.19.0] - 2026-10-23
+
+### Added
+- **Claude Deck tells you when a newer Claude Code is out.** Claude Code updates itself only from
+  its own terminal interface (the Inlaid CLI, a Windows Terminal tab), never from native chats, and
+  an npm-installed Claude Code can't update while any session is running it. So on a PC that mostly
+  uses chats, it could stay on one version for weeks. Claude Deck now checks npm's public list of
+  Claude Code releases at start and every 6 hours, and says **Claude Code X is out** with
+  **Update now** (Claude Code's own `claude update`). Not when Claude Code's updates are turned
+  off. **Claude Deck Preferences → Claude Code** says so too.
+- **A nightly check against the newest Claude Code** (for contributors). `npm run compat` drives
+  Claude Deck's own chat, Inlaid CLI, History and live-status code against the real `claude.exe`,
+  with the mock API in place of Anthropic. GitHub runs it every night on the newest Claude Code and
+  opens an issue naming what broke, so a Claude Code change is caught within a day, usually before
+  anyone has updated. See docs/TESTING.md.
+
+### Fixed
+- **The Claude Code version shown is the one installed.** Claude Deck read the version only when its
+  server started, so after Claude Code updated it kept showing the old one, and the model menus
+  missed the new version's models until a restart. It now notices within a minute (or when the
+  window opens) and reads the new version's models.
+- **Update Claude Code now says what happened.** If sessions are using Claude Code, Windows won't
+  let the update replace it; that's now said, with what to do. And when Claude Code holds back a
+  version npm already has (Anthropic releases them gradually), it says so instead of "up to date".
+
 ## [1.18.1] - 2026-10-23
 
 ### Fixed
@@ -550,6 +575,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.19.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.18.1...v1.19.0
 [1.18.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.18.0...v1.18.1
 [1.18.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.17.0...v1.18.0
 [1.17.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.16.0...v1.17.0

@@ -5,8 +5,13 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const https = require('https');
 const { execFileSync, execFile } = require('child_process');
 const paths = require('./paths');
+
+// npm's list of Claude Code's release channels and the version on each ({ latest, stable, next }):
+// public, about 60 bytes, no sign-in. The same versions Claude Code's own updater installs.
+const DIST_TAGS_URL = 'https://registry.npmjs.org/-/package/@anthropic-ai/claude-code/dist-tags';
 
 function npmPackageTargets(shimDir) {
   const pkg = path.join(shimDir, 'node_modules', '@anthropic-ai', 'claude-code');
@@ -107,4 +112,54 @@ function runUpdate(claudePath) {
   });
 }
 
-module.exports = { locateClaude, claudeVersion, isScript, autoUpdateStatus, runUpdate };
+// The file's size and modified time: changes when Claude Code updates itself (or is updated), which
+// is how Claude Deck notices a new version without asking `claude --version` again and again.
+function binaryStamp(file) {
+  try {
+    const st = fs.statSync(file);
+    return `${st.size}:${st.mtimeMs}`;
+  } catch {
+    return null;
+  }
+}
+
+// "2.1.308 (Claude Code)" or "2.1.309" -> [2, 1, 308]; anything else -> null.
+function versionParts(text) {
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(String(text || ''));
+  return m ? m.slice(1).map(Number) : null;
+}
+
+// > 0 when a is newer than b; 0 when the same or either can't be read.
+function compareVersions(a, b) {
+  const x = versionParts(a);
+  const y = versionParts(b);
+  if (!x || !y) return 0;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i];
+  return 0;
+}
+
+function fetchDistTags() {
+  return new Promise((resolve, reject) => {
+    const req = https.get(DIST_TAGS_URL, { headers: { Accept: 'application/json' }, timeout: 10000 }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) return reject(new Error(`npm answered ${res.statusCode}`));
+        try { resolve(JSON.parse(body)); } catch { reject(new Error('npm sent something unexpected')); }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('npm did not answer in time')));
+    req.on('error', reject);
+  });
+}
+
+// The newest Claude Code on the channel Claude Code updates from (autoUpdatesChannel: latest or
+// stable). Resolves { version, channel } or null if it can't be found out. fetcher: for tests.
+async function latestRelease(channel, { fetcher = fetchDistTags } = {}) {
+  const tags = await fetcher();
+  const version = tags && typeof tags[channel] === 'string' && versionParts(tags[channel]) ? tags[channel] : null;
+  return version ? { version, channel } : null;
+}
+
+module.exports = { locateClaude, claudeVersion, isScript, autoUpdateStatus, runUpdate, binaryStamp, compareVersions, latestRelease };

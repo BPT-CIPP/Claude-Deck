@@ -38,6 +38,8 @@ npm run syntax     # parse every .js file, and Start-ClaudeDeck.ps1 with Windows
 npm run changelog  # package.json's version is semver and CHANGELOG.md has a section for it
 npm test           # the node:test suite, test/*.test.js
 npm run sandbox    # a throwaway Claude Deck: real claude.exe against the mock API (tools/sandbox.js)
+npm run compat     # Claude Deck's code against the installed real claude.exe and the mock API (test/compat);
+                   # nightly on GitHub against the newest Claude Code, filing an issue when something breaks
 node tools/release-manifest.js build [ref] | verify <manifest> [folder]   # the file list each release carries
 node tools/make-icons.js   # regenerate public/icons after changing the mascot grid
 ```
@@ -63,7 +65,13 @@ node tools/make-icons.js   # regenerate public/icons after changing the mascot g
 - **Claude Deck makes no Claude API calls.** It reads files Claude Code writes and relays what the
   user types. Tests and checks never hit the real API: use `test/fixtures/fake-claude.js`, or the
   real `claude.exe` against `test/fixtures/mock-anthropic-api.js` (`npm run sandbox`).
-- **Two outbound requests happen on their own: the plan-usage call and the update check at launch.**
+- **Three outbound requests happen on their own: the plan-usage call, the update check at launch,
+  and Claude Code's newest version.** The last is npm's public list of Claude Code release channels
+  (`src/claude-locate.js` `latestRelease`: about 60 bytes, no credentials), at start and every 6
+  hours, because chats never run Claude Code's own updater (docs/CLAUDE-CODE-INTERNALS.md,
+  "Updating"). It's skipped when Claude Code's updates are off (`DISABLE_AUTOUPDATER`,
+  `DISABLE_UPDATES`) or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set, which `test/helpers.js`
+  and the sandbox set, so tests never make it; and it only offers `claude update`, never runs it.
   `src/usage.js` reads the sign-in token from `.credentials.json` and never refreshes or rewrites it
   (Claude Code owns it), and sends it only to that endpoint. Tests stub the fetcher. The update check
   (`src/update.js`) runs `git fetch` from GitHub (public: no sign-in; if GitHub asks for one, it goes

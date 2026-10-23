@@ -95,6 +95,44 @@ test('a Claude Code path set to a .cmd shim does not stop the server from starti
   }
 });
 
+test('Claude Code updated while the server runs: its new version is noticed when the page loads, without a restart', async () => {
+  const fs = require('fs');
+  const os = require('os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-deck-test-'));
+  const data = path.join(dir, 'data');
+  fs.mkdirSync(data);
+  // A copy of the stand-in, so it can be "updated" by rewriting what --version prints.
+  const fake = path.join(dir, 'fake-claude.js');
+  const source = fs.readFileSync(path.join(__dirname, 'fixtures', 'fake-claude.js'), 'utf8');
+  fs.writeFileSync(fake, source);
+  fs.writeFileSync(path.join(data, 'prefs.json'), JSON.stringify({ claudePath: fake }));
+  const child = spawn(process.execPath, [SERVER, '--port', '0'], { env: { ...env, CLAUDE_DECK_DATA: data }, stdio: ['ignore', 'pipe', 'pipe'] });
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('server did not start')), 15000);
+      child.stdout.on('data', (d) => { if (String(d).includes('Claude Deck running at')) { clearTimeout(timer); resolve(); } });
+      child.on('exit', (code) => reject(new Error(`server exited (${code})`)));
+    });
+    const { port } = JSON.parse(fs.readFileSync(path.join(data, 'runtime.json'), 'utf8'));
+    const token = JSON.parse(fs.readFileSync(path.join(data, 'secret.json'), 'utf8')).token;
+    const boot = () => fetch(`http://127.0.0.1:${port}/api/bootstrap`, { headers: { 'x-deck-token': token } }).then((r) => r.json());
+    let claude = null;
+    for (let i = 0; i < 40 && !(claude && claude.version); i++) {
+      claude = (await boot()).claude;
+      if (!claude.version) await new Promise((r) => setTimeout(r, 250));
+    }
+    assert.strictEqual(claude.version, '0.0.0 (fake Claude Code)');
+    assert.strictEqual(claude.updateAvailable, false, 'no newer release looked up in tests');
+    assert.strictEqual(claude.latest, null);
+    fs.writeFileSync(fake, source.replace("'0.0.0 (fake Claude Code)'", "'9.9.9 (fake Claude Code)'"));
+    assert.strictEqual((await boot()).claude.version, '9.9.9 (fake Claude Code)');
+  } finally {
+    if (child.exitCode === null) child.kill();
+    await new Promise((r) => setTimeout(r, 300));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('History files each conversation under its folder, and a move is remembered without touching the transcript', async () => {
   const fs = require('fs');
   const { line } = require('./helpers');
