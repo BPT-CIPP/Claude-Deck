@@ -41,6 +41,7 @@
     showChanges: {}, // session key -> changes shown instead of the conversation
     agentView: null, // { chatId, taskId }: a subagent's detail shown instead of the conversation
     week: null, // { data, loading, fetchedAt }: tokens by conversation this week (the pinned usage view)
+    term: null, // the terminal in the window being shown (mountTerminal)
   };
 
   const LANES = [
@@ -118,6 +119,9 @@
 
   const isChat = (it) => it && it.kind === 'chat';
   const isTerminal = (it) => it && it.kind === 'terminal';
+  const isEmbedded = (it) => it && it.kind === 'embedded'; // a terminal in the window
+  // Claude Deck Preferences: whether "here in Claude Deck" starts a chat or a terminal in the window.
+  const hereIsTerminal = () => Boolean(S.prefs && S.prefs.runHereAs === 'terminal');
 
   function heading(it) {
     return it.name || it.title || (isTerminal(it) ? it.tabTitle : null) || shortPath(it.cwd, 1) || 'Claude session';
@@ -169,7 +173,10 @@
   function openSession(it) {
     if (!it) return;
     if (isChat(it)) openChat(it.id);
-    else if (isTerminal(it)) {
+    else if (isEmbedded(it)) {
+      if (canResumeEmbedded(it)) resumeEmbedded(it, true);
+      else openTerminal(it.id);
+    } else if (isTerminal(it)) {
       if (it.state === 'exited') resumeTerminal(it);
       else run("Couldn't open the terminal", () => api('POST', `/api/sessions/${it.id}/focus`));
     } else showDetails(it.key);
@@ -182,6 +189,16 @@
     if (S.view !== 'sessions') setView('sessions');
     else renderSessions();
     if (focusComposer) setTimeout(() => { const ta = $('#focus-detail .composer-input'); if (ta && !ta.disabled) ta.focus(); }, 60);
+  }
+
+  // Open a terminal in the window and put the cursor in it.
+  function openTerminal(id) {
+    S.selected = `d:${id}`;
+    S.agentView = null;
+    S.opening = { key: S.selected, until: Date.now() + 8000 };
+    if (S.view !== 'sessions') setView('sessions');
+    else renderSessions();
+    setTimeout(() => { if (S.term && S.term.id === id) S.term.xterm.focus(); }, 80);
   }
 
   // Esc from a reply box: to the selected session in the list, where the arrow keys move between sessions.
@@ -203,9 +220,9 @@
       body = 'This stops Claude in the terminal where it was started. The conversation stays in History, so you can resume it here later.';
       ok = 'End session';
     } else if (ended) {
-      title = isChat(it) ? 'Remove this chat from the list?' : 'Close this tab?';
+      title = isTerminal(it) ? 'Close this tab?' : isChat(it) ? 'Remove this chat from the list?' : 'Remove this terminal from the list?';
       body = 'The conversation stays in History.';
-      ok = isChat(it) ? 'Remove' : 'Close tab';
+      ok = isTerminal(it) ? 'Close tab' : 'Remove';
     } else {
       title = 'End this session?';
       body = `Claude stops${active ? ' mid-task' : ''}${isTerminal(it) ? ' and its tab closes' : ''}. The conversation stays in History, so you can resume it later.`;
@@ -213,13 +230,16 @@
     }
     const ask = !quick || active || it.kind === 'external';
     if (ask && !(await Deck.confirm({ title, body, ok, danger: active || it.kind === 'external' }))) return false;
-    const path = isChat(it) ? `/api/chats/${it.id}/end` : isTerminal(it) ? `/api/sessions/${it.id}/close` : `/api/external/${it.pid}/end`;
-    const keep = quick && !ended && isChat(it);
-    const res = await run("Couldn't end the session", () => api('POST', path, keep ? { keep: true } : undefined));
+    const path = isChat(it) ? `/api/chats/${it.id}/end` : isEmbedded(it) ? `/api/terminals/${it.id}/end` : isTerminal(it) ? `/api/sessions/${it.id}/close` : `/api/external/${it.pid}/end`;
+    // A terminal in the window always stays listed as ended (its screen stays too); a chat does on
+    // Ctrl+W's first press.
+    const keep = !ended && (isEmbedded(it) || (quick && isChat(it)));
+    const payload = isEmbedded(it) ? (ended ? { remove: true } : {}) : keep ? { keep: true } : undefined;
+    const res = await run("Couldn't end the session", () => api('POST', path, payload));
     if (!res) return false;
     if (keep) {
       // Still listed (as ended) and still selected, so a second Ctrl+W removes it.
-      toast('Chat ended', 'info', { label: 'Undo', ms: 8000, run: () => resumeChat(it) });
+      toast(isChat(it) ? 'Chat ended' : 'Terminal ended', 'info', { label: 'Undo', ms: 8000, run: () => (isChat(it) ? resumeChat(it) : resumeEmbedded(it)) });
       return true;
     }
     toast(ended ? 'Removed' : 'Session ended');
@@ -235,6 +255,20 @@
   async function resumeChat(it) {
     const res = await run("Couldn't resume", () => api('POST', `/api/chats/${it.id}/resume`));
     if (res) toast('Resumed');
+    return Boolean(res);
+  }
+
+  // Resuming a terminal in the window is `claude --resume`, which needs a conversation on disk: one
+  // that only ran /config or /mcp and never had a prompt has nothing to resume.
+  const canResumeEmbedded = (it) => it.state === 'exited' && Boolean(it.sessionId) && it.userTurns > 0;
+
+  // A terminal in the window: the same conversation, a new run. open: show it too (Enter on it in the list).
+  async function resumeEmbedded(it, open = false) {
+    const res = await run("Couldn't resume", () => api('POST', `/api/terminals/${it.id}/resume`));
+    if (res) {
+      toast('Resumed');
+      if (open) openTerminal(it.id);
+    }
     return Boolean(res);
   }
 
@@ -263,7 +297,9 @@
     if (!ok) return;
     const path = external ? `/api/external/${it.pid}/to-chat` : `/api/sessions/${it.id}/to-chat`;
     const c = await run("Couldn't move the session", () => api('POST', path));
-    if (c) openChat(c.id);
+    if (!c) return;
+    if (c.kind === 'embedded') openTerminal(c.id);
+    else openChat(c.id);
   }
 
   async function continueInTerminal(it) {
@@ -273,6 +309,21 @@
     if (res) toast('Continuing in Windows Terminal');
   }
 
+  // A terminal in the window, continued elsewhere: in a Windows Terminal tab, or as a chat.
+  async function moveEmbedded(it, target) {
+    const toTab = target === 'terminal';
+    const ok = await Deck.confirm({
+      title: toTab ? 'Continue in Windows Terminal?' : 'Continue as a chat?',
+      body: toTab ? 'This terminal ends here and the same conversation opens in a Windows Terminal tab.' : "This terminal ends and the same conversation continues as a chat here, with the dashboard's own reply box.",
+      ok: toTab ? 'Open in terminal' : 'Continue as a chat',
+    });
+    if (!ok) return;
+    const res = await run("Couldn't move the session", () => api('POST', `/api/terminals/${it.id}/${toTab ? 'to-terminal' : 'to-chat'}`));
+    if (!res) return;
+    if (toTab) toast('Continuing in Windows Terminal');
+    else openChat(res.id);
+  }
+
   async function dismiss(it) {
     await run("Couldn't dismiss", () => api('POST', `/api/sessions/${it.id}/dismiss`));
   }
@@ -280,7 +331,7 @@
   // The name plate is edited where it sits: Enter saves, Esc puts it back. Without the header on
   // screen (another session selected), it asks in a small dialog instead.
   async function rename(it) {
-    const base = isChat(it) ? '/api/chats' : '/api/sessions';
+    const base = isChat(it) ? '/api/chats' : isEmbedded(it) ? '/api/terminals' : '/api/sessions';
     const save = (name) => run("Couldn't rename", () => api('PATCH', `${base}/${it.id}`, { name }));
     const plate = S.selected === it.key ? $('#focus-detail .head-title h2') : null;
     if (!plate) {
@@ -308,7 +359,7 @@
   }
 
   async function recolor(it, color) {
-    const base = isChat(it) ? '/api/chats' : '/api/sessions';
+    const base = isChat(it) ? '/api/chats' : isEmbedded(it) ? '/api/terminals' : '/api/sessions';
     await run("Couldn't change the color", () => api('PATCH', `${base}/${it.id}`, { color }));
   }
 
@@ -439,7 +490,7 @@
   function rowRemoval(it) {
     const ended = it.state === 'exited' || it.state === 'failed';
     if (isTerminal(it) && it.state === 'failed') return { title: 'Dismiss this session', run: () => dismiss(it) };
-    if (ended) return { title: isChat(it) ? 'Remove this chat from the list (the conversation stays in History)' : 'Close this tab', run: () => endSession(it) };
+    if (ended) return { title: isTerminal(it) ? 'Close this tab' : `Remove this ${isChat(it) ? 'chat' : 'terminal'} from the list (the conversation stays in History)`, run: () => endSession(it) };
     return { title: 'End this session (asks first while Claude is working)', run: () => endSession(it) };
   }
 
@@ -476,7 +527,7 @@
           h('span', { class: `lamp ${it.lane}` }),
           h('span', { class: 'fr-text' },
             h('div', { class: 'fr-title' }, heading(it)),
-            h('div', { class: 'fr-sub' }, h('span', null, isChat(it) ? 'Chat' : isTerminal(it) ? 'Terminal' : 'Outside'), h('span', null, shortPath(it.cwd, 1)), it.statusSince ? h('span', null, ago(it.statusSince)) : null))),
+            h('div', { class: 'fr-sub' }, h('span', null, isChat(it) ? 'Chat' : isEmbedded(it) ? 'Terminal' : isTerminal(it) ? 'Windows Terminal' : 'Outside'), h('span', null, shortPath(it.cwd, 1)), it.statusSince ? h('span', null, ago(it.statusSince)) : null))),
           h('button', { type: 'button', class: 'ghost icon fr-del', title: removal.title, 'aria-label': `${removal.title}: ${heading(it)}`, onclick: removal.run }, trashIcon())));
       }
     }
@@ -512,6 +563,12 @@
       if (it.state !== 'exited') items.push({ label: 'Go back to an earlier message…', title: 'Claude forgets everything from one of your messages on, and the message comes back to the reply box (Esc Esc)', run: () => { if (S.rewindHere && S.rewindHere.chatId === it.id) S.rewindHere.run(); } });
       items.push({ label: S.showTasks[it.id] ? 'Hide subagents' : it.taskCount ? `Subagents (${it.taskCount})` : 'Subagents', title: 'Subagents Claude started in this chat', run: () => setTasksPanel(it.id, !S.showTasks[it.id]) });
       if (it.state !== 'exited') items.push({ label: 'Config…', title: "Claude Code's /config options: theme, editor mode, auto-compact and the rest", run: () => openConfig(it) });
+    } else if (isEmbedded(it)) {
+      if (it.sessionId) {
+        items.push({ label: 'Continue in Windows Terminal', title: 'Continue this conversation in a Windows Terminal tab', run: () => moveEmbedded(it, 'terminal') });
+        items.push({ label: 'Continue as a chat', title: "Continue this conversation as a chat, with the dashboard's own reply box", run: () => moveEmbedded(it, 'chat') });
+      }
+      if (cmd) items.push({ label: 'Copy resume command', run: () => copy(cmd, 'Resume command copied') });
     } else {
       if (isTerminal(it) && it.state !== 'failed' && it.sessionId) items.push({ label: 'Continue here', title: 'Close the tab and continue this conversation here', run: () => continueHere(it) });
       if (cmd) items.push({ label: 'Copy resume command', run: () => copy(cmd, 'Resume command copied') });
@@ -676,6 +733,9 @@
     if (isChat(it)) {
       if (it.state === 'exited') acts.push(h('button', { class: 'primary small', onclick: () => resumeChat(it) }, 'Resume'));
       acts.push(h('button', { class: 'danger small', onclick: () => endSession(it) }, it.state === 'exited' ? 'Remove' : 'End session'));
+    } else if (isEmbedded(it)) {
+      if (canResumeEmbedded(it)) acts.push(h('button', { class: 'primary small', onclick: () => resumeEmbedded(it) }, 'Resume'));
+      acts.push(h('button', { class: 'danger small', onclick: () => endSession(it) }, it.state === 'running' ? 'End session' : 'Remove'));
     } else if (isTerminal(it)) {
       if (it.state !== 'failed') acts.push(h('button', { class: 'primary small', onclick: () => openSession(it) }, it.state === 'exited' ? 'Resume' : 'Open terminal'));
       if (it.state === 'failed') acts.push(h('button', { class: 'ghost small', onclick: () => dismiss(it) }, 'Dismiss'));
@@ -1282,7 +1342,7 @@
         const old = pane.querySelector('.usage-view');
         const top = old ? old.scrollTop : 0;
         const view = h('div', { class: 'usage-view' }, weekPanel());
-        clear(pane).appendChild(view);
+        clearPane(pane).appendChild(view);
         view.scrollTop = top;
         pane.dataset.usageSig = sig;
       }
@@ -1291,7 +1351,7 @@
     const flat = visibleItems().flatMap((g) => g.items);
     let it = S.selected ? flat.find((x) => x.key === S.selected) : null;
     if (!it && S.opening && S.opening.key === S.selected && Date.now() < S.opening.until) {
-      clear(pane).appendChild(h('div', { class: 'empty' }, h('p', null, 'Starting the session…')));
+      clearPane(pane).appendChild(h('div', { class: 'empty' }, h('p', null, 'Starting the session…')));
       S.detailKey = null;
       return;
     }
@@ -1300,7 +1360,7 @@
       S.selected = it.key;
     }
     if (!it) {
-      clear(pane);
+      clearPane(pane);
       S.detailKey = null;
       S.chat = null;
       pane.appendChild(allItems().length ? h('div', { class: 'empty' }, h('p', null, 'Select a session.')) : emptyState());
@@ -1315,11 +1375,14 @@
       S.tasksSeen[it.id] = it.taskCount;
     }
 
-    const fresh = S.detailKey !== it.key || !pane.querySelector('.convo');
+    // A terminal in the window shows its screen while it runs and after it ends; once the server
+    // has restarted there's no screen left, and the conversation comes from the transcript instead.
+    const showTerm = isEmbedded(it) && (it.state === 'running' || it.screen);
+    const fresh = S.detailKey !== it.key || !pane.querySelector(showTerm ? '.term-pane' : '.convo');
     if (fresh) {
       if (plugins.pop && plugins.pop.chatId !== it.id) closePluginsMenu();
       if (headMenu.key !== it.key) closeHeadMenu();
-      clear(pane);
+      clearPane(pane);
       S.detailKey = it.key;
       S.headSig = headSignature(it);
       S.convo = { key: null, stamp: null, sessionId: null };
@@ -1327,12 +1390,15 @@
       if (isChat(it)) pane.appendChild(h('div', { class: 'tasks-panel', hidden: true }));
       pane.appendChild(h('div', { class: 'changes-panel', hidden: true }));
       if (isChat(it)) pane.appendChild(h('div', { class: 'changes-panel agent-panel', hidden: true }));
-      pane.appendChild(h('div', { class: 'convo' }, h('div', { class: 'convo-inner' })));
+      // A terminal in the window is the conversation and the reply box in one.
+      if (showTerm) pane.appendChild(terminalPane(it));
+      else pane.appendChild(h('div', { class: 'convo' }, h('div', { class: 'convo-inner' })));
       if (isChat(it)) {
         pane.appendChild(composer(it));
         loadChat(it);
       } else {
         S.chat = null;
+        if (showTerm) mountTerminal(it);
       }
     } else if (headSignature(it) !== S.headSig && !headInUse(pane)) {
       S.headSig = headSignature(it);
@@ -1342,6 +1408,8 @@
     if (isChat(it)) {
       updateComposer(it);
       renderTasksPanel(); // keeps the running times current
+    } else if (showTerm) {
+      updateTerminal(it);
     } else {
       loadConversation(it, pane.querySelector('.convo'));
     }
@@ -1826,7 +1894,7 @@
   function renderAltViews(it) {
     const agent = renderAgentPanel(it);
     const changes = renderChangesPanel(it, agent);
-    const convo = $('#focus-detail .convo');
+    const convo = $('#focus-detail .convo, #focus-detail .term-pane');
     if (convo) convo.hidden = agent || changes;
   }
 
@@ -3116,6 +3184,178 @@
     }
   }
 
+  // ---- a terminal in the window --------------------------------------------------------------
+  // Claude Code's own interface, drawn by xterm.js (public/vendor/xterm) from the screen the server
+  // relays (src/terminals.js): keystrokes go up as they're typed, the screen comes down as an event
+  // stream. One is shown at a time; selecting another session closes its stream, and coming back
+  // draws the screen again from what the server kept.
+  function terminalPane(it) {
+    return h('div', { class: 'term-pane' },
+      h('div', { class: 'term-box', 'aria-label': 'Terminal' }),
+      h('div', { class: 'term-ended', hidden: it.state === 'running' }));
+  }
+
+  // The terminal's colors from the theme's own.
+  function termTheme() {
+    const cs = getComputedStyle(document.documentElement);
+    const v = (name) => cs.getPropertyValue(name).trim();
+    return { background: v('--bg'), foreground: v('--text'), cursor: v('--text'), cursorAccent: v('--bg'), selectionBackground: 'rgba(128, 128, 128, 0.35)' };
+  }
+
+  function mountTerminal(it) {
+    unmountTerminal();
+    const box = $('#focus-detail .term-box');
+    if (!box || typeof Terminal !== 'function') return;
+    const xterm = new Terminal({
+      theme: termTheme(),
+      fontFamily: '"Cascadia Code", "Cascadia Mono", Consolas, monospace',
+      fontSize: 13,
+      cursorBlink: true,
+      scrollback: 5000,
+      windowsPty: { backend: 'conpty' },
+    });
+    const fit = new FitAddon.FitAddon();
+    xterm.loadAddon(fit);
+    xterm.open(box);
+    const t = { id: it.id, xterm, fit, box, es: null, cols: it.cols, rows: it.rows, pending: '', pendingBinary: '', sending: false, fitTimer: null, observer: null };
+    S.term = t;
+    xterm.onData((d) => typeInto(t, d, false));
+    xterm.onBinary((d) => typeInto(t, d, true));
+    xterm.attachCustomKeyEventHandler((e) => termKeys(t, e));
+    // An image on the clipboard: the paste has no text, so the keystroke itself goes to Claude
+    // Code, which reads the image from the clipboard as it does in its terminal.
+    box.addEventListener('paste', (e) => {
+      const cd = e.clipboardData;
+      if (!cd || cd.getData('text')) return;
+      if ([...cd.items].some((i) => i.kind === 'file')) {
+        e.preventDefault();
+        e.stopPropagation();
+        typeInto(t, '\x16', false);
+      }
+    }, true);
+    const es = new EventSource(`/api/terminals/${encodeURIComponent(it.id)}/stream?t=${encodeURIComponent(Deck.token)}`);
+    t.es = es;
+    es.addEventListener('size', (e) => {
+      const s = JSON.parse(e.data);
+      t.cols = s.cols;
+      t.rows = s.rows;
+      xterm.resize(s.cols, s.rows);
+    });
+    es.addEventListener('reset', () => xterm.reset());
+    es.addEventListener('data', (e) => xterm.write(Uint8Array.from(atob(e.data), (c) => c.charCodeAt(0))));
+    // Once the kept screen is in, fit the terminal to its box; conhost then draws it again at that size.
+    es.addEventListener('open', () => setTimeout(() => fitTerminal(t), 120));
+    t.observer = new ResizeObserver(() => {
+      clearTimeout(t.fitTimer);
+      t.fitTimer = setTimeout(() => fitTerminal(t), 80);
+    });
+    t.observer.observe(box);
+    updateTerminal(it);
+  }
+
+  function fitTerminal(t) {
+    if (S.term !== t || !t.box.isConnected || t.box.clientHeight < 40) return;
+    t.fit.fit();
+    const { cols, rows } = t.xterm;
+    if (!cols || !rows || (cols === t.cols && rows === t.rows)) return;
+    t.cols = cols;
+    t.rows = rows;
+    api('POST', `/api/terminals/${t.id}/resize`, { cols, rows }).catch(() => {});
+  }
+
+  // Keystrokes go in order, one request at a time; what's typed meanwhile goes with the next.
+  function typeInto(t, data, binary) {
+    if (binary) t.pendingBinary += data;
+    else t.pending += data;
+    pumpTerminal(t);
+  }
+
+  async function pumpTerminal(t) {
+    if (t.sending) return;
+    t.sending = true;
+    try {
+      while (t.pending || t.pendingBinary) {
+        const text = t.pending;
+        t.pending = '';
+        if (text) await api('POST', `/api/terminals/${t.id}/input`, { data: text });
+        const bytes = t.pendingBinary;
+        t.pendingBinary = '';
+        if (bytes) await api('POST', `/api/terminals/${t.id}/input`, { data: bytes, binary: true });
+      }
+    } catch (err) {
+      t.pending = '';
+      t.pendingBinary = '';
+      if (S.term === t) toast(`Couldn't send to the terminal: ${err.message}`, 'error');
+    } finally {
+      t.sending = false;
+    }
+  }
+
+  // The page's keys that a terminal here never takes: between sessions and views.
+  function isDeckKey(e) {
+    const key = e.key.toLowerCase();
+    if (e.ctrlKey && !e.altKey && !e.metaKey && key === 'tab') return true;
+    if (e.altKey && !e.ctrlKey && ['1', '2', '3', '4'].includes(e.key)) return true;
+    if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && key === 'n') return true;
+    return e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
+  }
+
+  // What the terminal does with a key: the page's keys pass it by (isDeckKey); Ctrl+Shift+C and
+  // Ctrl+Shift+V copy and paste, as terminals have them (Ctrl+C and Ctrl+V are Claude Code's);
+  // everything else is Claude Code's.
+  function termKeys(t, e) {
+    if (e.type !== 'keydown') return true;
+    if (isDeckKey(e)) return false;
+    const key = e.key.toLowerCase();
+    if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && key === 'c') {
+      e.preventDefault();
+      const sel = t.xterm.getSelection();
+      if (sel) copy(sel, 'Copied');
+      return false;
+    }
+    if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && key === 'v') {
+      e.preventDefault();
+      navigator.clipboard.readText().then((text) => { if (text) t.xterm.paste(text); }).catch(() => toast("Couldn't read the clipboard", 'error'));
+      return false;
+    }
+    return true;
+  }
+
+  // Claude Code ended, or is running again: the note under the terminal, and whether keys go in.
+  function updateTerminal(it) {
+    const t = S.term;
+    if (!t || t.id !== it.id) return;
+    const running = it.state === 'running';
+    t.xterm.options.disableStdin = !running;
+    const note = $('#focus-detail .term-ended');
+    if (!note) return;
+    note.hidden = running;
+    const sig = running ? '' : `${it.state}:${it.exitCode}:${it.launchError || ''}`;
+    if (note.dataset.sig === sig) return;
+    note.dataset.sig = sig;
+    clear(note);
+    if (running) return;
+    note.appendChild(h('span', null, it.state === 'failed' ? it.launchError || "The terminal didn't start." : `Claude Code ended${it.exitCode ? ` with exit code ${it.exitCode}` : ''}.${it.userTurns ? '' : ' No prompt was sent, so there is no conversation to resume or keep in History.'}`));
+    if (canResumeEmbedded(it)) note.appendChild(h('button', { class: 'primary small', onclick: () => resumeEmbedded(it) }, 'Resume'));
+    note.appendChild(h('button', { class: 'ghost small', onclick: () => endSession(it) }, 'Remove'));
+  }
+
+  function unmountTerminal() {
+    const t = S.term;
+    if (!t) return;
+    S.term = null;
+    clearTimeout(t.fitTimer);
+    if (t.observer) t.observer.disconnect();
+    if (t.es) t.es.close();
+    t.xterm.dispose();
+  }
+
+  // Empties the detail pane, closing the terminal shown in it, if any.
+  function clearPane(pane) {
+    unmountTerminal();
+    return clear(pane);
+  }
+
   function renderSessions() {
     renderSummary();
     renderFocus();
@@ -3142,6 +3382,7 @@
       const ta = $('#focus-detail .composer-input');
       if (ta && !ta.disabled) { ta.focus(); return; }
     }
+    if (isEmbedded(it) && S.term && S.term.id === it.id && it.state === 'running') { S.term.xterm.focus(); return; }
     const el = document.querySelector(`#focus-list [data-key="${CSS.escape(it.key)}"]`);
     if (el) el.focus();
   }
@@ -3159,8 +3400,8 @@
   async function closeSelectedChat() {
     const it = S.selected ? findItem(S.selected) : null;
     if (!it) return;
-    if (!isChat(it)) {
-      toast('Ctrl+W ends in-app chats. For this session, use End session.');
+    if (!isChat(it) && !isEmbedded(it)) {
+      toast('Ctrl+W ends sessions run here in Claude Deck. For this session, use End session.');
       return;
     }
     const flat = visibleItems().flatMap((g) => g.items);
@@ -3563,13 +3804,14 @@
     $('#l-star').setAttribute('aria-pressed', String(pinned));
     $('#l-worktree-name').disabled = !$('#l-worktree').checked;
     const where = launchWhere();
-    $('#l-go').textContent = where === 'chat' ? 'Start chat' : 'Open in terminal';
+    $('#l-go').textContent = where !== 'chat' ? 'Open in terminal' : hereIsTerminal() ? 'Start terminal' : 'Start chat';
     clearTimeout(previewTimer);
     previewTimer = setTimeout(async () => {
       try {
         const opts = launchOptions();
-        const { command } = await api('POST', '/api/preview-command', where === 'chat' ? { ...opts, prompt: '' } : opts);
-        $('#l-preview').textContent = where === 'chat' ? `${command}  (plus Claude Deck's streaming flags; the first prompt is sent as a message)` : command;
+        // A chat sends the first prompt as a message; a terminal puts it on the command line.
+        const { command } = await api('POST', '/api/preview-command', where === 'chat' && !hereIsTerminal() ? { ...opts, prompt: '' } : opts);
+        $('#l-preview').textContent = where === 'chat' && !hereIsTerminal() ? `${command}  (plus Claude Deck's streaming flags; the first prompt is sent as a message)` : command;
       } catch (err) {
         $('#l-preview').textContent = err.message;
       }
@@ -3579,6 +3821,7 @@
   async function openLaunch(prefill) {
     const dlg = $('#dlg-launch');
     $('#l-error').hidden = true;
+    $('#l-here-text').textContent = hereIsTerminal() ? "Here in Claude Deck, in a terminal with Claude Code's own interface" : 'Here in Claude Deck, so you can reply from the dashboard';
     const folders = await run("Couldn't load recent folders", () => api('GET', '/api/folders'));
     if (folders) S.folders = folders;
     const presetSel = clear($('#l-preset'));
@@ -3599,8 +3842,10 @@
     if (quickStarting) return; // held down, or pressed twice: one chat
     quickStarting = true;
     try {
-      const res = await run("Couldn't start a session", () => api('POST', '/api/chats', { mode: 'new', cwd: S.prefs.defaultFolder, color: 'slate' }));
-      if (res) openChat(res.id);
+      const res = await run("Couldn't start a session", () => api('POST', hereIsTerminal() ? '/api/terminals' : '/api/chats', { mode: 'new', cwd: S.prefs.defaultFolder, color: 'slate' }));
+      if (!res) return;
+      if (res.kind === 'embedded') openTerminal(res.id);
+      else openChat(res.id);
     } finally {
       quickStarting = false;
     }
@@ -3615,12 +3860,13 @@
     try {
       const o = launchOptions();
       const where = launchWhere();
-      const res = await api('POST', where === 'chat' ? '/api/chats' : '/api/launch', o);
+      const res = await api('POST', where !== 'chat' ? '/api/launch' : hereIsTerminal() ? '/api/terminals' : '/api/chats', o);
       store.set('lastCwd', o.cwd);
       store.set('launchWhere', where);
       $('#dlg-launch').close();
-      if (where === 'chat') openChat(res.id, !o.prompt.trim());
-      else toast('Session started in Windows Terminal');
+      if (where !== 'chat') toast('Session started in Windows Terminal');
+      else if (res.kind === 'embedded') openTerminal(res.id);
+      else openChat(res.id, !o.prompt.trim());
     } catch (err) {
       $('#l-error').textContent = err.message;
       $('#l-error').hidden = false;
@@ -4085,6 +4331,7 @@
     const res = await run("Couldn't resume", () => api('POST', '/api/history/resume', { sessionId: m.sessionId, fork, target }));
     if (!res) return;
     if (target === 'terminal') toast(fork ? 'Forked into a new tab' : 'Resumed in a new tab');
+    else if (res.kind === 'embedded') openTerminal(res.id);
     else openChat(res.id);
   }
 
@@ -4305,7 +4552,11 @@
     const presetList = h('div', { class: 'pc' }, p.presets.length ? p.presets.map((pr) => h('div', { class: 'fav' }, h('span', null, pr.name), h('button', { class: 'ghost small', onclick: async () => { await savePrefs({ presets: S.prefs.presets.filter((x) => x.name !== pr.name) }, true); renderPrefs(); } }, 'Delete'))) : h('small', { class: 'faint' }, 'Save a preset from the New session window.'));
     root.appendChild(h('section', { class: 'pref-section' },
       h('h2', null, 'New sessions'),
-      prefRow('Default folder', 'Where Ctrl+Shift+N starts a chat. New session starts here too, until you start a session somewhere else',
+      prefRow('Run here as', 'What "Here in Claude Deck" means: in New session, Ctrl+Shift+N, Resume here and Continue here',
+        h('label', { class: 'radio' }, h('input', { type: 'radio', name: 'p-here', checked: p.runHereAs === 'chat', onchange: () => savePrefs({ runHereAs: 'chat' }) }), "A chat: the dashboard's own reply box, cards for permission prompts and questions, meters, the subagents panel"),
+        h('label', { class: 'radio' }, h('input', { type: 'radio', name: 'p-here', checked: p.runHereAs === 'terminal', onchange: () => savePrefs({ runHereAs: 'terminal' }) }), "A terminal: Claude Code's own interface in a terminal in the window, with every command, dialog and key as in Claude Code"),
+        h('small', { class: 'faint' }, 'Sessions already running stay as they are. Either kind can continue as the other from its session menu.')),
+      prefRow('Default folder', 'Where Ctrl+Shift+N starts a session. New session starts here too, until you start a session somewhere else',
         h('div', { class: 'row' }, folderInput,
           // A folder chosen with Browse is saved straight away, like the other choices in Preferences.
           h('button', { class: 'ghost', onclick: async () => { const picked = await pickFolder(folderInput.value); if (picked) { folderInput.value = picked; await saveDefaultFolder(picked); } } }, 'Browse…'),
@@ -4461,6 +4712,7 @@
     }
     // Tool-call emoji are drawn either way and shown by CSS, so the toggle applies to open chats at once.
     document.documentElement.dataset.toolIcons = S.prefs.showToolIcons ? 'on' : 'off';
+    if (S.term) S.term.xterm.options.theme = termTheme();
   }
 
   function setConn(ok) {
@@ -4506,6 +4758,10 @@
     const t = e.target;
     const typing = t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]');
     const key = e.key.toLowerCase();
+    // In a terminal here, keys are Claude Code's own (Ctrl+B, Ctrl+K, Ctrl+W, Esc, / and ?); only
+    // the keys that move between sessions and views stay the page's (termKeys keeps those from
+    // the terminal too).
+    if (t && t.closest && t.closest('.term-pane') && !isDeckKey(e)) return;
     // Inside the session menu or the plugins popover, plain keys (arrows, Enter) belong to it.
     if (t && t.closest && t.closest('.hm-menu, .plugin-pop') && !e.ctrlKey && !e.altKey && !e.metaKey) return;
     if ((e.ctrlKey || e.metaKey) && key === 'k') { e.preventDefault(); openPalette(); return; }

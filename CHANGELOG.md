@@ -6,6 +6,36 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.18.0] - 2026-10-22
+
+### Added
+- **Sessions can run as terminals inside the window.** Claude Code's own terminal interface, with
+  every command, dialog and key exactly as in its terminal (`/config`, `/mcp`, `/login`, plan
+  mode, Shift+Tab, Ctrl+B, Esc Esc, image paste with Ctrl+V), drawn in the dashboard in place of
+  the chat. **Claude Deck Preferences → New sessions → Run here as** chooses what *Here in Claude
+  Deck* means: a chat (as before, the default) or a terminal; it applies to New session,
+  Ctrl+Shift+N, *Resume here* and *Continue here*. The session list, lamps, notifications,
+  History and Changes work for both. **End session** leaves the terminal listed under *Ended*
+  with its last screen, ready to **Resume** (or **Remove**), and the list survives a server
+  restart as chats do (the conversation then shows from its transcript). As in any Claude Code
+  terminal, the conversation reaches History once a prompt has been sent; a session that only
+  ran `/config` or `/mcp` has no transcript. A terminal's session menu has **Continue in Windows
+  Terminal** and **Continue as a chat**; Ctrl+W ends it (with Undo), as for a chat. In the
+  terminal, **Ctrl+Shift+C** copies the selection and **Ctrl+Shift+V** pastes; Ctrl+Tab,
+  Ctrl+Shift+N, F2 and Alt+1–4 stay Claude Deck's, every other key is Claude Code's.
+- Under the hood: the pseudo-console is Windows' own `conhost.exe --headless` (what Windows
+  Terminal uses), held by a small Windows PowerShell script (`src/pty-host.ps1`, .NET built-ins
+  only); the page draws it with xterm.js (`public/vendor/xterm`, MIT). No new executable, nothing
+  compiled, nothing installed: the managed-PC rules in CLAUDE.md still hold. Like chats, these
+  terminals end when the server stops.
+
+### Changed
+- The dashboard's content security policy now allows inline styles (`style-src 'unsafe-inline'`),
+  which xterm.js needs for its colors and cell sizes. Scripts are still only the server's own,
+  and the page still never uses `innerHTML`.
+- In the session list, a Windows Terminal tab now reads *Windows Terminal* (a terminal in the
+  window reads *Terminal*).
+
 ## [1.17.0] - 2026-10-21
 
 ### Added
@@ -497,6 +527,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.18.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.17.0...v1.18.0
 [1.17.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.14.0...v1.15.0

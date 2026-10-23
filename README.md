@@ -155,17 +155,25 @@ New to Claude Code? The first time Claude Deck opens, a two-minute guided tour l
 of the page and explains it. Take it again any time from **Claude Deck Preferences → Dashboard →
 Take the tour**, or **Ctrl+K → Take the guided tour**.
 
-Each session runs one of two ways, your choice when you start it:
+Each session runs one of three ways, your choice when you start it:
 
 - **Chat in Claude Deck** (the default). Claude runs inside Claude Deck. You read and reply in the
   dashboard, answer permission prompts and questions, stop a turn, or switch model or permission
   mode, then pick another session from the list.
+- **Terminal in Claude Deck.** Claude Code's own terminal interface, inside the dashboard window
+  in place of the chat: every command, dialog and key exactly as in its terminal (`/config`,
+  `/mcp`, `/login`, plan mode, Shift+Tab, Ctrl+B, Esc Esc, Ctrl+V for an image). The session
+  list, lamps, notifications, History and Changes work as for a chat. Choose it under **Claude
+  Deck Preferences → New sessions → Run here as**, which applies to *Here in Claude Deck* in New
+  session, Ctrl+Shift+N, *Resume here* and *Continue here*. In the terminal, **Ctrl+Shift+C**
+  copies the selection and **Ctrl+Shift+V** pastes; Ctrl+Tab, Ctrl+Shift+N, F2 and Alt+1–4 stay
+  Claude Deck's, every other key is Claude Code's.
 - **Windows Terminal tab.** The full terminal interface, one tab per session in a shared window.
   The dashboard tracks it, and **Open terminal** brings its tab forward.
 
-Either kind can switch to the other (**Continue in terminal** / **Continue here**) and keep the same
-conversation. Claude sessions you started elsewhere show up too, and **Continue here** takes them
-over.
+Any kind can switch to another (**Continue in terminal** / **Continue here** / **Continue as a
+chat**) and keep the same conversation. Claude sessions you started elsewhere show up too, and
+**Continue here** takes them over.
 
 | Area | What you get |
 | --- | --- |
@@ -181,7 +189,7 @@ over.
 | **Questions** | When Claude asks a multiple-choice question, pick one or more options or type your own answer. |
 | **Subagents** | When Claude starts a subagent, a panel opens above the conversation listing the subagents it started, from the moment each starts: type, model, time, current step, tool calls and tokens. Click one for everything it did, live: its instructions, every step with results, and token usage (input, output, cache). **Stop** ends a running one. **✕** closes the panel until another subagent starts; **Subagents** in the session menu opens it again. |
 | **Changes** | **Changes** in the session menu shows the files Claude changed in each turn, with line counts and diffs. **Restore to before this turn** puts those files back (it lists what it will do first), and **Undo** reverses the restore. The conversation itself isn't changed. |
-| **New session** | Where to run it (chat or terminal), folder (browse, pinned, recent), name, color, new or continue-latest, model, effort, permission mode, git worktree, extra folders, extra arguments and a first prompt. Shows the exact `claude` command. Save setups as presets. |
+| **New session** | Where to run it (here in Claude Deck, as a chat or a terminal per Preferences, or in a Windows Terminal tab), folder (browse, pinned, recent), name, color, new or continue-latest, model, effort, permission mode, git worktree, extra folders, extra arguments and a first prompt. Shows the exact `claude` command. Save setups as presets. |
 | **History** | Every past conversation, filed by folder: one folder per working directory, as Claude Code keeps them, most recently active first. Click a folder to open it in place and see its conversations; drag a conversation onto another folder to move it there (Claude Code's own files aren't touched, and it still resumes from the folder it was started in; a moved conversation says where it came from, with a button to put it back). The pencil at the end of a folder's line (or **F2** on it) gives the folder a name in History, such as *Client work* for a long path; the folder on disk keeps its own name, and an empty name shows the path again. **List** shows everything in one list by day instead; the choice is remembered. Search and the folder filter work in both, and find folders by their names too. Drag the line between the list and the preview to make the list wider or narrower, as in Sessions (double-click it to go back to the usual width). Preview a conversation, then **Resume here**, **Resume in terminal** or **Fork a copy**. The trash button deletes a conversation you don't need (with **Undo**; open conversations can't be deleted). |
 | **Plan usage** | On the bar across the top: your current session and weekly limits, the same numbers as `/usage` in Claude Code. Click for every limit and reset time. **Most tokens this week**, at the bottom of that dropdown, lists the conversations that used the most (subagents included) since your plan's weekly limit reset, or in the last 7 days; **Show all** lists every one. |
 | **Notifications** | A desktop notification (and optional chime) when a session needs you or finishes. The taskbar icon's mascot sweats while anything is working and gets an amber dot when a session needs you. |
@@ -203,7 +211,8 @@ Press **?** in Claude Deck for this list.
 | **↑** / **↓** in an empty reply box | Take queued messages back to edit; otherwise step through your earlier messages |
 | **Ctrl+Enter**, or **Ctrl+X** then **Ctrl+S** | Send now: while Claude works, it takes your message next (Claude Code's send-now key) |
 | **Ctrl+Tab** / **Ctrl+Shift+Tab** | Next / previous session, even while typing a reply |
-| **Ctrl+W** | End the selected chat (with Undo). On an ended chat, remove it. Asks first if Claude is mid-task. |
+| **Ctrl+W** | End the selected chat or terminal in the window (with Undo). On an ended one, remove it. Asks first if Claude is mid-task. |
+| **Ctrl+Shift+C** / **Ctrl+Shift+V** in a terminal here | Copy the selection / paste. Every other key in the terminal is Claude Code's own, except Ctrl+Tab, Ctrl+Shift+N, F2 and Alt+1–4 |
 | **Ctrl+K** | Search sessions, history and commands |
 | **/** | Filter |
 | **Alt+1** … **Alt+4** | Sessions, History, Claude Code Settings, Claude Deck Preferences |

@@ -4,6 +4,7 @@
 // Sources, all local files:
 //   <claudeDir>/sessions/<pid>.json  written by Claude Code: status busy | idle | waiting (+ waitingFor)
 //   <dataDir>/tabs/<id>.json         written by tab-host.js: which Claude pid runs in which tab
+//   src/terminals.js                 terminals in the window: which Claude pid runs in which
 //   transcripts                      titles, last prompt, branch (via HistoryIndex)
 
 const fs = require('fs');
@@ -57,11 +58,12 @@ class Live extends EventEmitter {
     return state === 'exited' && meta && meta.updatedAt ? meta.updatedAt : since;
   }
 
-  constructor({ registry, history, chats }) {
+  constructor({ registry, history, chats, terminals }) {
     super();
     this.registry = registry;
     this.history = history;
     this.chats = chats || null;
+    this.terminals = terminals || null;
     this.state = { sessions: [], external: [], updatedAt: 0 };
     this.prevStatus = new Map(); // deck id -> { status, state }
     // Claude processes of Claude Deck's own that aren't sessions (the model probe), by pid: they
@@ -71,8 +73,9 @@ class Live extends EventEmitter {
     this.ticking = false;
     this.again = false;
     this.watchers = [];
-    // Chat changes are pushed, not polled, so the session list reacts at once.
+    // Chat and terminal changes are pushed, not polled, so the session list reacts at once.
     if (this.chats) this.chats.on('change', () => this.poke(30));
+    if (this.terminals) this.terminals.on('change', () => this.poke(30));
   }
 
   poke(delay = 150) {
@@ -128,7 +131,7 @@ class Live extends EventEmitter {
     try {
       await this.history.refreshIfOlderThan(2500);
       // Subagents' token usage, for the terminal and outside sessions shown (chats get theirs from Claude).
-      const shown = [...this.state.sessions.filter((s) => s.kind === 'terminal'), ...this.state.external];
+      const shown = [...this.state.sessions.filter((s) => s.kind !== 'chat'), ...this.state.external];
       await this.history.refreshSubagents(shown.map((s) => s.sessionId).filter(Boolean));
       this._compute();
     } catch (err) {
@@ -196,6 +199,35 @@ class Live extends EventEmitter {
       this._transition(entry, view);
     }
 
+    // Terminals in the window. Claude's status comes from its own record, found by the pid the
+    // host reported, or failing that by the conversation's id (a record is claimed only once).
+    if (this.terminals) {
+      for (const t of this.terminals.list()) {
+        let rec = t.claudePid ? records.get(t.claudePid) || null : null;
+        if (!rec && t.sessionId && t.state === 'running') rec = [...records.values()].find((r) => r.sessionId === t.sessionId && !claimed.has(r.pid)) || null;
+        if (rec) {
+          claimed.add(rec.pid);
+          this.terminals.learn(t.id, { claudePid: rec.pid, sessionId: rec.sessionId });
+        }
+        const sessionId = (rec && rec.sessionId) || t.sessionId || null;
+        const meta = sessionId ? this.history.get(sessionId) : null;
+        const status = t.state === 'running' ? (rec ? rec.status || 'idle' : 'starting') : null;
+        const view = {
+          ...t,
+          status,
+          waitingFor: rec && rec.status === 'waiting' ? rec.waitingFor || 'input needed' : null,
+          statusSince: Live.endedSince(t.state, meta, rec ? rec.statusUpdatedAt || rec.updatedAt || t.statusSince : t.statusSince),
+          sessionId,
+          claudePid: rec ? rec.pid : t.claudePid,
+          transcriptStamp: sessionId ? this.history.stamp(sessionId) : null,
+          ...describe(meta),
+          tokens: sessionId ? this.history.tokensFor(sessionId) : null,
+        };
+        sessions.push(view);
+        this._transition(t, view);
+      }
+    }
+
     if (this.chats) {
       for (const c of this.chats.list()) {
         if (c.pid) claimed.add(c.pid);
@@ -215,11 +247,11 @@ class Live extends EventEmitter {
         sessions.push(view);
         this._transition(c, view);
       }
-      // Chats that were ended disappear from the list; forget their last status too.
-      const live = new Set(this.chats.list().map((c) => c.id));
-      for (const id of this.prevStatus.keys()) {
-        if (!live.has(id) && !this.registry.get(id)) this.prevStatus.delete(id);
-      }
+    }
+    // Chats and terminals that were ended disappear from the list; forget their last status too.
+    const listed = new Set(sessions.map((s) => s.id));
+    for (const id of this.prevStatus.keys()) {
+      if (!listed.has(id)) this.prevStatus.delete(id);
     }
 
     const external = [];

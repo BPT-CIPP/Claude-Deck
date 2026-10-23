@@ -7,7 +7,11 @@
   <link rel="icon" id="favicon" href="icons/icon-192.png">
   <link rel="manifest" href="manifest.webmanifest">
   <meta name="theme-color" content="#44524b">
+  <link rel="stylesheet" href="vendor/xterm/xterm.css">
   <link rel="stylesheet" href="app.css">
+  <!-- xterm.js (MIT, vendor/xterm/LICENSE): the terminal in the window, for sessions run as terminals here. -->
+  <script src="vendor/xterm/xterm.js" defer></script>
+  <script src="vendor/xterm/addon-fit.js" defer></script>
   <script src="lib.js" defer></script>
   <script src="markdown.js" defer></script>
   <script src="pasted-text.js" defer></script>
@@ -153,7 +157,7 @@
       <div class="grid-2">
         <fieldset class="field">
           <legend>Run it</legend>
-          <label class="radio"><input type="radio" name="l-where" value="chat" checked> Here in Claude Deck, so you can reply from the dashboard</label>
+          <label class="radio"><input type="radio" name="l-where" value="chat" checked> <span id="l-here-text">Here in Claude Deck, so you can reply from the dashboard</span></label>
           <label class="radio"><input type="radio" name="l-where" value="terminal"> In a Windows Terminal tab</label>
         </fieldset>
         <fieldset class="field">
@@ -238,6 +242,7 @@
         <dt><kbd>Enter</kbd> in a reply</dt><dd>Send (queued while Claude works). <kbd>Shift Enter</kbd> adds a line, <kbd>/</kbd> lists commands</dd>
         <dt><kbd>Ctrl Enter</kbd>, or <kbd>Ctrl X</kbd> then <kbd>Ctrl S</kbd></dt><dd>Send now, as in Claude Code: while Claude works, it takes this message next instead of after the turn</dd>
         <dt><kbd>↑</kbd> <kbd>↓</kbd> in an empty reply</dt><dd>Take queued messages back to edit; otherwise step through your earlier messages</dd>
+        <dt>In a terminal here</dt><dd>Keys are Claude Code's own, as in its terminal. <kbd>Ctrl Shift C</kbd> copies the selection, <kbd>Ctrl Shift V</kbd> pastes; <kbd>Ctrl Tab</kbd>, <kbd>Ctrl Shift N</kbd>, <kbd>F2</kbd> and <kbd>Alt 1–4</kbd> stay Claude Deck's</dd>
         <dt><kbd>/</kbd></dt><dd>Filter</dd>
         <dt><kbd>Alt 1–4</kbd></dt><dd>Sessions, History, Claude Code Settings, Claude Deck Preferences</dd>
         <dt><kbd>Ctrl S</kbd></dt><dd>Save settings</dd>

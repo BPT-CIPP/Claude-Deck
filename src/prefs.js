@@ -25,6 +25,7 @@ const DEFAULTS = Object.freeze({
   showExternal: true,          // show Claude sessions running outside Claude Deck
   stopWhenClosed: true,        // stop the local server a while after the dashboard window closes
   allowApiBilling: false,      // start sessions that would bill an API or cloud account (src/billing.js)
+  runHereAs: 'chat',           // what "here in Claude Deck" starts: 'chat' (stream-json, the dashboard's own reply box) or 'terminal' (Claude Code's own interface in a terminal in the window)
 });
 
 // Each theme is a :root[data-theme] block in public/app.css; labels are in public/app.js.
@@ -37,6 +38,7 @@ const FONTS = ['default', 'segoe', 'aptos', 'calibri', 'verdana', 'tahoma', 'tre
 
 const ENUMS = {
   windowMode: ['single', 'perSession'],
+  runHereAs: ['chat', 'terminal'],
   theme: THEMES,
   fontText: FONTS,
   fontLabels: FONTS,

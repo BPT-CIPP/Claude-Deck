@@ -35,4 +35,9 @@ function tabsDir() {
   return path.join(dataDir(), 'tabs');
 }
 
-module.exports = { claudeDir, globalConfigFile, projectsDir, sessionsDir, dataDir, tabsDir };
+// Launch specs for terminals in the window (src/terminals.js), each removed when its run ends.
+function terminalsDir() {
+  return path.join(dataDir(), 'terminals');
+}
+
+module.exports = { claudeDir, globalConfigFile, projectsDir, sessionsDir, dataDir, tabsDir, terminalsDir };
