@@ -178,8 +178,10 @@ when you start it:
 - **Inlaid CLI.** Claude Code's own terminal interface, inside the dashboard window in place of
   the chat: every command, dialog and key exactly as in its terminal (`/config`, `/mcp`,
   `/login`, plan mode, Shift+Tab, Ctrl+B, Esc Esc, Ctrl+V for an image). The session list, lamps,
-  notifications, History and Changes work as for a native chat. In the CLI, **Ctrl+Shift+C**
-  copies the selection and **Ctrl+Shift+V** pastes; Ctrl+Tab, Ctrl+Shift+N, F2 and Alt+1–4 stay
+  notifications, History and Changes work as for a native chat. In the CLI, drag over text to
+  copy it (Claude Code selects it and copies it when you let go, as in its terminal; turn that off
+  in `/config`). Shift+drag selects without Claude Code, then **Ctrl+Shift+C** copies that
+  selection; **Ctrl+Shift+V** pastes. Ctrl+Tab, Ctrl+Shift+N, F2 and Alt+1–4 stay
   Claude Deck's, every other key is Claude Code's. A big paste takes a moment: Windows' console
   takes pasted text at about 10 KB a second (as in Windows Terminal), and Claude Code shows it
   once it's all in; a note says it's on its way. For very large pastes, a native chat takes them
@@ -232,7 +234,7 @@ Press **?** in Claude Deck for this list.
 | **Ctrl+Enter**, or **Ctrl+X** then **Ctrl+S** | Send now: while Claude works, it takes your message next (Claude Code's send-now key) |
 | **Ctrl+Tab** / **Ctrl+Shift+Tab** | Next / previous session, even while typing a reply |
 | **Ctrl+W** | End the selected chat or terminal in the window (with Undo). On an ended one, remove it. Asks first if Claude is mid-task. |
-| **Ctrl+Shift+C** / **Ctrl+Shift+V** in a terminal here | Copy the selection / paste. Every other key in the terminal is Claude Code's own, except Ctrl+Tab, Ctrl+Shift+N, F2 and Alt+1–4 |
+| **Ctrl+Shift+C** / **Ctrl+Shift+V** in a terminal here | Copy a Shift+drag selection / paste (a plain drag is copied by Claude Code itself). Every other key in the terminal is Claude Code's own, except Ctrl+Tab, Ctrl+Shift+N, F2 and Alt+1–4 |
 | **Ctrl+K** | Search sessions, history and commands |
 | **/** | Filter |
 | **Alt+1** … **Alt+4** | Sessions, History, Claude Code Settings, Claude Deck Preferences |

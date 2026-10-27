@@ -3227,8 +3227,32 @@
     const fit = new FitAddon.FitAddon();
     xterm.loadAddon(fit);
     xterm.open(box);
-    const t = { id: it.id, xterm, fit, box, es: null, cols: it.cols, rows: it.rows, pending: '', pendingBinary: '', sending: false, fitTimer: null, observer: null };
+    const t = { id: it.id, xterm, fit, box, es: null, cols: it.cols, rows: it.rows, pending: '', pendingBinary: '', sending: false, fitTimer: null, observer: null, live: false };
     S.term = t;
+    // Claude Code asks for its mouse modes again with every focus report, lowest first (?1000h
+    // ?1002h ?1003h). xterm.js keeps a single mouse mode, so ?1000h drops it to clicks only for a
+    // moment, and that ends a drag in progress: the first drag after clicking into the terminal
+    // reached Claude Code as a click and a release, so it selected and copied nothing. Real
+    // terminals treat the modes as separate switches, the highest one on winning; so here too a
+    // lower mode asked for while a higher one is on changes nothing (docs/CLAUDE-CODE-INTERNALS.md).
+    const MOUSE_MODES = { 1000: 1, 1002: 2, 1003: 3 };
+    const MOUSE_NOW = { none: 0, x10: 0, vt200: 1, drag: 2, any: 3 };
+    xterm.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) =>
+      params.length > 0 && params.every((p) => MOUSE_MODES[p] && MOUSE_MODES[p] < MOUSE_NOW[xterm.modes.mouseTrackingMode]));
+    // Claude Code copies a selection two ways: PowerShell's Set-Clipboard (which it gives 2
+    // seconds to start) and OSC 52, asking the terminal to do it, as Windows Terminal does. This
+    // does it too, so a copy lands even when PowerShell is slow. Only writes: a request to read
+    // the clipboard ("?") gets no answer. Not while the kept screen is replayed (t.live), or
+    // opening the terminal would copy an old selection again.
+    xterm.parser.registerOscHandler(52, (data) => {
+      const i = data.indexOf(';'); // "c;<base64>": which clipboard, then the text
+      const payload = i === -1 ? '' : data.slice(i + 1);
+      if (!t.live || !payload || payload === '?') return true;
+      let text = '';
+      try { text = new TextDecoder().decode(Uint8Array.from(atob(payload), (c) => c.charCodeAt(0))); } catch { return true; }
+      if (text) copy(text, 'Copied');
+      return true;
+    });
     xterm.onData((d) => typeInto(t, d, false));
     xterm.onBinary((d) => typeInto(t, d, true));
     xterm.attachCustomKeyEventHandler((e) => termKeys(t, e));
@@ -3251,7 +3275,9 @@
       t.rows = s.rows;
       xterm.resize(s.cols, s.rows);
     });
-    es.addEventListener('reset', () => xterm.reset());
+    es.addEventListener('reset', () => { t.live = false; xterm.reset(); });
+    // Everything kept has been sent: live once xterm.js has worked through it (writes are queued).
+    es.addEventListener('live', () => xterm.write('', () => { t.live = true; }));
     es.addEventListener('data', (e) => xterm.write(Uint8Array.from(atob(e.data), (c) => c.charCodeAt(0))));
     // Once the kept screen is in, fit the terminal to its box; conhost then draws it again at that size.
     es.addEventListener('open', () => setTimeout(() => fitTerminal(t), 120));

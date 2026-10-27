@@ -334,6 +334,21 @@ src/pty-host.ps1), checked against 2.1.303:
   keyboard protocol (`CSI ? u`) and, once past its dialogs, switches to the alternate screen
   (`?1049 h`). xterm.js answers none of the Windows-only ones, and conhost then takes plain VT
   input (arrows as `CSI B`, Enter as CR, Ctrl+C as 0x03), which is what works.
+- ✅ **It asks for its mouse modes again on every focus report** (2.1.311, 2026-10-27): when the
+  terminal reports focus coming back (`CSI I`, which xterm.js sends with the click into it), it
+  answers `CSI ?2004h ?1000h ?1002h ?1003h ?1006h`, lowest mouse mode first. xterm.js keeps one
+  mouse mode, not three switches, so `?1000h` drops it to clicks only until `?1003h` arrives, and
+  that removes the drag listener of a drag already under way. The first drag after clicking into
+  the terminal then reached Claude Code as a press and a release with no motion between, so it
+  selected nothing. `public/app.js` ignores a lower mouse mode asked for while a higher one is on,
+  as terminals that keep them as separate switches effectively do.
+- ✅ **Copying: Claude Code selects and copies by itself.** A drag highlights the text and, on
+  release, copies it (status line: `copied N chars to clipboard · disable auto-copy in /config`;
+  `copyOnSelect` in `.claude.json`). Its code (2.1.309) copies two ways at once: PowerShell's
+  `Set-Clipboard` (`powershell -NoProfile -NonInteractive -Command ...`, given 2 seconds) and an
+  OSC 52 write to the terminal (`ESC ] 52 ; c ; <base64> BEL`). xterm.js ignores OSC 52 unless
+  told otherwise; `public/app.js` handles it (writes only, never reads), but not while kept output
+  is replayed: the stream's `live` event (`src/terminals.js` attach) marks where replay ends.
 - ✅ Resizing is the ConPTY signal pipe (`--signal`, three little-endian words: 8, columns, rows);
   conhost answers with `CSI 8 ; rows ; cols t` and draws the whole screen again, so the page can
   replay kept output at the old size and then resize.

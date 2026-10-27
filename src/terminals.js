@@ -310,13 +310,15 @@ class TerminalManager extends EventEmitter {
 
   // ---- the page's side -----------------------------------------------------------------------
   // A page's event stream for this terminal: the size conhost draws at, everything drawn so far
-  // (so the page shows the screen as it is), then each new piece as it comes. Returns a function
-  // that stops the stream.
+  // (so the page shows the screen as it is), "live" once that's all sent, then each new piece as
+  // it comes. Returns a function that stops the stream. The page acts on some output only when
+  // it's live: a clipboard write from earlier (OSC 52) mustn't be done again on every reconnect.
   attach(id, res) {
     const term = this._get(id);
     res.write(`event: size\ndata: ${JSON.stringify({ cols: term.cols, rows: term.rows })}\n\n`);
     res.write('event: reset\ndata: {}\n\n');
     if (term.scrollback.length) res.write(`event: data\ndata: ${Buffer.concat(term.scrollback).toString('base64')}\n\n`);
+    res.write('event: live\ndata: {}\n\n');
     if (!term.host) res.write(`event: exit\ndata: ${JSON.stringify({ exitCode: term.exitCode })}\n\n`);
     term.clients.add(res);
     return () => term.clients.delete(res);

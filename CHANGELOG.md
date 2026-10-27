@@ -33,6 +33,14 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   npm, but it read like your Claude sign-in. Claude Code gives npm 5 seconds to name the newest
   version, and npm's first run in a while can take far longer, so Claude Deck now tries up to three
   times, and if it still fails says what happened. Other failures show the line that names the error.
+- **Copying from the Inlaid CLI works.** Dragging over text did nothing: when you click into the
+  terminal, Claude Code switches its mouse modes on again, and the terminal briefly dropped back
+  to clicks only, losing the drag. Claude Code saw a click and a release, so it selected and copied
+  nothing. A drag now reaches it, it highlights the text and copies it when you let go ("copied N
+  chars to clipboard"), and Claude Deck says **Copied**. Claude Deck also takes Claude Code's
+  request to set the clipboard itself (as Windows Terminal does), so the copy lands even when the
+  PowerShell copy Claude Code also tries is too slow; reopening a terminal never copies again
+  what was copied before. Shift+drag still selects without Claude Code, for **Ctrl+Shift+C**.
 
 ## [1.19.1] - 2026-10-23
 
