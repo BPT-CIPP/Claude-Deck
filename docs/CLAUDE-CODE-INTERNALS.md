@@ -84,6 +84,18 @@ Read from Claude Code 2.1.308's own code (the JavaScript bundled in `claude.exe`
   `claude update` prints in that case wasn't seen; `src/server.js` matches EBUSY, EPERM and
   "locked".
 - ✅ `claude update` (or `upgrade`) checks and installs in one go; there's no check-only option.
+- ✅ **On an npm install, `claude update` asks npm for the newest version and gives it 5 seconds**
+  (read from 2.1.309's bundled code, 2026-10-27): it runs `npm view @anthropic-ai/claude-code@latest
+  version --prefer-online` (`@stable` on the stable channel) with a 5 s timeout. If npm fails or
+  takes longer, it exits 1 having installed nothing, printing to stderr `Failed to check for
+  updates`, `Unable to fetch latest version from npm registry`, a list of possible causes, and a
+  "Try:" list whose **last line is `• Check if you need to login: npm whoami`**. That's about npm,
+  not Claude's sign-in, but shown alone it reads like one (Claude Deck once showed only the last
+  line). Measured on a managed Windows 11 PC the same day: npm's first `npm view` took **21.2 s**,
+  the next two 1.8 s and 1.9 s, so the first update of the day can fail this way and a retry
+  succeeds. `src/server.js` runs `claude update` up to three times when it fails like this, and
+  `src/claude-locate.js` `updateFailure` picks out the reason. The native installer's path doesn't
+  use npm; it fails with `Error: Failed to install native update` and the error on the next line.
 - ✅ npm's `https://registry.npmjs.org/-/package/@anthropic-ai/claude-code/dist-tags` lists the
   release channels: `{ latest, stable, next }`. `autoUpdatesChannel` in settings picks `latest`
   (the default) or `stable`. Claude Deck reads this to say a newer version is out; Claude Code

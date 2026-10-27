@@ -40,4 +40,9 @@ function terminalsDir() {
   return path.join(dataDir(), 'terminals');
 }
 
-module.exports = { claudeDir, globalConfigFile, projectsDir, sessionsDir, dataDir, tabsDir, terminalsDir };
+// Claude Deck's own log (src/log.js), kept to a few files.
+function logsDir() {
+  return path.join(dataDir(), 'logs');
+}
+
+module.exports = { claudeDir, globalConfigFile, projectsDir, sessionsDir, dataDir, tabsDir, terminalsDir, logsDir };

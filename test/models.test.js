@@ -9,7 +9,7 @@ const { sandbox } = require('./helpers');
 const box = sandbox();
 const models = require('../src/models');
 const { MODEL_ALIASES } = require('../src/launcher');
-const { autoUpdateStatus, locateClaude, compareVersions, latestRelease, binaryStamp } = require('../src/claude-locate');
+const { autoUpdateStatus, locateClaude, compareVersions, latestRelease, binaryStamp, updateFailure } = require('../src/claude-locate');
 
 test('versions compare as numbers, read from what claude --version prints', () => {
   assert.ok(compareVersions('2.1.309', '2.1.308 (Claude Code)') > 0);
@@ -27,6 +27,17 @@ test("the newest release is the one on Claude Code's own update channel", async 
   assert.strictEqual(await latestRelease('beta', { fetcher }), null, 'a channel npm has no tag for');
   assert.strictEqual(await latestRelease('latest', { fetcher: async () => ({ latest: 'soon' }) }), null, 'not a version');
   await assert.rejects(latestRelease('latest', { fetcher: async () => { throw new Error('offline'); } }), /offline/);
+});
+
+test("a failed claude update gives its reason, not its last line of advice", () => {
+  // What 2.1.309 prints when npm doesn't name the newest version in the 5 seconds it allows. The
+  // last line once became the whole error ("check if you need to login"), read as Claude's sign-in.
+  const npmSlow = 'Current version: 2.1.309\nChecking for updates to latest version...\n\x1b[31mFailed to check for updates\x1b[39m\nUnable to fetch latest version from npm registry\n\nPossible causes:\n  • Network connectivity issues\n\nTry:\n  • Check your internet connection\n  • Check if you need to login: npm whoami';
+  assert.deepStrictEqual(updateFailure(npmSlow), { npmLookup: true, reason: "Claude Code couldn't get the newest version number from npm in time" });
+  const native = 'Current version: 2.1.309\nChecking for updates to latest version...\nError: Failed to install native update\nchecksum mismatch\nTry running "claude doctor" for diagnostics';
+  assert.deepStrictEqual(updateFailure(native), { npmLookup: false, reason: 'Error: Failed to install native update' });
+  assert.deepStrictEqual(updateFailure('something else went wrong\n'), { npmLookup: false, reason: 'something else went wrong' });
+  assert.deepStrictEqual(updateFailure(''), { npmLookup: false, reason: 'no reason given' });
 });
 
 test("a file's stamp changes when the file does, and is null when it's missing", () => {

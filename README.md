@@ -314,6 +314,28 @@ task so it runs with no window.
 **A new model isn't in the model menu.** The menu lists what your Claude Code offers. Update Claude
 Code (**Claude Deck Preferences → Claude Code → Update Claude Code now**), then open the menu again.
 
+**MCP servers often show as failed in chats ("connection timed out after 30000ms").** Claude Code
+gives each MCP server 30 seconds to start. Servers run through `npx` or `uvx` (especially with
+`@latest`, which asks the registry every time) can take longer, most often on the first start in
+a while. A sign-in task set up by an earlier Claude Deck made it worse: it ran the server, and so every chat
+and MCP server, at Windows' background priority (low CPU, disk and memory priority). Claude Deck
+asks to fix it when its window opens (and **Claude Deck Preferences → Taskbar app** offers **Update
+the task**); then sign out of Windows and back in (Restart server keeps the old priority). Until you
+do, it reminds you once per window. Reconnect a server from a chat's **MCP servers** menu.
+To give servers longer, set `MCP_TIMEOUT` (milliseconds) in Claude Code's settings `env`.
+
+**Update Claude Code says npm didn't answer in time.** `claude update` gives npm 5 seconds to name
+the newest version, and npm's first run in a while can take longer. Claude Deck tries three times;
+if all three time out, wait a few minutes and try again, or run `claude update` in PowerShell. This
+has nothing to do with your Claude sign-in, whatever Claude Code's own hint about `npm whoami` says.
+
+**Something went wrong and you want to know why.** Claude Deck keeps a log: **Claude Deck
+Preferences → Dashboard → Data folder → Open**, then `logs\claude-deck.log` (older entries in
+`claude-deck.1.log` to `.3.log`; about 4 MB at most). It has the server's starts and stops, errors,
+Claude Code version changes, and everything **Update Claude Code now** printed. It holds Claude
+Deck's own messages, not your conversations, and leaves out Claude Deck's access token; errors can
+name folders and files, so read it over before attaching it to an issue.
+
 **The window says "Claude Deck isn't running".** Start it with the **Start Claude Deck** shortcut,
 then choose **Try again**. To see the server's own messages, run
 `powershell -ExecutionPolicy Bypass -File .\Start-ClaudeDeck.ps1 -Foreground` (Ctrl+C stops it).

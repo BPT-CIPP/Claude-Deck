@@ -89,6 +89,8 @@ src/models.js           the model menus: Claude Code's own model list (versions)
 src/claude-locate.js    finds claude.exe; its version (and its file's stamp, to notice an update), auto-update
                         status, the newest release on npm, and `claude update`
 src/claude-config.js    a chat's Config window: Claude Code's /config options (its own list), current values (read only)
+src/log.js              Claude Deck's own log (data folder\logs, 1 MB a file, 3 older kept): what the server
+                        prints, mirrored with the time; the dashboard token is left out
 src/prefs.js, registry.js, paths.js, util.js
 public/                 index.html, app.css, lib.js, markdown.js, pasted-text.js, app.js, settings-ui.js,
                         tour.js, spinner-verbs.js, tick-worker.js, manifest.webmanifest, sw.js, offline.html, icons/, vendor/

@@ -173,6 +173,30 @@ test('History files each conversation under its folder, and a move is remembered
   assert.deepStrictEqual(r.body.folderNames, {});
 });
 
+test('Update Claude Code tries again when npm was too slow, says so if it stays slow, and logs what Claude Code printed', async () => {
+  const fs = require('fs');
+  const { port } = JSON.parse(fs.readFileSync(path.join(box.dataDir, 'runtime.json'), 'utf8'));
+  const token = JSON.parse(fs.readFileSync(path.join(box.dataDir, 'secret.json'), 'utf8')).token;
+  const update = () => fetch(`http://127.0.0.1:${port}/api/claude/update`, { method: 'POST', headers: { 'x-deck-token': token } }).then((r) => r.json());
+  const slowRuns = (n) => fs.writeFileSync(path.join(box.claudeDir, 'fake-update.json'), JSON.stringify({ npmSlowRuns: n }));
+  const logged = () => fs.readFileSync(path.join(box.dataDir, 'logs', 'claude-deck.log'), 'utf8');
+
+  slowRuns(1); // slow once, then fine: the second try updates
+  let res = await update();
+  assert.deepStrictEqual([res.ok, res.npmLookup, res.reason], [true, false, null]);
+  assert.match(logged(), /attempt 1: failed\n {4}Current version: 0\.0\.0[\s\S]*Check if you need to login: npm whoami[\s\S]*attempt 2: finished/);
+
+  slowRuns(5); // slow every time: three tries, then the reason
+  res = await update();
+  assert.deepStrictEqual([res.ok, res.npmLookup, res.locked], [false, true, false]);
+  assert.strictEqual(res.reason, "Claude Code couldn't get the newest version number from npm in time");
+  assert.match(logged(), /attempt 3: failed/);
+  assert.doesNotMatch(logged(), /attempt 4/);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(box.claudeDir, 'fake-update.json'), 'utf8')).npmSlowRuns, 2, 'ran three times');
+  assert.doesNotMatch(logged(), new RegExp(token), "the install's token is never logged");
+  assert.match(logged(), /Claude Deck \d+\.\d+\.\d+ starting/);
+});
+
 test('restart hands over to a new server on the same port, exiting as "another copy is serving"', async () => {
   const fs = require('fs');
   const runtime = () => JSON.parse(fs.readFileSync(path.join(box.dataDir, 'runtime.json'), 'utf8'));

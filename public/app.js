@@ -1440,15 +1440,23 @@
     }
   }
 
+  // When a message was sent or written, shown at its top right; the full date and time on hover.
+  // Yours sits in the "You" label's line (with a Queued or Not delivered tag before it); Claude's
+  // floats beside the reply's first line.
+  function msgTime(ts) {
+    return ts ? h('time', { class: 'msg-time', datetime: new Date(ts).toISOString(), title: new Date(ts).toLocaleString() }, when(ts)) : null;
+  }
+
   function transcriptNode(m) {
     if (m.kind === 'user') {
       const onlyImages = /^\[\d+ images?\]$/.test(m.text);
-      return h('div', { class: 'msg msg-user', title: m.ts ? when(m.ts) : null },
+      return h('div', { class: 'msg msg-user' },
+        m.ts ? h('div', { class: 'msg-head' }, msgTime(m.ts)) : null,
         m.images ? h('div', { class: 'faint small' }, `${m.images} image${m.images === 1 ? '' : 's'} attached`) : null,
         onlyImages ? null : h('div', { class: 'msg-text' }, m.text));
     }
     if (m.kind === 'assistant') {
-      const div = h('div', { class: 'msg msg-assistant' });
+      const div = h('div', { class: 'msg msg-assistant' }, msgTime(m.ts));
       div.appendChild(richText(m.text));
       return div;
     }
@@ -1974,16 +1982,18 @@
       case 'user': {
         // Taken back out of the queue to edit (↑): it's in the reply box now, not the conversation.
         if (it.withdrawn) return h('div', { dataset: { n }, hidden: true });
-        const node = h('div', { class: `msg msg-user${it.queued ? ' queued' : ''}`, dataset: { n }, title: when(it.ts) });
-        if (it.queued) node.appendChild(h('span', { class: 'msg-tag waiting', title: 'Claude reads this when it finishes what it is doing now. Press ↑ in an empty reply box to take it back and edit it.' }, 'Queued'));
-        else if (it.undelivered) node.appendChild(h('span', { class: 'msg-tag ended', title: 'The chat ended before Claude read this message' }, 'Not delivered'));
+        const node = h('div', { class: `msg msg-user${it.queued ? ' queued' : ''}`, dataset: { n } });
+        node.appendChild(h('div', { class: 'msg-head' },
+          it.queued ? h('span', { class: 'msg-tag waiting', title: 'Claude reads this when it finishes what it is doing now. Press ↑ in an empty reply box to take it back and edit it.' }, 'Queued')
+            : it.undelivered ? h('span', { class: 'msg-tag ended', title: 'The chat ended before Claude read this message' }, 'Not delivered') : null,
+          msgTime(it.ts)));
         if (it.images && it.images.length) node.appendChild(h('div', { class: 'msg-images' }, it.images.map((src) => h('img', { src, alt: 'Attached image', class: 'msg-thumb' }))));
         else if (it.imageCount) node.appendChild(h('div', { class: 'faint small' }, `${it.imageCount} image${it.imageCount === 1 ? '' : 's'} attached`));
         if (it.text && it.text.trim()) node.appendChild(h('div', { class: 'msg-text' }, it.pasted ? pastedPieces(it) : it.text));
         return node;
       }
       case 'assistant': {
-        const div = h('div', { class: 'msg msg-assistant', dataset: { n } });
+        const div = h('div', { class: 'msg msg-assistant', dataset: { n } }, msgTime(it.ts));
         div.appendChild(richText(it.text));
         return div;
       }
@@ -4491,7 +4501,11 @@
       body.appendChild(installRow);
       body.appendChild(prefRow('Start with Windows', 'A scheduled task keeps the server running in the background while you are signed in, and restarts it if it crashes',
         h('label', { class: 'check' }, startup, 'Start the Claude Deck server when I sign in'),
-        h('small', { class: 'faint' }, 'Stop server now (under Dashboard) still stops it until you next sign in or start Claude Deck yourself.')));
+        h('small', { class: 'faint' }, 'Stop server now (under Dashboard) still stops it until you next sign in or start Claude Deck yourself.'),
+        info.taskLowPriority ? h('div', { class: 'row' },
+          h('small', null, PRIORITY_TASK_TEXT),
+          h('button', { class: 'ghost', style: { flex: 'none' }, onclick: (e) => { e.currentTarget.disabled = true; updateTaskPriority(); } }, 'Update the task'))
+          : info.serverLowPriority && info.resident ? h('small', null, PRIORITY_SIGN_OUT_TEXT) : null));
     }).catch((err) => { clear(body).appendChild(h('small', { class: 'faint' }, `Couldn't check the app status: ${err.message}`)); });
     return section;
   }
@@ -4522,7 +4536,10 @@
       S.boot.claude = res.claude;
       const changed = res.claude.version !== res.before;
       if (res.locked) toast("Claude Code couldn't replace its program while sessions are using it. End your open chats and CLI sessions (or Restart server in Claude Deck Preferences), then update again.", 'error', { ms: 15000 });
-      else if (!res.ok) toast(`Claude Code couldn't update: ${res.output.split('\n').pop()}`, 'error');
+      // npm, which Claude Code asks for the newest version, was too slow three times: nothing to do
+      // with signing in, whatever Claude Code's own last line suggests (src/claude-locate.js).
+      else if (res.npmLookup) toast("Claude Code couldn't get the newest version number from npm in time, after three tries, so it didn't update. Your Claude sign-in isn't the problem. Try again in a few minutes, or run claude update in PowerShell. Claude Code's full output is in Claude Deck's log (Preferences → Data folder → logs).", 'error', { ms: 20000 });
+      else if (!res.ok) toast(`Claude Code couldn't update: ${res.reason}. Claude Code's full output is in Claude Deck's log (Preferences → Data folder → logs).`, 'error', { ms: 15000 });
       else if (changed) toast(`Claude Code updated to ${versionNumber(res.claude.version)}. Resume open chats to use it.`);
       // npm has a newer one than Claude Code installed: Anthropic releases each version gradually.
       else if (res.claude.updateAvailable) toast(`Claude Code says ${versionNumber(res.claude.version)} is the newest for this PC for now. Anthropic releases new versions gradually, so ${res.claude.latest.version} should arrive soon.`);
@@ -4532,6 +4549,38 @@
     } finally {
       if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = 'Update Claude Code now'; }
     }
+  }
+
+  // A sign-in task from an earlier Claude Deck runs the server, and so every chat and MCP server,
+  // at Windows' background priority (low CPU, disk and memory priority), and MCP servers then
+  // often miss Claude Code's 30-second start limit (src/app-install.js taskPriority). Registering
+  // the task again fixes it from the next sign-in; the server running now keeps its priority.
+  const PRIORITY_TASK_TEXT = 'The sign-in task was set up by an earlier Claude Deck and runs chats at low priority, so MCP servers often time out while starting. Update it, then sign out and back in.';
+  const PRIORITY_SIGN_OUT_TEXT = 'The sign-in task is up to date, but this server started before it was, so chats still run at low priority. Sign out of Windows and back in (Restart server keeps the low priority).';
+  async function updateTaskPriority() {
+    const res = await run("Couldn't update the sign-in task", () => api('POST', '/api/app/startup', { enabled: true }));
+    if (res) toast('Sign-in task updated. Sign out of Windows and back in (or restart the PC) for it to take effect: Restart server keeps the low priority.', 'info', { ms: 20000 });
+    if (S.view === 'prefs') renderPrefs();
+  }
+
+  // At startup: ask to fix a low-priority sign-in task, or, once fixed, say a sign-in is still
+  // needed. Once per window (Cancel waits for the next), after the tour and any open dialog,
+  // like offerClaudeUpdate.
+  async function offerPriorityFix() {
+    const key = 'deck-priority-offered';
+    try { if (sessionStorage.getItem(key)) return; } catch { /* storage unavailable */ }
+    let info;
+    try { info = await api('GET', '/api/app'); } catch { return; }
+    if (!info.taskLowPriority && !(info.serverLowPriority && info.resident)) return;
+    while (document.querySelector('.tour, dialog[open]')) await new Promise((r) => setTimeout(r, 1000));
+    try { sessionStorage.setItem(key, '1'); } catch { /* storage unavailable */ }
+    if (!info.taskLowPriority) return toast(PRIORITY_SIGN_OUT_TEXT, 'info', { ms: 20000 });
+    const ok = await Deck.confirm({
+      title: 'Run chats at normal priority?',
+      body: `${PRIORITY_TASK_TEXT} Updating changes only the task's priority, to the one programs you open yourself get.`,
+      ok: 'Update the task',
+    });
+    if (ok) updateTaskPriority();
   }
 
   // A newer Claude Code is out (src/server.js checkLatestClaude): offer it once per version and
@@ -4647,7 +4696,7 @@
           h('button', { class: 'ghost', title: 'Get the latest Claude Deck from GitHub, then restart on it', onclick: (e) => checkForUpdates(e.currentTarget) }, 'Check for updates'),
           h('button', { class: 'ghost', title: 'Stop the server and start it again, then reload this window: picks up changes to Claude Deck', onclick: restartServer }, 'Restart server'),
           h('button', { class: 'danger', onclick: async () => { if (await Deck.confirm({ title: 'Stop the Claude Deck server?', body: 'Chats end (resume them from History later). Terminal sessions keep running. Start Claude Deck again to reconnect.', ok: 'Stop server', danger: true })) api('POST', '/api/shutdown').catch(() => {}); } }, 'Stop server now'))),
-      prefRow('Data folder', 'Preferences, settings backups and the history cache', h('div', { class: 'row' }, h('code', { style: { overflowWrap: 'anywhere', flex: '1' } }, S.boot.dataDir), h('button', { class: 'ghost', onclick: () => openFolder(S.boot.dataDir) }, 'Open'))),
+      prefRow('Data folder', 'Preferences, settings backups, the history cache, and Claude Deck\'s log (logs\\claude-deck.log) for working out what went wrong', h('div', { class: 'row' }, h('code', { style: { overflowWrap: 'anywhere', flex: '1' } }, S.boot.dataDir), h('button', { class: 'ghost', onclick: () => openFolder(S.boot.dataDir) }, 'Open'))),
       prefRow('Version', 'The version the server was started from', h('div', { class: 'row' }, h('span', null, `Claude Deck ${S.boot.version}`), h('a', { href: 'https://github.com/BPT-CIPP/Claude-Deck/releases', target: '_blank', rel: 'noopener', class: 'small' }, 'Release notes'))),
       prefRow('Guided tour', 'A two-minute walk through Claude Deck, for anyone new to it or to Claude Code', h('div', { class: 'row' }, h('button', { class: 'ghost', onclick: startTour }, 'Take the tour')))));
   }
@@ -5085,6 +5134,7 @@
       if (!store.get('tourSeen', false)) startTour();
       checkForUpdatesAtLaunch();
       offerClaudeUpdate();
+      offerPriorityFix();
     }, 400);
     // Keep "for 3m" style labels fresh.
     setInterval(() => { if (S.view === 'sessions' && !document.hidden) { renderSessions(); renderUsage(); } }, 30000);

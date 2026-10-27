@@ -205,7 +205,11 @@ function Register-DeckTask {
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
     # Interactive: runs in your desktop session, so Windows Terminal tabs and Edge windows appear.
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -StartWhenAvailable
+    # Priority 4: the same CPU, I/O and memory priority as a program you start yourself. Left out,
+    # Task Scheduler uses 7 (below-normal CPU, low I/O, low memory priority), and every chat and
+    # every MCP server the server starts inherits it: npx/uvx servers then missed Claude Code's
+    # 30-second start limit far more often than in a terminal.
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -StartWhenAvailable -Priority 4
     try {
         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Keeps the Claude Deck server running while you are signed in.' -Force | Out-Null
     } catch {

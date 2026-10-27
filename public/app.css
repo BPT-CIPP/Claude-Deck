@@ -1012,9 +1012,16 @@ pre.code.small { font-size: var(--fs-s); max-height: 280px; overflow: auto; whit
 .q-label { font-weight: 600; }
 .q-desc { font-size: var(--fs-s); color: var(--muted); }
 
+/* When each message was sent or written (app.js msgTime): yours in the "You" line, after any tag;
+   Claude's beside the first line of the reply. */
+.msg-head { position: absolute; top: 8px; right: 0; display: flex; gap: 8px; align-items: center; }
+.msg-time { font-size: var(--fs-s); line-height: 18px; font-weight: 400; color: var(--faint); white-space: nowrap; }
+.msg-assistant > .msg-time { float: right; margin: 0 0 0 16px; line-height: calc(var(--fs) * 1.6); }
+
 /* Queued messages */
 .msg-user.queued { background: transparent; outline: 1px dashed color-mix(in srgb, var(--waiting) 70%, transparent); outline-offset: -1px; }
-.msg-tag { position: absolute; top: 8px; right: 10px; font-size: var(--fs-s); border-radius: 9px; padding: 0 8px; line-height: 18px; font-weight: 600; }
+.msg-user.queued .msg-head { right: 10px; }
+.msg-tag { font-size: var(--fs-s); border-radius: 9px; padding: 0 8px; line-height: 18px; font-weight: 600; }
 .msg-tag.waiting { background: var(--waiting-wash); color: var(--text); border: 1px solid color-mix(in srgb, var(--waiting) 60%, transparent); }
 .msg-tag.ended { color: var(--muted); border: 1px solid var(--line); }
 

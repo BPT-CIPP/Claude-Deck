@@ -6,6 +6,34 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.20.0] - 2026-10-27
+
+### Added
+- **Every message shows when it was sent.** Your messages and Claude's replies show their time at
+  the top right (with the date when it isn't today; the full date and time on hover), in chats,
+  in a resumed chat's earlier messages and in History. A queued message shows its tag beside it.
+- **Claude Deck keeps a log.** What the server prints, which went nowhere because it runs without a
+  window, now also goes to `logs\claude-deck.log` in the data folder (**Claude Deck Preferences →
+  Dashboard → Data folder → Open**), with the time on every entry: starts and stops, errors,
+  crashes, Claude Code version changes, and everything **Update Claude Code now** printed. It keeps
+  four files of 1 MB at most, and leaves out Claude Deck's access token.
+- **Claude Deck asks to fix a low-priority sign-in task when its window opens.** See Fixed.
+
+### Fixed
+- **MCP servers time out far less often in chats.** The sign-in task that starts Claude Deck was
+  created without a priority, so Windows ran it at its background default: below-normal CPU, low
+  disk and low memory priority. Every chat and every MCP server it started inherited that, and
+  servers run through `npx` or `uvx` (chrome-devtools, browser-use) missed Claude Code's 30-second
+  start limit far more often than in a terminal. The task is now created at normal priority. A task
+  set up by an earlier version is detected when the window opens, with **Update the task** (also
+  under **Claude Deck Preferences → Taskbar app**); then sign out of Windows and back in, since the
+  server already running keeps its priority.
+- **Update Claude Code now says why it failed.** It showed only the last line of what Claude Code
+  printed, which when npm was slow to answer was "Check if you need to login: npm whoami": about
+  npm, but it read like your Claude sign-in. Claude Code gives npm 5 seconds to name the newest
+  version, and npm's first run in a while can take far longer, so Claude Deck now tries up to three
+  times, and if it still fails says what happened. Other failures show the line that names the error.
+
 ## [1.19.1] - 2026-10-23
 
 ### Changed
@@ -585,6 +613,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.20.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.19.1...v1.20.0
 [1.19.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.19.0...v1.19.1
 [1.19.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.18.1...v1.19.0
 [1.18.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.18.0...v1.18.1

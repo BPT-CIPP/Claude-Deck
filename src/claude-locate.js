@@ -112,6 +112,18 @@ function runUpdate(claudePath) {
   });
 }
 
+// Why `claude update` failed, from what it printed (docs/CLAUDE-CODE-INTERNALS.md, "Updating"). Its
+// last line is usually advice, not the reason: when npm doesn't name the newest version within the
+// 5 seconds Claude Code allows, the last line is "Check if you need to login: npm whoami", about
+// npm, not Claude. { npmLookup, reason }: npmLookup when it was that lookup that failed.
+function updateFailure(output) {
+  const lines = String(output || '').replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  if (lines.some((s) => /Unable to fetch latest version from npm registry/i.test(s))) {
+    return { npmLookup: true, reason: "Claude Code couldn't get the newest version number from npm in time" };
+  }
+  return { npmLookup: false, reason: lines.find((s) => /^(error\b|failed\b)/i.test(s)) || lines[lines.length - 1] || 'no reason given' };
+}
+
 // The file's size and modified time: changes when Claude Code updates itself (or is updated), which
 // is how Claude Deck notices a new version without asking `claude --version` again and again.
 function binaryStamp(file) {
@@ -162,4 +174,4 @@ async function latestRelease(channel, { fetcher = fetchDistTags } = {}) {
   return version ? { version, channel } : null;
 }
 
-module.exports = { locateClaude, claudeVersion, isScript, autoUpdateStatus, runUpdate, binaryStamp, compareVersions, latestRelease };
+module.exports = { locateClaude, claudeVersion, isScript, autoUpdateStatus, runUpdate, updateFailure, binaryStamp, compareVersions, latestRelease };
