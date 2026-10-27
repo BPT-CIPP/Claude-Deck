@@ -4,7 +4,22 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { webAppId } = require('../src/app-install');
+const { webAppId, taskPriority } = require('../src/app-install');
+
+// A task with no <Priority> runs at Task Scheduler's default, 7: below-normal CPU, low I/O and low
+// memory priority, inherited by every chat and MCP server the server starts.
+test("the sign-in task's priority is read from its XML, 7 when it has none", () => {
+  // As schtasks /Query /XML prints a task registered by an earlier Claude Deck (trimmed).
+  const before = '<?xml version="1.0" encoding="UTF-16"?>\r\r\n<Task><Settings>\r\r\n    <StartWhenAvailable>true</StartWhenAvailable>\r\r\n  </Settings></Task>';
+  assert.strictEqual(taskPriority(before), 7);
+  assert.strictEqual(taskPriority(before.replace('<StartWhenAvailable>', '<Priority>4</Priority><StartWhenAvailable>')), 4);
+  assert.strictEqual(taskPriority(''), 7);
+});
+
+test('Start-ClaudeDeck.ps1 registers the sign-in task at normal priority', () => {
+  const script = fs.readFileSync(path.join(__dirname, '..', 'Start-ClaudeDeck.ps1'), 'utf8');
+  assert.match(script, /New-ScheduledTaskSettingsSet [^\r\n]*-Priority 4\b/);
+});
 
 test('web app ids look like Chromium ids: 32 letters a-p, stable per URL', () => {
   const id = webAppId('http://127.0.0.1:47821/');

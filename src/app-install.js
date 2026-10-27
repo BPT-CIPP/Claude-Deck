@@ -55,6 +55,24 @@ function startupEnabled() {
   });
 }
 
+// The task's priority (0-10) from its XML; without a <Priority> it's Task Scheduler's default, 7.
+// 7 and up run the server below normal CPU, I/O and memory priority, and everything it starts
+// (chats, their MCP servers) inherits that. Start-ClaudeDeck.ps1 now registers it at 4; a task
+// registered by an earlier version keeps 7 until it's registered again.
+function taskPriority(xml) {
+  const m = /<Priority>(\d+)<\/Priority>/.exec(String(xml || ''));
+  return m ? Number(m[1]) : 7;
+}
+
+// The sign-in task's priority, or null when there's no task.
+function startupPriority() {
+  return new Promise((resolve) => {
+    execFile('schtasks.exe', ['/Query', '/TN', TASK_NAME, '/XML'], { windowsHide: true, timeout: 15000 }, (err, stdout) => {
+      resolve(err ? null : taskPriority(stdout));
+    });
+  });
+}
+
 // Registers or removes the sign-in task via the launcher script, so there is one implementation
 // of the task details.
 function setStartup(enabled) {
@@ -66,4 +84,4 @@ function setStartup(enabled) {
   });
 }
 
-module.exports = { webAppId, findInstalledApp, startupEnabled, setStartup, legacyStartupShortcut };
+module.exports = { webAppId, findInstalledApp, startupEnabled, startupPriority, taskPriority, setStartup, legacyStartupShortcut };

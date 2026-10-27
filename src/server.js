@@ -32,8 +32,9 @@ const { Timeline } = require('./timeline');
 const trash = require('./trash');
 const update = require('./update');
 const billing = require('./billing');
-const { locateClaude, claudeVersion, autoUpdateStatus, runUpdate, binaryStamp, compareVersions, latestRelease } = require('./claude-locate');
+const { locateClaude, claudeVersion, autoUpdateStatus, runUpdate, updateFailure, binaryStamp, compareVersions, latestRelease } = require('./claude-locate');
 const models = require('./models');
+const log = require('./log');
 const { readJson, writeJsonAtomic, isPidAlive, UserError } = require('./util');
 
 // The version this server was started from; a pulled update shows once the server restarts.
@@ -51,6 +52,8 @@ const EXIT_ANOTHER_COPY = 3;
 // How often Claude Code's file is looked at for an update, and npm asked for a newer release.
 const CLAUDE_CHANGE_MS = 60 * 1000;
 const CLAUDE_LATEST_MS = 6 * 3600 * 1000;
+// Runs of `claude update` when npm was too slow to name the newest version (see its route).
+const UPDATE_ATTEMPTS = 3;
 // Room for a message with several images (up to 5 MB each, base64-encoded).
 const MAX_BODY = 60 * 1024 * 1024;
 const EDGE_PATHS = [
@@ -211,6 +214,9 @@ async function recentFolders(history) {
 
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+  log.install();
+  // Priority: 0 normal, 10 below normal (what an older sign-in task gives it; see src/app-install.js).
+  console.log(`Claude Deck ${VERSION} starting (Node ${process.version}, priority ${os.getPriority()}${opts.replace ? `, taking over from ${opts.replace}` : ''})`);
   fs.mkdirSync(paths.tabsDir(), { recursive: true });
   let token = loadToken();
 
@@ -293,7 +299,10 @@ async function main() {
     const before = claudeInfo.version;
     const info = await detectClaude();
     broadcast('claude', info);
-    if (info.version && info.version !== before) refreshModels();
+    if (info.version && info.version !== before) {
+      console.log(`Claude Code changed: ${before || 'unknown version'} -> ${info.version}`);
+      refreshModels();
+    }
     return info;
   }
 
@@ -343,6 +352,7 @@ async function main() {
   async function shutdown(exitCode = EXIT_STOPPED) {
     if (shuttingDown) return;
     shuttingDown = true;
+    console.log(`Claude Deck stopping (exit code ${exitCode})`);
     // No new connections; requests on open ones are turned away (see the request handler).
     server.close();
     live.stop();
@@ -839,21 +849,37 @@ async function main() {
     },
     'GET /api/models': () => modelMenu(),
     // Claude Code's own `claude update`, only when the user asks. Running chats keep the version
-    // they started with until they're resumed. { ok, output, before, claude, locked }: locked when
-    // Windows wouldn't let an npm install replace claude.exe, because sessions are using it.
+    // they started with until they're resumed. { ok, output, before, claude, locked, npmLookup,
+    // reason }: locked when Windows wouldn't let an npm install replace claude.exe, because
+    // sessions are using it; npmLookup when npm didn't name the newest version in time, even after
+    // trying again; reason, what failed (src/claude-locate.js updateFailure).
     'POST /api/claude/update': async () => {
       const before = (claudeInfo || (await detectClaude())).version;
       const claude = requireClaude(prefsStore.load());
-      const res = await runUpdate(claude.path);
+      // Claude Code gives npm 5 seconds to name the newest version. npm's first run in a while can
+      // take far longer (21 s measured on a managed PC, then 2 s), so a lookup that ran out of time
+      // is tried again (docs/CLAUDE-CODE-INTERNALS.md, "Updating").
+      let res;
+      for (let attempt = 1; attempt <= UPDATE_ATTEMPTS; attempt++) {
+        res = await runUpdate(claude.path);
+        console.log(`claude update (${claude.path}), attempt ${attempt}: ${res.ok ? 'finished' : 'failed'}\n${res.output}`);
+        if (res.ok || !updateFailure(res.output).npmLookup) break;
+      }
+      const failure = res.ok ? null : updateFailure(res.output);
       const info = await detectClaude();
       if (info.version !== before) await refreshModels({ force: true });
       broadcast('claude', info);
       const locked = !res.ok && /\bEBUSY\b|resource busy or locked|executable is locked|\bEPERM\b/i.test(res.output);
-      return { ok: res.ok, output: res.output, before, claude: info, locked };
+      return { ok: res.ok, output: res.output, before, claude: info, locked, npmLookup: Boolean(failure && failure.npmLookup), reason: failure ? failure.reason : null };
     },
     'GET /api/app': async () => {
       const installed = appInstall.findInstalledApp(port);
-      return { installed: Boolean(installed.profile), profile: installed.profile, startup: await appInstall.startupEnabled(), resident: opts.resident };
+      // taskLowPriority: the sign-in task runs Claude Deck, its chats and their MCP servers at
+      // background priority (src/app-install.js taskPriority); registering it again fixes that
+      // from the next sign-in. serverLowPriority: this server is running below normal now (10),
+      // as a task like that started it; only a new sign-in (or starting it yourself) changes it.
+      const [startup, priority] = await Promise.all([appInstall.startupEnabled(), appInstall.startupPriority()]);
+      return { installed: Boolean(installed.profile), profile: installed.profile, startup, taskLowPriority: priority !== null && priority > 6, serverLowPriority: os.getPriority() > 0, resident: opts.resident };
     },
     'POST /api/app/open-in-browser': () => {
       openInBrowserTab(port, token);

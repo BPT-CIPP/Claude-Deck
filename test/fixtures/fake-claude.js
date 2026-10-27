@@ -14,6 +14,10 @@
 // (mcp_status, mcp_toggle, mcp_reconnect) for two made-up servers.
 //
 // Plugin mode (plugin ...): Claude Code's plugin and marketplace commands (see pluginMode).
+//
+// Update mode (update): `claude update` on an npm install, already up to date. The next
+// npmSlowRuns runs (fake-update.json in CLAUDE_CONFIG_DIR) fail as 2.1.309 does when npm doesn't
+// name the newest version within its 5 seconds, with the same text.
 
 const fs = require('fs');
 const path = require('path');
@@ -34,6 +38,10 @@ if (args[0] === '--version') {
 }
 if (args[0] === 'plugin') {
   pluginMode();
+  return;
+}
+if (args[0] === 'update') {
+  updateMode();
   return;
 }
 if (args.includes('--input-format') && args[args.indexOf('--input-format') + 1] === 'stream-json') {
@@ -694,4 +702,33 @@ function pluginMode() {
     }
   }
   fail(`fake-claude: unsupported plugin command: ${args.join(' ')}`);
+}
+
+function updateMode() {
+  const file = path.join(process.env.CLAUDE_CONFIG_DIR || '.', 'fake-update.json');
+  let state = { npmSlowRuns: 0 };
+  try { state = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* none: up to date */ }
+  process.stdout.write('Current version: 0.0.0\nChecking for updates to latest version...\n');
+  if (state.npmSlowRuns > 0) {
+    fs.writeFileSync(file, JSON.stringify({ npmSlowRuns: state.npmSlowRuns - 1 }));
+    // What 2.1.309 prints (its bundled code, read 2026-10-27), to stderr.
+    process.stderr.write([
+      'Failed to check for updates',
+      'Unable to fetch latest version from npm registry',
+      '',
+      'Possible causes:',
+      '  • Network connectivity issues',
+      '  • npm registry is unreachable',
+      '  • Corporate proxy/firewall blocking npm',
+      '',
+      'Try:',
+      '  • Check your internet connection',
+      '  • Run with --debug flag for more details',
+      '  • Manually check: npm view @anthropic-ai/claude-code version',
+      '  • Check if you need to login: npm whoami',
+      '',
+    ].join('\n'));
+    process.exit(1);
+  }
+  process.stdout.write('Claude Code is up to date (0.0.0)\n');
 }

@@ -24,9 +24,10 @@ test.after(async () => {
 // Stands in for the page's event stream: keeps what the terminal draws, and whether it ended.
 function viewer() {
   const chunks = [];
-  const v = { chunks, ended: false, text: () => Buffer.concat(chunks).toString('utf8') };
+  const v = { chunks, events: [], ended: false, text: () => Buffer.concat(chunks).toString('utf8') };
   v.res = {
     write(msg) {
+      for (const m of msg.matchAll(/^event: (\w+)/gm)) v.events.push(m[1]);
       for (const m of msg.matchAll(/event: data\ndata: ([^\n]*)/g)) chunks.push(Buffer.from(m[1], 'base64'));
       if (msg.startsWith('event: exit')) v.ended = true;
     },
@@ -81,6 +82,9 @@ test('a terminal in the window: Claude draws to it, keys reach it, it resizes, r
   terms.attach(term.id, later.res)();
   assert.ok(later.text().includes('press q to exit'));
   assert.ok(later.ended);
+  // "live" marks where the replay ends: the page copies Claude Code's OSC 52 clipboard writes only
+  // after it, or reopening a terminal would copy its last selection again.
+  assert.deepStrictEqual(later.events, ['size', 'reset', 'data', 'live', 'exit']);
   // Resume: the same conversation, a new run.
   terms.resume(term.id);
   assert.strictEqual(terms.get(term.id).state, 'running');
