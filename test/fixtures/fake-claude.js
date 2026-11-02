@@ -509,6 +509,8 @@ function streamMode() {
           response = { suggestions: ['src/app.js', 'src/server.js', 'README.md', 'src/'].filter((p) => p.toLowerCase().includes(q)).map((p) => ({ path: p })), cwd: process.cwd() };
         }
         if (sub === 'side_question') response = { response: `Aside: ${m.request.question}`, synthetic: false };
+        // Shaped like the real CLI's (2.1.312), trimmed.
+        if (sub === 'get_status') response = { sections: [{ title: 'Session', rows: [{ label: 'Version', value: '0.0.0' }, { label: 'cwd', value: process.cwd() }] }] };
         if (sub === 'mcp_authenticate') {
           if (!mcpServers.some((s) => s.name === m.request.serverName)) {
             out({ type: 'control_response', response: { subtype: 'error', request_id: m.request_id, error: `Server not found: ${m.request.serverName}` } });

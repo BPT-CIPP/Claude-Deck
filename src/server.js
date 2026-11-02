@@ -536,6 +536,22 @@ async function main() {
     'POST /api/chats/:id/shell': async (req, p) => chats.runShell(p.id, (await readBody(req)).command),
     'POST /api/chats/:id/side': async (req, p) => chats.sideQuestion(p.id, (await readBody(req)).question),
     'POST /api/chats/:id/background': (req, p) => chats.background(p.id),
+    // Slash commands Claude Code runs only in its terminal, done here (docs/SLASH-COMMANDS.md):
+    // what /status, /hooks, /permissions, /memory, /skills, /diff, /export and /plan show; /add-dir.
+    'GET /api/chats/:id/query/:what': (req, p) => chats.query(p.id, p.what),
+    'POST /api/chats/:id/add-dir': async (req, p) => chats.addDirectory(p.id, (await readBody(req)).path),
+    // /branch and /fork: a new chat carrying on from this one's conversation (--fork-session), with
+    // its options; { name } names it, { prompt } is its first message.
+    'POST /api/chats/:id/fork': async (req, p) => {
+      const b = await readBody(req);
+      const c = chats.detail(p.id);
+      if (!c.sessionId || !(c.items.some((i) => i.kind === 'user' && !i.queued) || c.past.length)) throw new UserError('Nothing to fork yet: send a message first.');
+      const next = { ...chats.optionsOf(p.id), mode: 'resume', resumeId: c.sessionId, fork: true, cwd: c.cwd, color: c.color,
+        name: typeof b.name === 'string' ? b.name.trim() : '', prompt: typeof b.prompt === 'string' ? b.prompt : '' };
+      const fork = chats.create(next);
+      live.poke(0);
+      return fork;
+    },
     'POST /api/chats/:id/rewind': async (req, p) => {
       const b = await readBody(req);
       return chats.rewind(p.id, b.messageId, { files: b.files === true });
@@ -573,6 +589,18 @@ async function main() {
       }
       live.poke(0);
       return entry;
+    },
+    // Continue a chat in the Inlaid CLI (a terminal in the window), for the slash commands only
+    // Claude Code's own interface runs (docs/SLASH-COMMANDS.md). Same conversation.
+    'POST /api/chats/:id/to-embedded': async (req, p) => {
+      const c = chats.detail(p.id);
+      if (!c.sessionId) throw new UserError('This chat has no conversation to continue yet.');
+      const next = { ...chats.optionsOf(p.id), mode: 'resume', resumeId: c.sessionId, cwd: c.cwd, name: c.name, color: c.color };
+      preflight(next);
+      await chats.end(p.id);
+      const t = terminals.create(next);
+      live.poke(0);
+      return t;
     },
     // Bring a Windows Terminal session into Claude Deck: close its tab, then resume here.
     'POST /api/sessions/:id/to-chat': async (req, p) => {

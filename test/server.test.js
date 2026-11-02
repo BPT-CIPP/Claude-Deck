@@ -197,6 +197,36 @@ test('Update Claude Code tries again when npm was too slow, says so if it stays 
   assert.match(logged(), /Claude Deck \d+\.\d+\.\d+ starting/);
 });
 
+test('a chat forks into a new one (named, with a first message), and only the listed queries are run', async () => {
+  const fs = require('fs');
+  const { port } = JSON.parse(fs.readFileSync(path.join(box.dataDir, 'runtime.json'), 'utf8'));
+  const token = JSON.parse(fs.readFileSync(path.join(box.dataDir, 'secret.json'), 'utf8')).token;
+  const call = async (method, url, body) => {
+    const r = await fetch(`http://127.0.0.1:${port}${url}`, { method, headers: { 'x-deck-token': token, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, body: await r.json() };
+  };
+  const until = async (fn, what) => {
+    for (let i = 0; i < 80; i++) { const v = await fn(); if (v) return v; await new Promise((r) => setTimeout(r, 100)); }
+    throw new Error(`timed out waiting for ${what}`);
+  };
+  const folder = path.join(box.root, 'fork-here');
+  fs.mkdirSync(folder, { recursive: true });
+  const chat = (await call('POST', '/api/chats', { cwd: folder, name: 'Original' })).body;
+  await until(async () => (await call('GET', `/api/chats/${chat.id}`)).body.status === 'idle', 'the chat to start');
+  assert.match((await call('POST', `/api/chats/${chat.id}/fork`, {})).body.error, /Nothing to fork yet/);
+  await call('POST', `/api/chats/${chat.id}/send`, { text: 'first' });
+  await until(async () => (await call('GET', `/api/chats/${chat.id}`)).body.items.some((i) => i.kind === 'result'), 'the reply');
+  const fork = await call('POST', `/api/chats/${chat.id}/fork`, { name: 'Branched', prompt: 'carry on' });
+  assert.strictEqual(fork.status, 200);
+  assert.strictEqual(fork.body.name, 'Branched');
+  assert.notStrictEqual(fork.body.id, chat.id);
+  assert.match(fork.body.command, /--resume \S+ --fork-session/);
+  await until(async () => (await call('GET', `/api/chats/${fork.body.id}`)).body.items.some((i) => i.kind === 'user' && i.text === 'carry on'), "the fork's first message");
+  assert.strictEqual((await call('GET', `/api/chats/${chat.id}/query/status`)).status, 200);
+  assert.strictEqual((await call('GET', `/api/chats/${chat.id}/query/rewind_files`)).status, 404, 'not a listed query');
+  for (const id of [chat.id, fork.body.id]) await call('POST', `/api/chats/${id}/end`, {});
+});
+
 test('restart hands over to a new server on the same port, exiting as "another copy is serving"', async () => {
   const fs = require('fs');
   const runtime = () => JSON.parse(fs.readFileSync(path.join(box.dataDir, 'runtime.json'), 'utf8'));

@@ -2194,12 +2194,14 @@
       keep.add(mark);
     }
     for (const m of list.querySelectorAll(':scope > .turn-claude')) if (!keep.has(m)) m.remove();
+    markFocus(list);
   }
 
   function renderChat(scrollToEnd) {
     const box = $('#focus-detail .convo');
     if (!box || !S.chat) return;
     const inner = clear(box.querySelector('.convo-inner'));
+    box.classList.toggle('focus-view', focusViewOn());
     if (S.chat.past.length) {
       inner.appendChild(h('p', { class: 'convo-note' }, 'Earlier in this conversation'));
       const past = h('div', { class: 'past' });
@@ -2331,6 +2333,264 @@
 
   const hasQueued = () => Boolean(S.chat && [...S.chat.items.values()].some((x) => x.kind === 'user' && x.queued && !x.withdrawn));
 
+  // ---- slash commands Claude Code runs only in its terminal ------------------------------------
+  // In a chat, Claude Code runs most commands itself (/context, /model, /compact, skills...): they
+  // go to it as typed. These it doesn't run there (docs/SLASH-COMMANDS.md), so the reply box does
+  // them with Claude Deck's own controls, or with the read-only control requests Claude Code
+  // answers for SDK hosts (src/chat.js query). Names and aliases as Claude Code's (2.1.312).
+  const DECK_COMMANDS = [
+    { name: 'add-dir', hint: '<path>', desc: 'Let Claude work in another folder too (Claude Code starts again on this conversation)' },
+    { name: 'branch', hint: '[name]', desc: 'Create a branch of the current conversation at this point: a new chat' },
+    { name: 'btw', hint: '<question>', desc: 'Ask a quick side question without interrupting the main conversation' },
+    { name: 'copy', hint: '[N]', desc: "Copy Claude's last response to the clipboard (or /copy N for the Nth-latest)" },
+    { name: 'diff', desc: 'Show uncommitted changes in this folder' },
+    { name: 'exit', aliases: ['quit'], desc: 'End this chat' },
+    { name: 'export', hint: '[filename]', desc: 'Export the current conversation to a text file' },
+    { name: 'focus', hint: '[on|off]', desc: 'Toggle focus view: just your prompt, a summary, and the response' },
+    { name: 'fork', hint: '[prompt]', desc: 'Fork the conversation into a new chat that carries on with your prompt' },
+    { name: 'help', desc: 'Show help and the commands you can use here' },
+    { name: 'hooks', desc: 'View hook configurations for tool events' },
+    { name: 'login', desc: 'Sign in with your Anthropic account', send: true },
+    { name: 'logout', desc: 'Sign out from your Anthropic account' },
+    { name: 'memory', desc: 'Show the CLAUDE.md files and memory Claude reads here' },
+    { name: 'permissions', aliases: ['allowed-tools'], desc: 'Show allow and deny tool permission rules' },
+    { name: 'plan', hint: '[what to plan]', desc: 'Enable plan mode, or view the current session plan' },
+    { name: 'plugin', aliases: ['plugins', 'marketplace'], desc: 'Manage Claude Code plugins' },
+    { name: 'resume', aliases: ['continue'], desc: 'Resume a previous conversation (History)' },
+    { name: 'rewind', aliases: ['checkpoint', 'undo'], desc: 'Go back to an earlier message, and put files back if you choose' },
+    { name: 'skills', desc: 'List available skills' },
+    { name: 'status', desc: "Show Claude Code's version, model, account and connection status" },
+    { name: 'tasks', aliases: ['bashes'], desc: 'View everything running in the background' },
+    { name: 'theme', desc: "Change Claude Deck's theme" },
+    { name: 'background', aliases: ['bg'], desc: 'Chats already keep running in the background' },
+  ];
+  // Commands only Claude Code's own interface runs, with its descriptions: the reply box offers to
+  // continue the conversation in the Inlaid CLI, where they work.
+  const TERMINAL_ONLY = {
+    'artifacts': 'Browse your published and shared artifacts',
+    'autofix-pr': 'Monitor and autofix any issues with the current PR',
+    'bug': 'Report a bug or share your conversation',
+    'cd': 'Move this session to a new working directory',
+    'chrome': 'Open Claude in Chrome settings',
+    'cloud-plugins': 'Choose whether cloud sessions use the plugins enabled on this machine',
+    'daemon': 'Manage background services and routines',
+    'design-login': 'Authorize design-system access for /design-sync',
+    'desktop': 'Continue the current session in Claude Desktop',
+    'feedback': 'Send feedback to Anthropic or report a bug',
+    'ide': 'Manage IDE integrations and show status',
+    'install': 'Install Claude Code native build',
+    'install-github-app': 'Set up Claude GitHub Actions for a repository',
+    'install-slack-app': 'Install the Claude Slack app',
+    'keybindings': 'Open your keyboard shortcuts file',
+    'mobile': 'Show QR code to download the Claude mobile app',
+    'passes': 'Share a free week of Claude Code with friends',
+    'powerup': 'Discover Claude Code features through quick interactive lessons',
+    'privacy-settings': 'View and update your privacy settings',
+    'radio': 'Listen to Claude FM lo-fi radio',
+    'rate-limit-options': 'Manage usage limits and upgrade options',
+    'release-notes': 'View release notes',
+    'remote-control': 'Control this session from your phone or claude.ai/code',
+    'remote-env': 'Choose the default environment for cloud agents',
+    'restart': 'Restart on the newer (or older) installed version and keep the conversation',
+    'sandbox': 'Show and configure sandboxing for shell commands',
+    'scroll-speed': 'Adjust mouse wheel scroll speed',
+    'session': 'Show cloud session URL and QR code',
+    'setup-bedrock': 'Reconfigure Amazon Bedrock authentication, region, or model pins',
+    'setup-vertex': 'Reconfigure Google Vertex AI authentication, project, region, or model pins',
+    'statusline': "Set up Claude Code's status line UI",
+    'stickers': 'Order Claude Code stickers',
+    'stop': 'Stop this background session',
+    'subtask': 'Send a subagent off with your full context; its result comes back here',
+    'teleport': 'Send this session to the cloud, or resume one from claude.ai',
+    'terminal-setup': 'Install Shift+Enter key binding for newlines',
+    'tui': 'Set the terminal UI renderer (default | fullscreen)',
+    'ultraplan': 'Draft an editable plan in a cloud session',
+    'ultrareview': 'Start a cloud agent that finds and verifies bugs in your branch',
+    'upgrade': 'Upgrade to Max for higher rate limits and more Opus',
+    'voice': 'Toggle voice mode',
+    'web-setup': 'Set up cloud sessions with your GitHub account',
+    'workflows': 'Browse running and completed workflows',
+  };
+  const TERMINAL_ALIASES = { share: 'bug', app: 'desktop', ios: 'mobile', android: 'mobile', rc: 'remote-control', remote: 'session', tp: 'teleport', update: 'restart' };
+  const deckCommand = (name) => DECK_COMMANDS.find((c) => c.name === name || (c.aliases || []).includes(name)) || null;
+  const terminalOnly = (name) => (TERMINAL_ONLY[name] ? name : TERMINAL_ALIASES[name] || null);
+
+  // The reply box's / list: Claude Code's commands for this chat, Claude Deck's own (which take the
+  // place of Claude Code's of the same name, as /focus), and the terminal-only ones.
+  function slashCommands() {
+    const own = (S.chat && S.chat.commands) || [];
+    const byName = new Map(own.map((c) => [c.name, c]));
+    for (const c of DECK_COMMANDS) byName.set(c.name, { name: c.name, description: c.desc, argumentHint: c.hint || '' });
+    for (const [name, description] of Object.entries(TERMINAL_ONLY)) if (!byName.has(name)) byName.set(name, { name, description: `${description} (in the Inlaid CLI)`, argumentHint: '' });
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // Focus view (/focus), as Claude Code's: your prompt, a one-line summary of Claude's steps, and
+  // its reply. With .focus-view on the conversation, CSS hides the steps (tool calls, thinking)
+  // and the in-between replies this marks, and shows each turn's summary. Kept current with
+  // markClaudeTurns, so switching it on or off is only that class.
+  const focusViewOn = () => store.get('focusView', false) === true;
+  function markFocus(list) {
+    for (const s of list.querySelectorAll(':scope > .focus-summary')) s.remove();
+    let turn = [];
+    const close = () => {
+      const replies = turn.filter((el) => el.classList.contains('msg-assistant'));
+      for (const r of replies) r.classList.toggle('focus-interim', r !== replies[replies.length - 1]);
+      const steps = turn.filter((el) => el.matches('details.msg-tool, .tool-with-diff, .msg-tool.line'));
+      if (steps.length) {
+        const names = new Map();
+        for (const st of steps) {
+          const n = ((st.querySelector('.tname') || {}).textContent || 'Step').trim();
+          names.set(n, (names.get(n) || 0) + 1);
+        }
+        const what = [...names].map(([n, c]) => (c > 1 ? `${n} ×${c}` : n)).join(', ');
+        const between = replies.length > 1 ? `, ${replies.length - 1} message${replies.length === 2 ? '' : 's'} along the way` : '';
+        const summary = h('div', { class: 'focus-summary', title: "Focus view hides Claude's steps. Type /focus off to see them." },
+          `${steps.length} step${steps.length === 1 ? '' : 's'}: ${what}${between}`);
+        const reply = replies[replies.length - 1];
+        list.insertBefore(summary, reply || turn[turn.length - 1].nextSibling);
+      }
+      turn = [];
+    };
+    for (const el of [...list.children]) {
+      if (el.classList.contains('msg-user')) { close(); continue; }
+      if (el.classList.contains('turn-claude') || el.classList.contains('chat-spinner') || el.hidden) continue;
+      turn.push(el);
+    }
+    close();
+  }
+  function setFocusView(on) {
+    store.set('focusView', on);
+    for (const c of $$('#focus-detail .convo')) c.classList.toggle('focus-view', on);
+    toast(on ? "Focus view: your prompts, a summary of Claude's steps, and its replies. /focus off shows everything." : 'Focus view is off: every step shows again.');
+  }
+
+  // What the commands above show, from Claude Code's answers (shapes from 2.1.312; src/chat.js
+  // query). Built as text with Deck.h: everything in them comes from files and settings.
+  const settingsButton = (what) => h('button', { type: 'button', class: 'ghost small', onclick: () => setView('settings') }, `Edit ${what} in Settings`);
+  const panelNote = (text) => h('p', { class: 'faint small' }, text);
+
+  function statusPanel(r) {
+    return (r.sections || []).map((s) => [
+      h('div', { class: 'cmd-sub' }, s.title),
+      h('dl', { class: 'facts' }, (s.rows || []).map((row) => fact(row.label, row.value))),
+    ]);
+  }
+
+  function hooksPanel(r) {
+    const hooks = r.hooks || [];
+    const policy = r.policy || {};
+    return [
+      policy.allDisabled ? panelNote('Hooks are turned off by policy.') : null,
+      hooks.length ? h('ul', { class: 'cmd-list' }, hooks.map((x) => h('li', null,
+        h('span', { class: 'cmd-strong' }, x.event), x.matcher ? h('span', { class: 'faint' }, ` (${x.matcher})`) : null,
+        h('code', { class: 'cmd-code' }, x.displayText || x.commandText || ''),
+        h('span', { class: 'faint small' }, x.sourceLabel || x.source || '')))) : panelNote('No hooks are set up here.'),
+      h('div', { class: 'row' }, settingsButton('hooks')),
+    ];
+  }
+
+  function permissionsPanel(r) {
+    const st = r.state || {};
+    const rules = st.rules || [];
+    const groups = [['allow', 'Allowed without asking'], ['ask', 'Always asked first'], ['deny', 'Refused']];
+    return [
+      rules.length ? groups.map(([b, label]) => {
+        const these = rules.filter((x) => x.behavior === b);
+        return these.length ? [h('div', { class: 'cmd-sub' }, label), h('ul', { class: 'cmd-list' }, these.map((x) => h('li', null, h('code', { class: 'cmd-code' }, x.rule), h('span', { class: 'faint small' }, x.source || ''))))] : null;
+      }) : panelNote('No allow or deny rules are set.'),
+      (st.workspaceDirectories || []).length ? [h('div', { class: 'cmd-sub' }, 'Other folders Claude may work in'), h('ul', { class: 'cmd-list' }, st.workspaceDirectories.map((d) => h('li', null, h('code', { class: 'cmd-code' }, typeof d === 'string' ? d : d.path || JSON.stringify(d)))))] : null,
+      h('div', { class: 'row' }, settingsButton('permissions')),
+    ];
+  }
+
+  function memoryPanel(r) {
+    const files = r.files || [];
+    const folderOf = (p) => String(p).replace(/[\\/][^\\/]*$/, '');
+    const auto = r.auto_memory || {};
+    return [
+      h('ul', { class: 'cmd-list' }, files.map((f) => h('li', null,
+        h('span', { class: 'cmd-strong' }, f.label || f.kind), f.description ? h('span', { class: 'faint small' }, f.description) : null,
+        h('code', { class: 'cmd-code' }, f.path), f.exists ? null : h('span', { class: 'faint small' }, 'Not created yet'),
+        h('button', { type: 'button', class: 'ghost small', onclick: () => openFolder(folderOf(f.path)) }, 'Open folder')))),
+      auto.status ? panelNote(`Auto-memory: ${auto.enabled ? 'on' : 'off'} (${auto.status})`) : null,
+      panelNote('Claude reads these CLAUDE.md files in this folder. Edit them in any text editor.'),
+    ];
+  }
+
+  function skillsPanel(r) {
+    const skills = (r.skills || []).slice().sort((a, b) => String(a.display_name || a.name).localeCompare(String(b.display_name || b.name)));
+    if (!skills.length) return panelNote('No skills are available here.');
+    return h('ul', { class: 'cmd-list' }, skills.map((s) => h('li', null,
+      h('span', { class: 'cmd-strong' }, `/${s.display_name || s.name}`), s.state && s.state !== 'on' ? h('span', { class: 'faint small' }, ` (${s.state})`) : null,
+      h('span', { class: 'small' }, String(s.description || '').slice(0, 220)),
+      h('span', { class: 'faint small' }, [s.source, s.tokens ? `${s.tokens} tokens` : null].filter(Boolean).join(' · ')))));
+  }
+
+  function diffPanel(d) {
+    const stats = (d && d.stats) || {};
+    if (!stats.filesCount) return panelNote('No uncommitted changes in this folder (files git doesn\'t track yet aren\'t counted).');
+    const binary = (d.perFileStats || []).filter((f) => f.isBinary);
+    return [
+      h('p', { class: 'small' }, `${stats.filesCount} file${stats.filesCount === 1 ? '' : 's'} changed: +${stats.linesAdded || 0} −${stats.linesRemoved || 0}`),
+      (d.hunks || []).map((f) => diffView({ hunks: f.hunks || [], file: f.path, created: (d.perFileStats || []).some((s) => s.path === f.path && s.status === 'added') })),
+      binary.length ? panelNote(`Binary: ${binary.map((f) => f.path).join(', ')}`) : null,
+      (d.skippedLarge || []).length ? panelNote(`Too large to show: ${d.skippedLarge.map((f) => f.path || f).join(', ')}`) : null,
+    ];
+  }
+
+  function helpPanel() {
+    const own = ((S.chat && S.chat.commands) || []).filter((c) => !deckCommand(c.name));
+    const line = (name, hint, desc) => h('li', null, h('span', { class: 'cmd-strong' }, `/${name}`), hint ? h('span', { class: 'faint' }, ` ${hint}`) : null, h('span', { class: 'small' }, desc));
+    return [
+      panelNote('Type / at the start of a message for these. Enter sends; Shift+Enter adds a line; ! runs a shell command; @ adds a file; Esc Esc goes back to an earlier message.'),
+      h('div', { class: 'cmd-sub' }, 'Claude Deck runs these here'),
+      h('ul', { class: 'cmd-list' }, DECK_COMMANDS.map((c) => line(c.name, c.hint, `${c.desc}${c.aliases ? ` (also /${c.aliases.join(', /')})` : ''}`))),
+      h('div', { class: 'cmd-sub' }, 'Claude Code runs these in this chat'),
+      h('ul', { class: 'cmd-list' }, own.map((c) => line(c.name, c.argumentHint, c.description))),
+      h('div', { class: 'cmd-sub' }, 'Only in Claude Code\'s own interface: these offer to continue in the Inlaid CLI'),
+      h('p', { class: 'small' }, Object.keys(TERMINAL_ONLY).map((n) => `/${n}`).join('  ')),
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'ghost small', onclick: () => $('#dlg-keys').showModal() }, 'Keyboard shortcuts')),
+    ];
+  }
+
+  // /export: the text Claude Code exports, saved by the browser as a download.
+  function downloadText(text, name) {
+    const file = (String(name || 'conversation.txt').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'conversation.txt');
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+    const a = h('a', { href: url, download: /\.\w+$/.test(file) ? file : `${file}.txt` });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  // /copy [N]: Claude's latest reply (or the Nth-latest), as Claude Code copies it.
+  function copyResponse(arg) {
+    const n = arg ? Number(arg) : 1;
+    if (!Number.isInteger(n) || n < 1) { toast('Use /copy, or /copy N for the Nth-latest reply.'); return; }
+    const replies = S.chat ? [...S.chat.items.values()].filter((x) => x.kind === 'assistant' && x.text).sort((a, b) => b.n - a.n) : [];
+    const pick = replies[n - 1];
+    if (!pick) { toast(replies.length ? `There are only ${replies.length} replies here.` : 'Claude hasn\'t replied yet.'); return; }
+    copy(pick.text, n === 1 ? "Copied Claude's last reply" : `Copied Claude's reply #${n} from the end`);
+  }
+
+  // /branch [name] and /fork [prompt]: a new chat on a copy of this conversation.
+  async function forkChat(it, { name = '', prompt = '' } = {}) {
+    const res = await run("Couldn't fork the conversation", () => api('POST', `/api/chats/${it.id}/fork`, { name, prompt }));
+    if (!res) return;
+    if (prompt) toast('Forked into a new chat, which is working on it.', 'info', { label: 'Open', ms: 15000, run: () => openChat(res.id) });
+    else openChat(res.id);
+  }
+
+  // A command only Claude Code's own interface runs: continue this conversation in the Inlaid CLI.
+  async function toInlaid(it, name) {
+    const ok = await Deck.confirm({ title: 'Continue in the Inlaid CLI?', body: `This chat ends and the same conversation continues in Claude Code's own interface, in this window. Type /${name} there.`, ok: 'Continue in the Inlaid CLI' });
+    if (!ok) return;
+    const res = await run("Couldn't move the chat", () => api('POST', `/api/chats/${it.id}/to-embedded`));
+    if (res) openTerminal(res.id);
+  }
+
   function composer(it) {
     const ta = h('textarea', { class: 'composer-input', rows: '1', placeholder: 'Reply to Claude', 'aria-label': 'Message to Claude', spellcheck: 'true' });
     ta.value = S.drafts[it.id] || '';
@@ -2387,7 +2647,8 @@
       // Not while ↑ steps through earlier messages: the list would take the next ↑.
       const w = browsing() ? null : slashWord();
       const a = w || browsing() ? null : atWord();
-      const commands = (S.chat && S.chat.commands) || [];
+      // Claude Deck's own commands run only at the start of a message; later in it, a / is for Claude.
+      const commands = w && !ta.value.slice(0, w.start).trim() ? slashCommands() : ((S.chat && S.chat.commands) || []);
       if (w) {
         slashItems = commands.filter((c) => c.name.toLowerCase().startsWith(w.query.toLowerCase())).slice(0, 8)
           .map((c) => ({ word: `/${c.name} `, label: `/${c.name}`, hint: c.argumentHint, desc: c.description }));
@@ -2632,6 +2893,92 @@
         h('p', { class: 'faint small' }, 'Not part of the conversation; Claude won\'t remember it.'));
     };
 
+    // What a command Claude Deck runs shows, where /btw's answer goes: above the reply box, not
+    // part of the conversation; Esc closes it.
+    const showPanel = (label, body) => {
+      clear(aside).append(
+        h('div', { class: 'side-q' }, h('span', { class: 'side-label' }, label),
+          h('button', { type: 'button', class: 'ghost icon small side-close', title: 'Dismiss (Esc)', 'aria-label': 'Dismiss', onclick: () => { closeAside(); ta.focus(); } }, Deck.icon('close', { size: 12 }))),
+        h('div', { class: 'side-a cmd-panel' }, body));
+      aside.hidden = false;
+    };
+    const query = (what, label) => run(`Couldn't get ${label}`, () => api('GET', `/api/chats/${it.id}/query/${what}`));
+    const now = () => findItem(`d:${it.id}`) || it;
+    const COMMANDS = {
+      'add-dir': async (arg) => {
+        if (!arg) { toast('Type the folder after /add-dir, as in /add-dir C:\\work\\shared.'); return; }
+        const res = await run("Couldn't add the folder", () => api('POST', `/api/chats/${it.id}/add-dir`, { path: arg }));
+        if (res && !res.added) toast('Claude can already work in that folder.');
+      },
+      background: () => toast('Chats already keep running when you switch to another session or close the window. Ctrl+B moves a long command or a subagent to the background.'),
+      branch: (arg) => forkChat(it, { name: arg }),
+      btw: () => toast('Type a question after /btw.'),
+      copy: (arg) => copyResponse(arg),
+      diff: async () => { const r = await query('diff', 'the changes'); if (r) showPanel('Uncommitted changes', diffPanel(r.diff)); },
+      exit: () => endSession(it),
+      export: async (arg) => {
+        const r = await query('export', 'the conversation');
+        if (!r) return;
+        if (!r.text) { toast('Nothing to export yet.'); return; }
+        downloadText(r.text, arg || r.default_filename);
+      },
+      focus: (arg) => setFocusView(arg === 'on' ? true : arg === 'off' ? false : !focusViewOn()),
+      fork: (arg) => forkChat(it, { prompt: arg }),
+      help: () => showPanel('Commands', helpPanel()),
+      hooks: async () => { const r = await query('hooks', 'the hooks'); if (r) showPanel('Hooks', hooksPanel(r)); },
+      logout: () => showPanel('Sign out', [
+        h('p', { class: 'small' }, "Signing out ends Claude Code's sign-in on this PC, for every session (terminals too) until you sign in again. Claude Deck doesn't do it for you; to sign out, run this in PowerShell:"),
+        h('div', { class: 'signin-command' }, h('code', null, 'claude auth logout'), h('button', { type: 'button', class: 'ghost small', onclick: () => copy('claude auth logout', 'Command copied') }, 'Copy command')),
+      ]),
+      memory: async () => { const r = await query('memory', 'the memory files'); if (r) showPanel('Memory', memoryPanel(r)); },
+      permissions: async () => { const r = await query('permissions', 'the permission rules'); if (r) showPanel('Permissions', permissionsPanel(r)); },
+      plan: async (arg) => {
+        // Already planning: /plan shows the plan so far, as Claude Code's does.
+        if (now().permissionMode === 'plan' && !arg) {
+          const r = await query('plan', 'the plan');
+          if (r) showPanel('Plan', r.exists ? richText(r.content || '') : panelNote('No plan yet. Ask Claude to plan something.'));
+          return;
+        }
+        if (now().permissionMode !== 'plan') {
+          const res = await run("Couldn't switch to plan mode", () => api('POST', `/api/chats/${it.id}/mode`, { mode: 'plan' }));
+          if (!res) return;
+          toast('Plan mode: Claude plans without changing anything until you approve.');
+        }
+        if (arg) await run("Couldn't send", () => api('POST', `/api/chats/${it.id}/send`, { text: arg }));
+      },
+      plugin: () => { const b = $('#focus-detail .plugin-btn'); if (b) b.click(); else toast('The plugins menu is in the chat\'s header, while the chat runs.'); },
+      resume: () => setView('history'),
+      rewind: () => rewindHere(),
+      skills: async () => { const r = await query('skills', 'the skills'); if (r) showPanel('Skills', skillsPanel(r)); },
+      status: async () => { const r = await query('status', 'the status'); if (r) showPanel('Status', statusPanel(r)); },
+      tasks: () => setTasksPanel(it.id, true),
+      theme: () => { setView('prefs'); toast("Claude Deck's themes are under Appearance."); },
+    };
+    // A slash command at the start of the message that Claude Code doesn't run in a chat: run here,
+    // or offered in the Inlaid CLI. False when it's one for Claude Code (or your own command or
+    // skill of that name), to be sent as usual.
+    const runCommand = (text) => {
+      const m = /^\s*\/([\w:-]+)(?:\s+([\s\S]*))?$/.exec(pasted.expand(text, pastes.texts).text);
+      if (!m) return false;
+      const name = m[1].toLowerCase();
+      const arg = (m[2] || '').trim();
+      const deck = deckCommand(name);
+      if (deck && deck.send) return false;
+      if (!deck) {
+        const term = terminalOnly(name);
+        if (!term || ((S.chat && S.chat.commands) || []).some((c) => c.name.toLowerCase() === name)) return false;
+        takeOut(text);
+        showPanel(`/${term}`, [
+          h('p', { class: 'small' }, `${TERMINAL_ONLY[term]}. Claude Code runs this only in its own interface, not in a chat.`),
+          h('div', { class: 'row' }, h('button', { type: 'button', class: 'primary small', onclick: () => toInlaid(now(), term) }, 'Continue in the Inlaid CLI')),
+        ]);
+        return true;
+      }
+      takeOut(text);
+      Promise.resolve(COMMANDS[deck.name](arg)).catch((err) => toast(err.message, 'error'));
+      return true;
+    };
+
     // sendNow: Claude Code's Send now (Ctrl+Enter, or Ctrl+X then Ctrl+S): while Claude works, it
     // takes the message next instead of after the turn; with nothing typed, what's queued goes now.
     const submit = async (interrupt, sendNow = false) => {
@@ -2648,6 +2995,7 @@
       if (!list.length && /^\s*!/.test(text)) { runShell(text); return; }
       const btw = /^\s*\/btw\s+([\s\S]+)$/.exec(text);
       if (!list.length && btw) { askAside(text, pasted.expand(btw[1], pastes.texts).text.trim()); return; }
+      if (!list.length && runCommand(text)) return;
       const images = list.map((a) => ({ mediaType: a.mediaType, data: a.data, thumb: a.thumb }));
       S.sending[it.id] = true;
       let res;

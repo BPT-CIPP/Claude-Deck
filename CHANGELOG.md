@@ -6,6 +6,27 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.21.0] - 2026-11-02
+
+### Added
+- **Claude Code's terminal-only slash commands work in chats.** In a chat, Claude Code runs only
+  some of its commands; for the rest it isn't even asked. Claude Deck now does them itself:
+  **/status**, **/hooks**, **/permissions**, **/memory**, **/skills** and **/diff** show what
+  Claude Code knows (above the reply box, where **/btw** answers go), **/export** saves the
+  conversation as a text file, **/copy** copies Claude's last reply (**/copy 2** the one before),
+  **/plan** switches to plan mode (or shows the plan when already planning), **/add-dir** lets
+  Claude work in another folder too, **/branch** and **/fork** carry the conversation on in a new
+  chat, and **/rewind**, **/tasks**, **/plugin**, **/resume**, **/exit**, **/theme** and
+  **/help** open the matching part of Claude Deck. The / list includes them.
+- **/focus**: focus view, as in Claude Code's terminal. Each turn shows just your prompt, one line
+  summing up Claude's steps ("3 steps: Read, Edit ×2"), and its reply. **/focus** again (or
+  **/focus off**) shows everything. Claude Code itself answers "/focus isn't available here yet" in
+  a chat.
+- **Commands only Claude Code's own interface can run** (**/sandbox**, **/ide**, **/terminal-setup**
+  and the like) offer to continue the conversation in the Inlaid CLI, where they work.
+- **Every slash command, documented.** docs/SLASH-COMMANDS.md lists all 124 of Claude Code
+  2.1.312's commands, what each does in a chat, and what Claude Deck does about it.
+
 ## [1.20.0] - 2026-10-27
 
 ### Added
@@ -621,6 +642,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.21.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.19.1...v1.20.0
 [1.19.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.19.0...v1.19.1
 [1.19.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.18.1...v1.19.0
