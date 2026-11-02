@@ -261,6 +261,13 @@ only needs its command list to open anywhere in the reply box. The `initialize` 
 Claude Code ships (local commands such as `clear` and bundled skills such as `dataviz` alike) and
 `aliases` on some; nothing tells a local command from a skill.
 
+✅ **Which commands a chat gets, and the rest** (2.1.312, 2026-11-02): the full inventory, what each
+does in stream-json, and the read-only control requests behind `/status`, `/hooks`,
+`/permissions`, `/memory`, `/skills`, `/diff`, `/export` and `/plan` are in
+[SLASH-COMMANDS.md](SLASH-COMMANDS.md). In short: a chat is offered each command's `local` twin
+(`supportsNonInteractive`, enabled only in non-interactive mode); the `local-jsx` ones are the
+terminal's. `/focus` is offered but answers "/focus isn't available here yet".
+
 ✅ **`/compact`** sent as a user message works in stream-json. You get `system/status` `{status:
 'compacting'}`, then `{status: null, compact_result: 'success'}`, then `system/init`, then
 `system/compact_boundary` `{compact_metadata: {trigger: 'manual'|'auto', pre_tokens, post_tokens,

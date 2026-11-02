@@ -60,7 +60,9 @@ src/chat.js             in-app chats: stream-json, permission/question answers, 
                         interrupt-and-send, subagent (task_*) tracking, model, effort and permission
                         mode, plugin reloads, sleep left out of working time; the terminal's own
                         features (MCP servers, @ files, /btw, Ctrl+B, Esc Esc rewind, plan approval,
-                        thinking, edit diffs, the to-do list, fast mode)
+                        thinking, edit diffs, the to-do list, fast mode); the read-only control
+                        requests behind terminal-only slash commands (query) and /add-dir
+                        (docs/SLASH-COMMANDS.md; the reply box's side is DECK_COMMANDS in public/app.js)
 src/terminals.js        terminals in the window: Claude Code's own interface over conhost --headless (keys in,
                         screen out, resize, replay for a page that connects again), ended with Ctrl+C twice
 src/pty-host.ps1        Windows PowerShell 5.1: starts conhost --headless with the signal pipe for resizes, finds

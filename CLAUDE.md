@@ -26,6 +26,7 @@ task is. Read the one that matches the work:
 |---|---|
 | Anything relying on files Claude Code writes, or on its stream-json messages | **[docs/CLAUDE-CODE-INTERNALS.md](docs/CLAUDE-CODE-INTERNALS.md)**, the reverse-engineering record. Not optional; see below. |
 | Understanding how the pieces fit, where code lives, why it's built this way | **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** |
+| Slash commands: every one Claude Code has, which work in a chat, and what Claude Deck does with the rest | **[docs/SLASH-COMMANDS.md](docs/SLASH-COMMANDS.md)** |
 | Running the checks, the sandbox, or a live probe of Claude Code | **[docs/TESTING.md](docs/TESTING.md)** |
 | Cloning, branching, committing, versioning, opening a pull request | **[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)** |
 | Installing, using or troubleshooting Claude Deck | **[README.md](README.md)** |

@@ -31,6 +31,18 @@ const { readJson, writeJsonAtomic, parseArgString, clip, forEachLine, UserError 
 // as they're written (text arriving a chunk at a time read as choppy); the spinner covers the wait.
 const STREAM_ARGS = ['--output-format', 'stream-json', '--verbose', '--input-format', 'stream-json', '--permission-prompt-tool', 'stdio'];
 const MAX_ITEMS = 1500;
+// Claude Deck's names for the read-only control requests behind some terminal-only slash commands
+// (query below): /status, /plan, /export, /hooks, /permissions, /memory, /skills, /diff.
+const QUERIES = {
+  status: 'get_status',
+  plan: 'get_plan',
+  export: 'export_conversation',
+  hooks: 'get_hooks_listing',
+  permissions: 'list_permission_rules',
+  memory: 'get_memory_dialog',
+  skills: 'get_skills_dialog',
+  diff: 'get_workspace_diff',
+};
 // Prompts kept for ↑ in the reply box after /clear empties a chat.
 const MAX_PROMPTS = 200;
 // How often running subagents' transcripts are read for live steps and token usage.
@@ -1310,6 +1322,43 @@ class ChatManager extends EventEmitter {
     if (!chat.proc) throw new UserError('This chat has ended. Resume it to ask about it.');
     const r = await this._request(chat, { subtype: 'side_question', question: q }, 180000);
     return { question: q, answer: clip(String((r && r.response) || ''), 20000) };
+  }
+
+  // What some of Claude Code's terminal-only commands show, from the control requests SDK hosts use
+  // for them (docs/SLASH-COMMANDS.md): read only, no model request, answered at once. Their
+  // answers go to the page as Claude Code sent them. Request names and answers from 2.1.312.
+  async query(id, what) {
+    const subtype = Object.prototype.hasOwnProperty.call(QUERIES, what) ? QUERIES[what] : null;
+    if (!subtype) throw new UserError('Claude Deck has no such query.', 404);
+    const chat = this._get(id);
+    if (!chat.proc) throw new UserError('This chat has ended. Resume it first.');
+    return this._request(chat, { subtype }, 30000);
+  }
+
+  // /add-dir: another folder Claude may read and edit in this chat. Claude Code takes extra folders
+  // only when it starts (--add-dir; its add_directory control request is for cloud containers
+  // only), so the chat's Claude Code starts again on the same conversation with the folder added.
+  // Only between turns. Kept with the chat's options, so a later resume has it too.
+  async addDirectory(id, dir) {
+    const chat = this._get(id);
+    const d = typeof dir === 'string' ? dir.trim().replace(/^"(.*)"$/, '$1').replace(/[\\/]+$/, '') : '';
+    if (!d || !path.isAbsolute(d)) throw new UserError('Give the folder\'s full path, as in /add-dir C:\\work\\shared.');
+    let isDir = false;
+    try { isDir = fs.statSync(d).isDirectory(); } catch { /* missing */ }
+    if (!isDir) throw new UserError(`${d} isn't a folder on this PC.`);
+    if (chat.busy || chat.queued > 0) throw new UserError('Claude is working. Add the folder when it has finished.');
+    const dirs = (chat.options && Array.isArray(chat.options.addDirs)) ? chat.options.addDirs : [];
+    const same = (a) => path.resolve(a).toLowerCase() === path.resolve(d).toLowerCase();
+    if (same(chat.cwd) || dirs.some(same)) return { added: false, dirs };
+    chat.options = { ...chat.options, addDirs: [...dirs, d] };
+    this._save();
+    if (chat.proc) {
+      await this.end(id, { keep: true });
+      this.resume(id);
+    }
+    this._push(chat, { kind: 'note', text: `Claude can now work in ${d} too.` });
+    this._changed(chat);
+    return { added: true, dirs: chat.options.addDirs };
   }
 
   // Signing in to an MCP server that needs it, as /mcp does: Claude Code answers with the address

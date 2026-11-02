@@ -920,6 +920,27 @@ test('a chat restored after a restart shows its conversation so far, from the tr
   }
 });
 
+test('terminal-only commands: their read-only queries, and /add-dir starting Claude Code again with the folder', () => withChat(async ({ id, sum, last, say }) => {
+  // /status's control request, answered as Claude Code answers it.
+  assert.strictEqual((await mgr.query(id, 'status')).sections[0].rows[0].value, '0.0.0');
+  // Only the listed queries: not any control request, and not names off the object's prototype.
+  await assert.rejects(mgr.query(id, 'interrupt'), /no such query/);
+  await assert.rejects(mgr.query(id, 'constructor'), /no such query/);
+  const shared = path.join(box.root, 'shared');
+  fs.mkdirSync(shared);
+  await assert.rejects(mgr.addDirectory(id, 'shared'), /full path/);
+  await assert.rejects(mgr.addDirectory(id, path.join(box.root, 'missing')), /isn't a folder/);
+  const pidBefore = mgr.chats.get(id).pid;
+  assert.deepStrictEqual(await mgr.addDirectory(id, `"${shared}\\"`), { added: true, dirs: [shared] }, 'quotes and a trailing slash are dropped');
+  await waitFor(() => sum().status === 'idle' && mgr.chats.get(id).pid !== pidBefore, 'Claude Code started again');
+  assert.match(mgr.chats.get(id).command, /--add-dir/);
+  assert.strictEqual(last('note').text, `Claude can now work in ${shared} too.`);
+  assert.deepStrictEqual(await mgr.addDirectory(id, shared), { added: false, dirs: [shared] }, 'already added');
+  assert.deepStrictEqual(await mgr.addDirectory(id, cwd), { added: false, dirs: [shared] }, "the chat's own folder");
+  await say('still there?');
+  assert.strictEqual(last('assistant').text, 'Echo: still there?');
+}));
+
 test('suggestion labels read like choices', () => {
   assert.strictEqual(describeSuggestion({ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test:*' }], destination: 'localSettings' }), 'Always allow Bash(npm test:*) in this project (just you)');
   assert.strictEqual(describeSuggestion({ type: 'addDirectories', directories: ['C:\\x'], destination: 'session' }), 'Allow access to C:\\x for this session');

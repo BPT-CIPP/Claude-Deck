@@ -1085,6 +1085,25 @@ pre.code.small { font-size: var(--fs-s); max-height: 280px; overflow: auto; whit
 .side-close { margin-left: auto; }
 .side-a .prose { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 6px; line-height: 1.6; }
 .side-answer > p { margin: 4px 0 0; }
+/* What a slash command Claude Deck runs shows (/status, /hooks, /help...), in the /btw panel. */
+.cmd-panel { font-weight: 400; }
+.cmd-sub { font-weight: 600; margin: 10px 0 4px; }
+.cmd-sub:first-child { margin-top: 0; }
+.cmd-list { list-style: none; margin: 0 0 8px; padding: 0; }
+.cmd-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 4px 0; border-top: 1px solid var(--line-soft); }
+.cmd-list li:first-child { border-top: 0; }
+.cmd-strong { font-weight: 600; }
+.cmd-code { font-family: var(--mono); font-size: var(--fs-s); background: var(--panel-2); border-radius: 3px; padding: 1px 6px; overflow-wrap: anywhere; }
+.cmd-panel .facts { margin: 0 0 6px; }
+.cmd-panel .msg-diff { margin: 6px 0; }
+
+/* Focus view (/focus): your prompt, a summary of Claude's steps, and its reply (app.js markFocus). */
+.focus-summary { display: none; }
+.convo.focus-view .focus-summary { display: block; color: var(--faint); font-size: var(--fs-s); margin: 0 0 8px; }
+.convo.focus-view details.msg-tool,
+.convo.focus-view .tool-with-diff,
+.convo.focus-view .msg-tool.line,
+.convo.focus-view .focus-interim { display: none; }
 .prompt-search { position: absolute; bottom: calc(100% + 4px); left: max(32px, calc((100% - var(--column)) / 2)); width: min(580px, calc(100% - 64px)); background: var(--surface-overlay); border: 1px solid var(--line-strong); border-radius: 6px; box-shadow: var(--shadow-pop); padding: 8px; z-index: 26; animation: pop-in var(--dur-normal) var(--ease); }
 .ps-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
 .prompt-search input { width: 100%; }
