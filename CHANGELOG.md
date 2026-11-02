@@ -24,6 +24,10 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   a chat.
 - **Commands only Claude Code's own interface can run** (**/sandbox**, **/ide**, **/terminal-setup**
   and the like) offer to continue the conversation in the Inlaid CLI, where they work.
+- **The session header folds away.** **Hide details**, beside End session, hides the prompt line
+  and the row of controls (model, effort, permissions, plugins, MCP servers, context, cost, tokens)
+  for more room to read; **Show details** brings them back. It's one setting for every session and
+  is kept after a reload.
 - **Every slash command, documented.** docs/SLASH-COMMANDS.md lists all 124 of Claude Code
   2.1.312's commands, what each does in a chat, and what Claude Deck does about it.
 

@@ -787,6 +787,17 @@
     ];
 
     const iconBtn = (name, title, onclick) => h('button', { type: 'button', class: 'ghost icon small', title, 'aria-label': title, onclick }, Deck.icon(name, { size: 13 }));
+    // The prompt line and the instrument row fold away, for more room to read; one setting for
+    // every session. Notes and errors stay.
+    const folded = headFolded();
+    const hasDetails = Boolean(subtitle(it) || controls.length);
+    if (hasDetails) {
+      acts.unshift(h('button', {
+        type: 'button', class: 'ghost small head-fold', 'aria-expanded': String(!folded),
+        title: folded ? 'Show the prompt, model, effort, permissions, context and cost again' : 'Hide the prompt, model, effort, permissions, context and cost',
+        onclick: () => { store.set('headFolded', !folded); renderFocusDetail(); },
+      }, folded ? 'Show details' : 'Hide details'));
+    }
     return h('div', { class: 'detail-head' },
       // The line plate: its lamp and name, what it's doing, then branch, prompt count and the like.
       h('div', { class: 'head-title' },
@@ -810,12 +821,13 @@
           iconBtn('copy', 'Copy session ID', () => copy(it.sessionId, 'Session ID copied'))) : null) : null,
       // Resume, End and the like close the line, leaving the instrument row to controls and meters.
       h('div', { class: 'head-cta' }, acts),
-      subtitle(it) ? h('div', { class: 'muted' }, subtitle(it)) : null,
+      subtitle(it) && !folded ? h('div', { class: 'muted' }, subtitle(it)) : null,
       it.note ? h('p', { class: 'faint', style: { margin: '6px 0 0' } }, it.note) : null,
       it.kind === 'external' ? h('p', { class: 'faint', style: { margin: '6px 0 0' } }, 'Started outside Claude Deck. Choose Continue here to reply to it from the dashboard.') : null,
       it.state === 'failed' && it.launchError ? h('p', { class: 'error' }, it.launchError) : null,
-      controls.length ? h('div', { class: 'head-controls' }, h('dl', { class: 'facts' }, controls)) : h('div', { class: 'head-gap' }));
+      controls.length && !folded ? h('div', { class: 'head-controls' }, h('dl', { class: 'facts' }, controls)) : h('div', { class: 'head-gap' }));
   }
+  const headFolded = () => store.get('headFolded', false) === true;
 
   // Fast mode, as Claude Code's /fast: faster replies, billed as extra usage on top of the plan, so
   // it can only be turned on with Allow API billing (Claude Deck Preferences → Billing).
@@ -1312,7 +1324,7 @@
   function headSignature(it) {
     return JSON.stringify([it.key, it.state, it.status, it.waitingFor, heading(it), it.title, it.name, it.model, it.requestedModel, it.requestedEffort, it.permissionMode,
       it.costUSD, it.tokens, it.context, it.sessionId, it.color, it.gitBranch, it.cwd, it.exitCode, it.note, it.userTurns, it.statusSince,
-      it.runningTasks, it.taskCount, it.mcp, it.fast, Boolean(S.showTasks[it.id]), Boolean(S.showChanges[it.key])]);
+      it.runningTasks, it.taskCount, it.mcp, it.fast, Boolean(S.showTasks[it.id]), Boolean(S.showChanges[it.key]), headFolded()]);
   }
 
   // Someone is using one of the header's controls (typing a model ID, a dropdown open): rebuilding
