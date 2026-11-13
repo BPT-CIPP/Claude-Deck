@@ -784,7 +784,8 @@ button.ghost.head-menu-btn:hover, .head-menu-btn[aria-expanded="true"] { color: 
 .head-extra:empty { display: none; }
 .head-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; flex: 1 1 auto; min-width: 0; }
 .head-id { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-s); color: var(--muted); min-width: 0; white-space: nowrap; }
-.head-id .mono, .head-id .path-text { font-family: var(--mono); font-size: var(--fs-s); }
+.head-id .mono { font-family: var(--mono); font-size: var(--fs-s); }
+.head-id .path-text { font-family: var(--font); font-size: var(--fs-s); }
 .head-branch .ico { color: var(--faint); }
 .head-folder { flex: 0 1 auto; }
 .head-folder .path-text { max-width: none; }
@@ -1205,7 +1206,7 @@ label.pp-row { cursor: pointer; }
 .week-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .week-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .week-sub { display: flex; gap: 10px; font-size: var(--fs-s); min-width: 0; }
-.week-sub .path { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.week-sub .path { font-family: var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .week-sub .live { color: var(--text); font-weight: 600; white-space: nowrap; }
 .week-bar { height: 5px; border-radius: 1px; background: var(--line); overflow: hidden; }
 .week-fill { display: block; height: 100%; background: var(--muted); }
@@ -1272,7 +1273,7 @@ dialog.week-dialog { width: min(780px, calc(100vw - 32px)); }
 .h-sub { grid-column: 1 / -1; display: flex; gap: 10px; font-size: var(--fs-s); color: var(--frame-muted); min-width: 0; }
 .h-row[aria-selected="true"] .h-time, .h-row[aria-selected="true"] .h-sub { color: var(--muted); }
 .h-sub > span { white-space: nowrap; }
-.h-sub .path { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
+.h-sub .path { font-family: var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
 .h-sub .live { color: inherit; font-weight: 700; white-space: nowrap; }
 .h-more { margin: 10px; color: var(--frame-text); }
 /* Folder view: one folder per working directory, opened in place over its conversations. */
@@ -1288,7 +1289,7 @@ dialog.week-dialog { width: min(780px, calc(100vw - 32px)); }
 .h-folder-name.named { font-family: inherit; direction: ltr; }
 .h-chevron { display: inline-flex; line-height: 0; transition: transform var(--dur-fast) var(--ease); }
 .h-folder.open > .h-folder-top .h-chevron { transform: rotate(90deg); }
-.h-folder-name { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.h-folder-name { font-family: var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
 .h-folder-name > bdi { direction: ltr; unicode-bidi: isolate; }
 .h-folder-count { font-size: var(--fs-s); background: var(--plate); color: var(--plate-text); border-radius: 9px; padding: 0 7px; line-height: 18px; font-weight: 600; }
 .h-folder-time { font-size: var(--fs-s); color: var(--frame-muted); white-space: nowrap; }
@@ -1299,12 +1300,79 @@ dialog.week-dialog { width: min(780px, calc(100vw - 32px)); }
 .h-item.dragging { opacity: 0.45; }
 .h-moved { color: var(--frame-muted); font-style: italic; }
 .h-row[aria-selected="true"] .h-moved { color: var(--muted); }
-.h-back { position: absolute; right: 34px; bottom: 5px; padding: 3px; line-height: 0; color: var(--frame-muted); opacity: 0.55; transition: opacity var(--dur-fast) var(--ease); }
-.h-item:hover .h-back, .h-back:focus-visible, .h-row[aria-selected="true"] ~ .h-back { opacity: 1; }
-.h-row[aria-selected="true"] ~ .h-back { color: var(--muted); }
-.h-item.moved .h-sub { padding-right: 54px; }
+.h-back, .h-move { position: absolute; right: 60px; bottom: 5px; padding: 3px; line-height: 0; color: var(--frame-muted); opacity: 0.55; transition: opacity var(--dur-fast) var(--ease); }
+.h-move { right: 34px; }
+.h-item:hover .h-back, .h-back:focus-visible, .h-row[aria-selected="true"] ~ .h-back,
+.h-item:hover .h-move, .h-move:focus-visible, .h-row[aria-selected="true"] ~ .h-move { opacity: 1; }
+.h-row[aria-selected="true"] ~ .h-back, .h-row[aria-selected="true"] ~ .h-move { color: var(--muted); }
+.h-item.moved .h-sub { padding-right: 80px; }
 .h-item { position: relative; }
-.h-item .h-sub { padding-right: 28px; }
+.h-item .h-sub { padding-right: 54px; }
+
+/* Reorganize (app.js openReorganize): History as a map of bubbles. The hub is History, large
+   bubbles are folders (one tag color per top-level folder and everything under it), small ones
+   conversations. This is the one place motion runs longer than the house 160ms: bubbles glide to
+   their new place and a folder ripples when something lands in it. No bounce; off under reduced motion. */
+/* Reorganize is History's third view: the map fills the view, its actions under it. */
+.history-map:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 8px 24px 12px; }
+.reorg { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.reorg .rg-intro { margin: 0; }
+.reorg .dialog-actions { margin-top: 0; }
+.rg-stage { position: relative; flex: 1; min-height: 320px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); overflow: hidden; }
+.rg-map { display: block; width: 100%; height: 100%; touch-action: none; user-select: none; cursor: grab; }
+.rg-map.panning, .rg-map.dragging { cursor: grabbing; }
+.rg-line { stroke: color-mix(in srgb, var(--c, var(--line-strong)) 55%, var(--line-strong)); stroke-width: 1.2; }
+.rg-node { cursor: pointer; outline: none; }
+.rg-node circle { transform-box: fill-box; transform-origin: center; transition: transform var(--dur-normal) var(--ease), stroke-width var(--dur-normal) var(--ease), fill var(--dur-normal) var(--ease); }
+.rg-root { cursor: grab; }
+.rg-root circle { fill: var(--plate); }
+.rg-root .rg-count { fill: var(--plate-text); font-family: var(--font-plate); font-stretch: 87.5%; letter-spacing: 0.08em; text-transform: uppercase; }
+.rg-fold circle { fill: color-mix(in srgb, var(--c) 34%, var(--panel)); stroke: var(--c); stroke-width: 1.5; }
+.rg-nofolder circle { stroke-dasharray: 4 3; }
+.rg-empty circle { fill: var(--panel); stroke-dasharray: 3 3; stroke-width: 1.2; }
+.rg-empty .rg-label { fill: var(--muted); }
+/* A name along its folder's line (reorgAlongLine): starts at the bubble's edge and runs outward. */
+.rg-label.rg-along { text-anchor: start; dominant-baseline: central; }
+.rg-label.rg-along.flip { text-anchor: end; }
+.rg-sess circle { fill: color-mix(in srgb, var(--c) 62%, var(--panel)); stroke: var(--c); stroke-width: 1; }
+.rg-more circle { fill: var(--panel); stroke: var(--c); stroke-width: 1; stroke-dasharray: 3 2; }
+.rg-more .rg-count { font-size: 10px; font-weight: 600; }
+.rg-fold:hover circle, .rg-fold:focus-visible circle, .rg-more:hover circle, .rg-more:focus-visible circle { transform: scale(1.08); stroke-width: 2.5; }
+.rg-sess:hover circle, .rg-sess:focus-visible circle { transform: scale(1.4); stroke-width: 2; }
+.rg-sess.picked circle { fill: var(--text); stroke: var(--focus-ring); stroke-width: 3; transform: scale(1.25); }
+.rg-fold.chosen circle { fill: color-mix(in srgb, var(--c) 62%, var(--panel)); stroke: var(--focus-ring); stroke-width: 4; }
+.rg-fold.target circle { stroke: var(--focus-ring); stroke-width: 3; fill: color-mix(in srgb, var(--c) 62%, var(--panel)); animation: rg-breathe 900ms ease-in-out infinite; }
+.rg-fold.bump circle { animation: rg-bump 480ms var(--ease); }
+.rg-sess.dragging { pointer-events: none; }
+.rg-sess.dragging circle { transform: scale(1.6); fill: var(--text); stroke: var(--focus-ring); stroke-width: 2; transition: none; }
+.rg-count { fill: var(--text); font-size: 12px; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.rg-label { fill: var(--text); font-family: var(--font); font-size: 11px; text-anchor: middle; pointer-events: none; paint-order: stroke; stroke: var(--panel); stroke-width: 4px; stroke-linejoin: round; }
+.rg-fold.chosen .rg-label, .rg-fold.target .rg-label { fill: var(--text); font-weight: 600; }
+.rg-ripple { fill: none; stroke: var(--c, var(--focus-ring)); stroke-width: 2; opacity: 0; transform-box: fill-box; transform-origin: center; pointer-events: none; animation: rg-ripple 900ms var(--ease) both; }
+@keyframes rg-ripple { from { transform: scale(1); opacity: 0.75; } to { transform: scale(2.8); opacity: 0; } }
+@keyframes rg-breathe { 50% { transform: scale(1.2); } }
+@keyframes rg-bump { 35% { transform: scale(1.22); } }
+.rg-tip { position: absolute; z-index: 2; max-width: 360px; pointer-events: none; background: var(--bg); border: 1px solid var(--line-strong); border-radius: 4px; padding: 5px 9px; font-size: var(--fs-s); box-shadow: 0 8px 20px -8px rgba(0, 0, 0, 0.45); overflow-wrap: anywhere; }
+.rg-tip-title { font-weight: 600; }
+.rg-tools { position: absolute; top: 8px; right: 8px; display: flex; align-items: center; gap: 12px; background: color-mix(in srgb, var(--panel) 85%, transparent); border-radius: 4px; padding: 2px 4px 2px 8px; }
+.rg-hint { position: absolute; left: 10px; bottom: 8px; pointer-events: none; }
+/* The Spacing slider beside Show empty folders, and Delete's confirmation of a folder's full path. */
+.rg-spacing { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.rg-spacing input[type="range"] { width: 110px; accent-color: var(--plate); }
+.rg-confirm-path { font-family: var(--font); font-size: var(--fs-s); overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--line-strong); border-radius: 4px; padding: 6px 8px; margin: 0 0 8px; }
+/* Letter tabs for the folder picked on the map, when what's inside takes more than a page. */
+.rg-pages { position: absolute; top: 8px; left: 8px; max-width: calc(100% - 290px); overflow-x: auto; display: flex; align-items: center; gap: 4px; white-space: nowrap; background: color-mix(in srgb, var(--panel) 85%, transparent); border-radius: 4px; padding: 4px 6px; font-size: var(--fs-s); }
+.rg-pages > * { flex: none; }
+.rg-pages > .faint { margin-right: 4px; }
+.rg-page { min-width: 34px; font-family: var(--font); }
+.rg-page[aria-pressed="true"] { background: var(--plate); color: var(--plate-text); border-color: var(--plate); }
+.rg-pagetag { fill: var(--muted); font-family: var(--font); font-size: 10px; text-anchor: middle; pointer-events: none; paint-order: stroke; stroke: var(--panel); stroke-width: 4px; stroke-linejoin: round; }
+.reorg .dialog-actions { align-items: center; }
+.rg-status { max-width: 46ch; }
+@media (prefers-reduced-motion: reduce) {
+  .rg-node circle { transition: none; }
+  .rg-fold.target circle, .rg-fold.bump circle, .rg-ripple { animation: none; }
+}
 .h-del { position: absolute; right: 8px; bottom: 5px; padding: 3px; line-height: 0; color: var(--frame-muted); opacity: 0.55; transition: opacity var(--dur-fast) var(--ease); }
 .h-item:hover .h-del, .h-del:focus-visible, .h-row[aria-selected="true"] + .h-del { opacity: 1; }
 .h-row[aria-selected="true"] + .h-del { color: var(--muted); }
@@ -1357,7 +1425,7 @@ dialog.week-dialog { width: min(780px, calc(100vw - 32px)); }
 .scope-bar .folder { display: flex; gap: 6px; flex: 1; min-width: 320px; }
 .scope-bar .folder input { flex: 1; }
 .file-line { padding: 0 28px 10px; font-size: var(--fs-s); color: var(--faint); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.file-line code { color: var(--muted); }
+.file-line .file-path { color: var(--muted); overflow-wrap: anywhere; }
 .tabs { display: flex; gap: 2px; padding: 0 28px; border-bottom: 1px solid var(--line); }
 .tabs button { border: 0; border-radius: 3px 3px 0 0; background: transparent; color: var(--muted); padding: 6px 12px; }
 .tabs button:hover { background: var(--panel-2); color: var(--text); }
@@ -1365,7 +1433,7 @@ dialog.week-dialog { width: min(780px, calc(100vw - 32px)); }
 .settings-body { overflow-y: auto; flex: 1; padding: 18px 28px 90px; }
 .settings-body .inner { max-width: 900px; }
 .setting { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 6px 24px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
-.setting .s-key { font-family: var(--mono); font-size: var(--fs-s); overflow-wrap: anywhere; display: flex; align-items: center; gap: 7px; font-weight: 600; }
+.setting .s-key { font-family: var(--font); font-size: var(--fs-s); overflow-wrap: anywhere; display: flex; align-items: center; gap: 7px; font-weight: 600; }
 .setting .s-key .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--working); border: 2px solid var(--bezel); box-sizing: content-box; }
 .setting .s-desc { font-size: var(--fs-s); color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
 .setting .s-desc button.link { font-size: var(--fs-s); }
@@ -1402,7 +1470,7 @@ dialog.week-dialog { width: min(780px, calc(100vw - 32px)); }
 .font-pick { display: flex; flex-direction: column; gap: 6px; }
 .font-pick select { max-width: 320px; }
 .font-preview { color: var(--muted); }
-.fav { display: flex; gap: 8px; align-items: center; font-family: var(--mono); font-size: var(--fs-s); }
+.fav { display: flex; gap: 8px; align-items: center; font-family: var(--font); font-size: var(--fs-s); }
 .fav span { flex: 1; overflow-wrap: anywhere; }
 
 /* ---- dialogs --------------------------------------------------------------------------------- */
@@ -1449,7 +1517,7 @@ details.more summary { cursor: pointer; color: var(--muted); font-weight: 600; m
 
 dialog.folder-picker { width: min(860px, calc(100vw - 32px)); }
 .fp-bar { margin-bottom: 12px; }
-.fp-bar input { font-family: var(--mono); font-size: var(--fs-s); }
+.fp-bar input { font-family: var(--font); font-size: var(--fs-s); }
 .fp-body { display: grid; grid-template-columns: 220px 1fr; gap: 14px; height: min(420px, 55vh); }
 .fp-places { overflow-y: auto; border-right: 1px solid var(--line); padding-right: 8px; }
 .fp-places h3 { color: var(--faint); margin: 12px 6px 4px; }
@@ -1472,7 +1540,7 @@ dialog.palette { width: min(660px, calc(100vw - 32px)); padding: 0; margin-top: 
 .p-item[aria-selected="true"], .p-item:hover { background: var(--panel-2); color: var(--text); }
 .p-item .p-kind { color: var(--faint); width: 76px; flex: none; }
 .p-item .p-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.p-item .p-sub { color: var(--faint); font-size: var(--fs-s); white-space: nowrap; font-family: var(--mono); }
+.p-item .p-sub { color: var(--faint); font-size: var(--fs-s); white-space: nowrap; font-family: var(--font); }
 .keys { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; margin: 0; }
 .keys dt { text-align: right; }
 .keys dd { margin: 0; color: var(--muted); }

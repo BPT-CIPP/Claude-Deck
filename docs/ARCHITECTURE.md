@@ -72,8 +72,8 @@ src/prompt-history.js   Ctrl+R: Claude Code's own prompt history (history.jsonl,
 src/live.js             joins chats + terminal registry + tab status + sessions/<pid>.json; notify events
 src/history.js          incremental transcript indexer (titles, cost, token usage by hour, context
                         size; subagent transcripts on request) + transcript reader
-src/history-folders.js  History's folder view: which folder each conversation is filed under (its cwd, or where it was dragged),
-                        and the names folders are shown under
+src/history-folders.js  History's folder view: which folder each conversation is filed under (its cwd, or where it was moved),
+                        the names folders are shown under, and the names sessions were given (History's titles)
 src/launcher.js         claude argument building, model aliases, wt.exe new-tab / focus-tab, close / resume
 src/tab-host.js         runs inside each Windows Terminal tab; starts claude, reports pid and session id
 src/settings-files.js   Claude settings and CLAUDE.md: read, write (backup first), restore
@@ -81,6 +81,7 @@ src/plugins.js          plugins and marketplaces, through Claude Code's own `cla
 src/folders.js          directory listing and new-folder for the in-app folder picker
 src/timeline.js         change timeline: files per turn from Claude's file checkpoints, diffs, restore, undo
 src/trash.js            deleting a conversation: moves its files to the trash, Undo, 30-day purge
+src/recycle.js          a folder on disk to the Windows Recycle Bin (Reorganize's Delete), with what's refused
 src/subagents.js        reads a subagent's own transcript as it grows: steps, model, token usage
 src/usage.js            plan usage limits (the one automatic outbound request; the sign-in token is read-only)
 src/billing.js          billing guard: refuses sessions that would bill an API or cloud account
@@ -180,7 +181,8 @@ Claude Deck's own data is in `%LOCALAPPDATA%\ClaudeDeck\` (or `CLAUDE_DECK_DATA`
 (their launch specs, each removed when its run ends),
 `history-cache.json`, `history-folders.json` (conversations moved to another folder in History's
 folder view), `history-folder-names.json` (names given to folders there; the folders on disk aren't
-renamed), `models.json` (Claude Code's model list and the version it came from),
+renamed), `history-titles.json` (the names sessions were given in Claude Deck, by conversation, which
+History lists them under), `models.json` (Claude Code's model list and the version it came from),
 `backups\` (the last 30 versions of each settings file), `rewinds\` (files as
 they were before each of the last 20 restores, for Undo), `trash\` (deleted conversations, removed for
 good after 30 days), `attachments\<chat id>\` (copies of files dropped on a chat's reply box, which

@@ -251,7 +251,9 @@
   // 5.5, Sonnet 5.5 · 1M context, ...), like a Windows context menu, plus "Other model ID…" for any
   // other ID. catalog is the server's model menu ({ families, extras }, src/models.js), with the
   // versions Claude Code reports. The menu lives on <body> (class model-menu) while it's open.
-  Deck.modelPicker = function modelPicker(catalog, value, onChange, defaultLabel = 'Default') {
+  // noDefault: no item for "whatever the settings choose" (a running chat's header shows the
+  // model it actually runs instead); defaultLabel then only names a model the menu doesn't list.
+  Deck.modelPicker = function modelPicker(catalog, value, onChange, defaultLabel = 'Default', { noDefault = false } = {}) {
     const h = Deck.h;
     const cat = catalog && Array.isArray(catalog.families) ? catalog : { families: [], extras: [] };
     const choices = [...cat.families.flatMap((f) => f.items), ...(cat.extras || [])];
@@ -329,7 +331,7 @@
     };
     const openMenu = () => {
       menu = h('div', { class: 'hm-menu model-menu', role: 'menu', 'aria-label': 'Model' },
-        item(defaultLabel, '', 'Whatever your Claude Code settings choose'),
+        noDefault ? null : item(defaultLabel, '', 'Whatever your Claude Code settings choose'),
         cat.families.map(family),
         (cat.extras || []).map((x) => item(x.label, x.value, x.hint)),
         h('button', { type: 'button', role: 'menuitemradio', class: 'hm-item', 'aria-checked': String(other), onclick: () => { close(false); other = true; custom.hidden = false; draw(); custom.focus(); } }, 'Other model ID…', check(other)));
