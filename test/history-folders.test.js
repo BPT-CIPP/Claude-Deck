@@ -77,3 +77,16 @@ test('notes for conversations that are gone are forgotten', () => {
   assert.deepStrictEqual(Object.keys(folders.load()), [B]);
   folders.set(B, null);
 });
+
+test("a conversation is listed under the name its session was given, until that name is cleared", () => {
+  assert.deepStrictEqual(folders.withTitles(sessions).map((m) => m.title), ['Demo', 'Other', 'No folder']);
+  folders.setTitles({ [A]: '  Renamed in Sessions  ', 'not-an-id': 'x' });
+  assert.deepStrictEqual(folders.titles(), { [A]: 'Renamed in Sessions' });
+  assert.deepStrictEqual(folders.withTitles(sessions).map((m) => m.title), ['Renamed in Sessions', 'Other', 'No folder']);
+  // Forgotten with its conversation, and when the name is cleared.
+  folders.setTitles({ [B]: 'Second' });
+  assert.deepStrictEqual(Object.keys(folders.pruneTitles([A])), [A]);
+  folders.setTitles({ [A]: '' });
+  assert.deepStrictEqual(folders.titles(), {});
+  assert.deepStrictEqual(folders.withTitles(sessions).map((m) => m.title), ['Demo', 'Other', 'No folder']);
+});

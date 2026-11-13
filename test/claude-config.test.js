@@ -54,6 +54,8 @@ test("shows each option's value from the one file /config saves it in", () => {
   assert.strictEqual(byKey.language.value, null, 'not set anywhere');
   // An option this copy of Claude Deck doesn't know yet is still offered, under its own name.
   assert.deepStrictEqual([byKey.someNewOption.label, byKey.someNewOption.value, byKey.someNewOption.where], ['someNewOption', null, null]);
+  // Listed in alphabetical order of the label shown, not Claude Code's order of keys.
+  assert.deepStrictEqual(claudeConfig.options(USAGE, cwd).map((o) => o.label), ['Auto-compact', 'Default permission mode', 'Editor mode', 'Language', 'Respect .gitignore in file picker', 'Show tips', 'someNewOption', 'Switch models when a message is flagged']);
   // The same values, for reading a change back.
   assert.deepStrictEqual(claudeConfig.currentValues(['editor', 'language', 'someNewOption'], cwd), {
     editor: { value: 'vim', where: 'user' }, language: { value: null, where: 'user' }, someNewOption: { value: null, where: null },

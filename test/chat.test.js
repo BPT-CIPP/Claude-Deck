@@ -310,6 +310,32 @@ test('fast mode needs Allow API billing, since it bills extra usage', () => with
   await mgr.setFastMode(id, false);
 }));
 
+test("the header shows the model, effort and permission mode the chat actually runs with, defaults resolved", () => withChat(async ({ id, sum }) => {
+  await waitFor(() => sum().applied, "get_settings' applied values");
+  // Nothing chosen: Claude Code's own default model and effort, and the default mode (Manual).
+  assert.deepStrictEqual(sum().applied, { model: 'claude-opus-5-5', effort: 'medium', mode: 'default' });
+  await mgr.setEffort(id, 'high');
+  await waitFor(() => sum().applied.effort === 'high', 'the new effort, read back');
+  await mgr.setEffort(id, '');
+  await waitFor(() => sum().applied.effort === 'medium', 'back to the default, which is shown as what it is');
+}));
+
+test('a chat started in a permission mode shows that mode before Claude Code first reports one', () => withChat(async ({ sum }) => {
+  await waitFor(() => sum().applied, "get_settings' applied values");
+  assert.strictEqual(sum().applied.mode, 'plan');
+}, Object.assign(Object.create(mgr), { create: (o) => mgr.create({ ...o, permissionMode: 'plan' }) })));
+
+test("ultracode turns on and off for the session, as Claude Code's get_settings reports it", () => withChat(async ({ id, sum, say }) => {
+  for (let i = 0; i < 50 && !sum().ultracode; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.deepStrictEqual(sum().ultracode, { on: false, available: true });
+  await mgr.setUltracode(id, true);
+  assert.deepStrictEqual(sum().ultracode, { on: true, available: true });
+  await say('hello');
+  assert.strictEqual(sum().ultracode.on, true, 'it stays on across turns');
+  await mgr.setUltracode(id, false);
+  assert.deepStrictEqual(sum().ultracode, { on: false, available: true });
+}));
+
 test("Claude Code's suggested next prompt is kept until you send something", () => withChat(async ({ id, sum, say }) => {
   await say('hello');
   // The suggestion is a line of its own, after the turn's result.

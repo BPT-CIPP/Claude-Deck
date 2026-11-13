@@ -611,7 +611,7 @@
       bar,
       T.file ? h('div', { class: 'file-line' },
         h('span', null, def.label),
-        h('code', null, T.file.path),
+        h('span', { class: 'file-path' }, T.file.path),
         h('span', null, T.file.exists ? `saved ${when(T.file.mtimeMs)}` : 'not created yet'),
         h('button', { type: 'button', class: 'link', onclick: () => T.ctx.openFolder(parentDir(T.file.path)) }, 'Open folder')) : null,
       h('div', { class: 'tabs', role: 'tablist' }),

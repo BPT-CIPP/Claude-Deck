@@ -6,6 +6,57 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.22.0] - 2026-11-13
+
+### Added
+- **Move a conversation to any folder.** In History, the folder button beside a conversation's
+  delete button opens Claude Deck's folder picker; the conversation is filed under the folder you
+  choose, with Undo. As with dragging, it still resumes from the folder it was started in.
+- **Reorganize History.** **Reorganize**, History's third view beside Folders and List, shows History as a map of bubbles (every folder's subfolders radiating outward from it): a
+  large bubble for each folder, with the folders inside it hanging off it, and a small bubble for
+  each conversation around its folder. Drag a conversation onto a folder's bubble, or pick one or
+  more conversations, pick a folder and choose **Move**. Pick a folder alone and **Add subfolder**
+  makes a new folder inside it to file conversations under. **Undo move** takes back the last
+  move. Bubbles glide to their new place and a folder ripples when something lands in it (the
+  map holds still under Windows' reduced-motion setting). Scroll zooms, dragging the background
+  pans, **Fit** shows everything. **Show empty folders** puts every folder on the PC within reach,
+  as places to move to: the map starts at the drives, with the folders on the way down to History.
+  Drives and folders with conversations show the folders inside them; double-click any folder (or
+  Shift+Enter) to open or close it. A folder with more than 16 inside shows them a page at a
+  time, with letter tabs (A-C, D-J, as many letters to a page as fit) to pick the page. Hidden
+  folders and node_modules are left out. An empty folder with nothing open under it is a hollow
+  bubble with its name written along its line, so it packs as closely as a conversation.
+  **Spacing** sets how long the lines between folders may
+  be: lowering it draws the longest lines in first, each folder (and everything under it) sliding
+  in along its line only as far as it goes without touching anything, so shorter lines follow
+  only once longer ones are down to them; folders, names and lines never overlap at any setting. **Delete** deletes the picked
+  conversations (to the trash, with **Undo delete**), or, with only a folder picked, moves the
+  folder on disk to the Windows Recycle Bin after a confirmation showing its full path. Drives,
+  folders Windows, Claude Code or Claude Deck need (or that hold one), folders a session is open
+  in, and folders with a file in use are refused.
+- **Ultracode in a chat's header.** Beside Fast mode, while Claude Code offers it (dynamic
+  workflows on, and a model that supports it): Claude runs multi-agent workflows on its own, at any
+  effort level, for that chat only, as /effort ultracode does in the terminal.
+
+### Changed
+- **The Config window lists Claude Code's options in alphabetical order** of the name shown, rather
+  than in the order of Claude Code's own keys.
+- **A chat's header shows the model, effort and permission mode it actually runs with.** Model and
+  Effort no longer have a "Default" entry: they land on what Claude Code is really using (Opus 5.5,
+  medium, as it reports them), and Permissions uses Claude Code's own names for its modes (Manual,
+  Plan, Accept edits, Auto, Don't Ask, Bypass Permissions), on the mode the session is in.
+
+### Fixed
+- **Every font follows Preferences.** History's folder names and paths, Settings' setting names and
+  file path, the Reorganize map's names and tabs, and the folder lists in the picker, palette and
+  usage panel were drawn in the code font, so a changed Text font didn't reach them; they're text
+  now, and follow it. Code itself (code blocks, diffs, commands, settings editors and the Inlaid
+  CLI) gets its own **Code font** in Preferences, fixed-width fonts only.
+- **A renamed session shows its new name in History.** Renaming a session in Sessions changed its
+  name there only; History kept showing the title from Claude Code's transcript. History now lists
+  a conversation under the name its session has, and keeps it after the session ends. Clearing the
+  name shows Claude Code's title again.
+
 ## [1.21.0] - 2026-11-02
 
 ### Added
@@ -646,6 +697,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.22.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.19.1...v1.20.0
 [1.19.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.19.0...v1.19.1

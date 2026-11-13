@@ -186,6 +186,16 @@ test("chats: the header's controls reach Claude Code (model, effort, permission 
   assert.ok(config.options.some((o) => o.key === 'theme'), "/config's options (the Config window)");
 });
 
+test("chats: ultracode is reported, and turns on and off for the session (the Ultracode toggle)", async () => {
+  await waitFor(() => sum().ultracode, "get_settings' ultracode fields");
+  assert.strictEqual(typeof sum().ultracode.available, 'boolean');
+  if (!sum().ultracode.available) return; // this model or setup has no ultracode
+  assert.deepStrictEqual(await chats.setUltracode(chat.id, true), { ok: true });
+  assert.strictEqual(sum().ultracode.on, true, 'on, read back');
+  assert.deepStrictEqual(await chats.setUltracode(chat.id, false), { ok: true });
+  assert.strictEqual(sum().ultracode.on, false, 'off, read back');
+});
+
 test('History: the conversation is in its transcript, with its prompts (History, Changes, usage)', async () => {
   const history = new HistoryIndex();
   await waitFor(async () => { await history.refresh(); return history.get(sum().sessionId); }, 'the conversation in History');

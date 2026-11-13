@@ -95,13 +95,15 @@ function valueOf(key, files) {
 }
 
 // The Config window's rows: Claude Code's options with labels, where each is saved, and its current
-// value as text (null when not set).
+// value as text (null when not set), in alphabetical order of the label shown (a leading symbol,
+// as in "← opens agents", is passed over).
+const byLabel = (label) => String(label).replace(/^[^\p{L}\p{N}]+/u, '');
 function options(usageText, cwd) {
   const files = readFiles(cwd);
   return parseUsage(usageText).map(({ key, values }) => {
     const def = KNOWN[key];
     return { key, label: def ? def.label : key, values, ...valueOf(key, files) };
-  });
+  }).sort((a, b) => byLabel(a.label).localeCompare(byLabel(b.label), undefined, { sensitivity: 'base' }));
 }
 
 // The current values of these options: { key: { value, where } }, for reading a change back.
