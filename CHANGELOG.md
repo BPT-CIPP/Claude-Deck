@@ -6,6 +6,24 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.22.0] - 2026-11-17
+
+### Added
+- **Settings → MCP servers.** A new tab in Claude Code Settings lists the MCP servers Claude Code
+  is set up to start: every project's, and with a project folder chosen, that project's shared ones
+  (its `.mcp.json`) and your own for it. **Add a server** takes a name, where it goes, and either a
+  command (with arguments and environment variables) or an HTTP or SSE URL (with headers);
+  **Remove** takes one away. Claude Code makes each change itself (`claude mcp add-json`,
+  `claude mcp remove`), and sessions pick it up when they start or are resumed. Environment
+  variable and header values are never shown.
+- **Clear all ended sessions.** **Clear all**, beside *Ended* in the session list, removes every
+  ended session listed there in one go, as each one's trash button would, after one confirmation.
+  The conversations stay in History.
+
+### Fixed
+- **Claude Code Settings scrolls.** A tab taller than the window was cut off at the bottom, along
+  with its Save and Revert bar; the tab's content now scrolls and the bar stays in view.
+
 ## [1.21.0] - 2026-11-02
 
 ### Added
@@ -646,6 +664,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.22.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.19.1...v1.20.0
 [1.19.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.19.0...v1.19.1

@@ -94,7 +94,9 @@ node tools/make-icons.js   # regenerate public/icons after changing the mascot g
   refused if the file changed since it was read) and `src/trash.js` (deleting a conversation the user
   chose: moved to the trash, never deleted outright, refused while the conversation is open).
   Plugins and marketplaces change only through Claude Code's own CLI (`src/plugins.js`); MCP
-  servers only through a chat's own Claude Code (`mcp_toggle`, `mcp_reconnect` in `src/chat.js`).
+  servers are turned on or off through a chat's own Claude Code (`mcp_toggle`, `mcp_reconnect` in
+  `src/chat.js`), and added or removed only through `claude mcp add-json` / `claude mcp remove`
+  (`src/mcp-config.js`).
 - **Never test against the live server.** A chat's `claude.exe` is a child of the server, so
   restarting it ends those chats, possibly including the session doing the work. Use
   `npm run sandbox`, and leave restarting the real one to the user.

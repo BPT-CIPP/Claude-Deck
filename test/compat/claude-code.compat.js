@@ -105,6 +105,26 @@ test("command line: the effort levels and permission modes Claude Deck offers ar
   }
 });
 
+test("command line: MCP servers are added and removed by `claude mcp`, kept where Claude Deck reads them (Settings → MCP servers)", async () => {
+  const mcp = require('../../src/mcp-config');
+  const m = new mcp.McpConfig();
+  await m.add({ name: 'compat-user', scope: 'user', type: 'stdio', command: 'node', args: 'server.js', env: 'KEY=v' });
+  await m.add({ name: 'compat-local', scope: 'local', folder: project, type: 'http', url: 'https://example.com/mcp', headers: 'X-Key: k' });
+  await m.add({ name: 'compat-project', scope: 'project', folder: project, type: 'sse', url: 'https://example.com/sse' });
+  const listed = mcp.list(project);
+  assert.deepStrictEqual(listed.user.filter((s) => s.name === 'compat-user').map((s) => [s.type, s.command, s.args, s.env]), [['stdio', 'node', ['server.js'], ['KEY']]]);
+  assert.deepStrictEqual(listed.local.map((s) => [s.name, s.type, s.url, s.headers]), [['compat-local', 'http', 'https://example.com/mcp', ['X-Key']]]);
+  assert.deepStrictEqual(listed.project.map((s) => [s.name, s.type, s.url]), [['compat-project', 'sse', 'https://example.com/sse']]);
+  await assert.rejects(m.add({ name: 'compat-user', scope: 'user', type: 'stdio', command: 'node' }), /already exists/);
+  await m.remove({ name: 'compat-user', scope: 'user' });
+  await m.remove({ name: 'compat-local', scope: 'local', folder: project });
+  await m.remove({ name: 'compat-project', scope: 'project', folder: project });
+  await assert.rejects(m.remove({ name: 'compat-user', scope: 'user' }), /No MCP server named/);
+  const after = mcp.list(project);
+  assert.deepStrictEqual([after.local, after.project, after.user.filter((s) => s.name.startsWith('compat-'))], [[], [], []]);
+  fs.rmSync(path.join(project, '.mcp.json'), { force: true });
+});
+
 // ---- chats (stream-json) ----------------------------------------------------------------------
 let chat = null;
 const items = () => chats.detail(chat.id).items;

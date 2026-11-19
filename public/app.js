@@ -328,6 +328,34 @@
     await run("Couldn't dismiss", () => api('POST', `/api/sessions/${it.id}/dismiss`));
   }
 
+  // Clear all, beside the Ended plate: removes each ended session listed there as its trash button
+  // does (rowRemoval: a Windows Terminal tab that ended is closed), after one confirmation.
+  async function clearEnded(items) {
+    const n = items.length;
+    const tabs = items.filter((it) => isTerminal(it) && it.state === 'exited').length;
+    const ok = await Deck.confirm({
+      title: `Clear ${n} ended session${n === 1 ? '' : 's'}?`,
+      body: `${n === 1 ? 'It goes' : 'They go'} from the list${tabs ? `, and ${tabs === 1 ? 'its Windows Terminal tab closes' : `${tabs} Windows Terminal tabs close`}` : ''}. The conversations stay in History.`,
+      ok: 'Clear all',
+    });
+    if (!ok) return;
+    let failed = 0;
+    for (const it of items) {
+      const [path, payload] = isChat(it) ? [`/api/chats/${it.id}/end`]
+        : isEmbedded(it) ? [`/api/terminals/${it.id}/end`, { remove: true }]
+          : it.state === 'failed' ? [`/api/sessions/${it.id}/dismiss`]
+            : [`/api/sessions/${it.id}/close`];
+      try {
+        await api('POST', path, payload);
+        if (S.selected === it.key) S.selected = null;
+      } catch {
+        failed++;
+      }
+    }
+    if (failed) toast(`Cleared ${n - failed} of ${n}; ${failed} couldn't be removed. Try their trash buttons.`, 'error');
+    else toast(`Cleared ${n} ended session${n === 1 ? '' : 's'}`);
+  }
+
   // The name plate is edited where it sits: Enter saves, Esc puts it back. Without the header on
   // screen (another session selected), it asks in a small dialog instead.
   async function rename(it) {
@@ -511,6 +539,7 @@
     for (const { lane, items } of groups) {
       if (!items.length) continue;
       list.appendChild(h('div', { class: 'focus-group', role: 'heading', 'aria-level': '2' }, h('span', { class: `lamp ${lane.key}` }), `${lane.label} (${items.length})`));
+      if (lane.key === 'ended') list.appendChild(h('button', { type: 'button', class: 'ghost small fg-clear', title: 'Remove every ended session listed here (the conversations stay in History)', onclick: () => clearEnded(items) }, 'Clear all'));
       for (const it of items) {
         const removal = rowRemoval(it);
         list.appendChild(h('div', { class: 'focus-item' },
