@@ -203,6 +203,7 @@ function streamMode() {
   let earlier = [];
   let suggestions = false; // initialize's promptSuggestions
   let fastMode = false;
+  let ultracode = false; // the session's ultracode (apply_flag_settings; read back with get_settings)
   let backgroundNow = null; // Ctrl+B (background_tasks) for the foreground task running now
   let permissionMode = flagValue('--permission-mode') || 'default';
 
@@ -495,6 +496,7 @@ function streamMode() {
         // Like the real CLI: effortLevel changes the session's effort; null goes back to the default.
         if (sub === 'apply_flag_settings' && m.request.settings && 'effortLevel' in m.request.settings) effort = m.request.settings.effortLevel;
         if (sub === 'apply_flag_settings' && m.request.settings && 'fastMode' in m.request.settings) fastMode = m.request.settings.fastMode === true;
+        if (sub === 'apply_flag_settings' && m.request.settings && 'ultracode' in m.request.settings) ultracode = m.request.settings.ultracode === true;
         if (sub === 'initialize') suggestions = m.request.promptSuggestions === true;
         if (sub === 'set_permission_mode') permissionMode = m.request.mode;
         if (sub === 'background_tasks' && backgroundNow) backgroundNow();
@@ -510,6 +512,8 @@ function streamMode() {
         }
         if (sub === 'side_question') response = { response: `Aside: ${m.request.question}`, synthetic: false };
         // Shaped like the real CLI's (2.1.312), trimmed.
+        // Shaped like the real CLI's (2.1.321), trimmed to what Claude Deck reads.
+        if (sub === 'get_settings') response = { effective: { ultracode, ...(effort ? { effortLevel: effort } : {}) }, sources: [], applied: { model: FAKE_MODELS[0].resolvedModel || 'claude-opus-5-5', effort: effort || 'medium', ultracode, ultracodeRequested: ultracode, ultracodeAvailable: true } };
         if (sub === 'get_status') response = { sections: [{ title: 'Session', rows: [{ label: 'Version', value: '0.0.0' }, { label: 'cwd', value: process.cwd() }] }] };
         if (sub === 'mcp_authenticate') {
           if (!mcpServers.some((s) => s.name === m.request.serverName)) {

@@ -358,6 +358,8 @@ class ChatManager extends EventEmitter {
       todoCalls: new Map(), // tool_use id -> a to-do call waiting for its result
       suggestion: null, // Claude Code's suggested next prompt (prompt_suggestion)
       fast: null, // { state: 'off'|'cooldown'|'on', reason } fast mode, as Claude Code reports it
+      ultracode: null, // { on, available } ultracode for this session, as Claude Code reports it (_readApplied)
+      applied: null, // { model, effort, mode } what this session actually runs with, defaults resolved (_readApplied)
       foreground: new Map(), // task_id -> running tasks Claude waits for (Ctrl+B backgrounds them)
       bgTasks: [], // [{ taskId, type, description }] running in the background (background_tasks_changed)
       silent: new Set(), // uuids of messages that don't start a turn (shell mode's output)
@@ -504,7 +506,27 @@ class ChatManager extends EventEmitter {
       if (res.fast_mode_state) chat.fast = { state: String(res.fast_mode_state), reason: res.fast_mode_disabled_reason ? String(res.fast_mode_disabled_reason) : null };
       this._readContext(chat);
       this._readMcp(chat);
+      this._readApplied(chat);
     }).catch(() => {});
+  }
+
+  // What this session actually runs with, defaults resolved, from get_settings: `applied` holds
+  // the model and effort in effect and ultracode (whether it's on, and whether it can be: dynamic
+  // workflows on, and a model that supports it); see docs/CLAUDE-CODE-INTERNALS.md. The header's
+  // menus show these rather than "Default". The permission mode before Claude Code first reports
+  // one: the one the chat was started with, else the settings' default mode, else Manual.
+  async _readApplied(chat) {
+    if (!chat.proc) return;
+    try {
+      const r = await this._request(chat, { subtype: 'get_settings' }, 10000);
+      const a = (r && r.applied) || {};
+      const e = (r && r.effective) || {};
+      const started = chat.options.permissionMode === 'manual' ? 'default' : chat.options.permissionMode;
+      const mode = started || (e.permissions && typeof e.permissions.defaultMode === 'string' ? e.permissions.defaultMode : '') || 'default';
+      chat.applied = { model: typeof a.model === 'string' ? a.model : null, effort: typeof a.effort === 'string' ? a.effort : null, mode };
+      chat.ultracode = { on: a.ultracode === true, available: a.ultracodeAvailable === true };
+      this._changed(chat);
+    } catch { /* an older Claude Code: no ultracode control, and the menus show what's known */ }
   }
 
   // The MCP servers' status, for the header's button. Servers connect in the background after
@@ -1386,6 +1408,18 @@ class ChatManager extends EventEmitter {
     return { ok: true };
   }
 
+  // Ultracode, as Claude Code's /effort ultracode on|off: for this session only, at any effort level.
+  async setUltracode(id, on) {
+    const chat = this._get(id);
+    if (!chat.proc) throw new UserError('This chat has ended.');
+    if (on && chat.ultracode && !chat.ultracode.available) throw new UserError("Ultracode isn't available in this chat: it needs dynamic workflows on (Config) and a model that supports it.", 409);
+    await this._request(chat, { subtype: 'apply_flag_settings', settings: { ultracode: on === true } });
+    await this._readApplied(chat);
+    this._push(chat, { kind: 'note', text: on ? 'Ultracode is on for this chat: Claude can run multi-agent workflows on its own, at any effort level.' : 'Ultracode is off.' });
+    this._changed(chat);
+    return { ok: true };
+  }
+
   // Restore files to how they were before the prompt with this uuid, through Claude's own
   // checkpoints so its file history stays consistent. dryRun reports what would change:
   // { canRewind, filesChanged, insertions, deletions } (or { canRewind:false, error }).
@@ -1556,6 +1590,7 @@ class ChatManager extends EventEmitter {
     this._changed(chat);
     this._save();
     this._readContext(chat); // the new model's context window can be a different size
+    this._readApplied(chat); // and whether ultracode is available depends on the model
     return { ok: true };
   }
 
@@ -1567,6 +1602,7 @@ class ChatManager extends EventEmitter {
     await this._request(chat, { subtype: 'apply_flag_settings', settings: { effortLevel: effort || null } });
     chat.options.effort = effort;
     this._push(chat, { kind: 'note', text: `Effort changed to ${effort || 'the default'}.` });
+    this._readApplied(chat);
     this._changed(chat);
     this._save();
     return { ok: true };
@@ -1772,6 +1808,8 @@ class ChatManager extends EventEmitter {
       todos: chat.todos,
       suggestion: chat.proc ? chat.suggestion : null,
       fast: chat.proc ? chat.fast : null,
+      ultracode: chat.proc ? chat.ultracode : null,
+      applied: chat.proc ? chat.applied : null,
       foregroundTasks: chat.foreground.size,
       bgTasks: chat.bgTasks,
       exitCode: chat.exitCode,

@@ -65,8 +65,12 @@
     bahnschrift: { label: 'Bahnschrift', face: 'Bahnschrift', stack: 'Bahnschrift, "Segoe UI", sans-serif' },
     cascadia: { label: 'Cascadia Code', face: 'Cascadia Code', stack: '"Cascadia Code", "Cascadia Mono", Consolas, monospace' },
     consolas: { label: 'Consolas', face: 'Consolas', stack: 'Consolas, "Cascadia Mono", monospace' },
+    lucida: { label: 'Lucida Console', face: 'Lucida Console', stack: '"Lucida Console", Consolas, monospace' },
+    courier: { label: 'Courier New', face: 'Courier New', stack: '"Courier New", Consolas, monospace' },
   };
-  const FONT_DEFAULTS = { fontText: 'Segoe UI Variable', fontLabels: 'Bahnschrift' };
+  const FONT_DEFAULTS = { fontText: 'Segoe UI Variable', fontLabels: 'Bahnschrift', fontCode: 'Cascadia Code' };
+  // The code font keeps every character the same width, so only fixed-width fonts (src/prefs.js CODE_FONTS).
+  const CODE_FONT_IDS = ['default', 'cascadia', 'consolas', 'lucida', 'courier'];
 
   // Whether this PC has a font: text set in it measures differently from the fallbacks.
   const fontSeen = new Map();
@@ -750,20 +754,25 @@
     let effortFact = isChat(it) ? it.requestedEffort || null : null;
     let modeFact = isChat(it) ? it.permissionMode || null : null;
     if (isChat(it) && it.state !== 'exited') {
-      // "claude-" left off the default's name, to keep the control row on one line.
-      modelFact = Deck.modelPicker(S.boot.models, it.requestedModel || '',(m) => run("Couldn't change the model", () => api('POST', `/api/chats/${it.id}/model`, { model: m })), `Default (${it.model ? it.model.replace(/^claude-/, '') : 'from settings'})`);
+      // Each menu shows what the chat actually runs with, defaults resolved (Claude Code's
+      // get_settings, src/chat.js _readApplied): no "Default" entry of its own.
+      const running = it.model || (it.applied && it.applied.model) || '';
+      modelFact = Deck.modelPicker(S.boot.models, it.requestedModel || modelChoiceFor(running), (m) => run("Couldn't change the model", () => api('POST', `/api/chats/${it.id}/model`, { model: m })),
+        running ? running.replace(/^claude-/, '') : 'Reading…', { noDefault: true });
+      const effort = it.requestedEffort || (it.applied && it.applied.effort) || '';
       effortFact = h('select', { class: 'small', 'aria-label': 'Effort', onchange: (e) => run("Couldn't change the effort", () => api('POST', `/api/chats/${it.id}/effort`, { effort: e.target.value })) },
-        h('option', { value: '' }, 'Default'),
-        S.boot.enums.efforts.map((v) => h('option', { value: v, selected: v === it.requestedEffort }, v)));
+        effort ? null : h('option', { value: '', selected: true, disabled: true }, it.applied ? 'None' : 'Reading…'),
+        S.boot.enums.efforts.map((v) => h('option', { value: v, selected: v === effort }, v)));
+      const mode = it.permissionMode || (it.applied && it.applied.mode) || 'default';
       const modes = ['default', ...S.boot.enums.permissionModes.filter((m) => m !== 'manual')];
       modeFact = h('select', { class: 'small', 'aria-label': 'Permission mode', onchange: (e) => run("Couldn't change the permission mode", () => api('POST', `/api/chats/${it.id}/mode`, { mode: e.target.value })) },
-        modes.map((m) => h('option', { value: m, selected: m === (it.permissionMode || 'default') }, m)));
+        modes.map((m) => h('option', { value: m, selected: m === mode }, PERMISSION_TITLES[m] || m)));
     }
     // One row of controls and meters under the title.
     // Cost and tokens read like the context meter: the value, and what the latest turn added.
     const reading = (value, change) => (value === null || value === undefined || value === '' ? null : h('span', { class: 'reading' }, value, change));
     const costNow = money(it.costUSD);
-    const controls = [fact('Model', modelFact), fact('Effort', effortFact), isChat(it) && it.fast ? fact('Fast mode', fastToggle(it)) : null, fact('Permissions', modeFact), isChat(it) ? fact('Plugins', pluginsButton(it)) : null,
+    const controls = [fact('Model', modelFact), fact('Effort', effortFact), isChat(it) && it.fast ? fact('Fast mode', fastToggle(it)) : null, isChat(it) && it.ultracode && (it.ultracode.available || it.ultracode.on) ? fact('Ultracode', ultracodeToggle(it)) : null, fact('Permissions', modeFact), isChat(it) ? fact('Plugins', pluginsButton(it)) : null,
       isChat(it) && it.state !== 'exited' ? fact('MCP servers', mcpButton(it)) : null,
       contextFact(it),
       fact('Current cost', reading(costNow, costNow ? turnChange(it, 'cost', it.costUSD, money) : null)),
@@ -829,6 +838,27 @@
   }
   const headFolded = () => store.get('headFolded', false) === true;
 
+  // Claude Code's own names for its permission modes (as its Shift+Tab indicator shows them).
+  const PERMISSION_TITLES = { default: 'Manual', plan: 'Plan', acceptEdits: 'Accept edits', auto: 'Auto', dontAsk: "Don't Ask", bypassPermissions: 'Bypass Permissions' };
+
+  // The model menu's entry for the model a chat runs when it wasn't given one: its family's own
+  // entry (which follows the newest version, as Claude Code's default does; the 1M one for a 1M
+  // model), else that exact version; '' for a model the menu doesn't list.
+  function modelChoiceFor(id) {
+    const cat = S.boot.models;
+    if (!id || !cat || !Array.isArray(cat.families)) return '';
+    const long = /\[1m\]$/.test(id);
+    const base = id.replace(/\[1m\]$/, '');
+    for (const f of cat.families) {
+      if (!f.items.some((i) => i.value === base || i.value === id)) continue;
+      const own = f.items.find((i) => !i.pinned && i.value !== 'opusplan' && /\[1m\]$/.test(i.value) === long);
+      if (own) return own.value;
+      const exact = f.items.find((i) => i.value === id);
+      return exact ? exact.value : '';
+    }
+    return '';
+  }
+
   // Fast mode, as Claude Code's /fast: faster replies, billed as extra usage on top of the plan, so
   // it can only be turned on with Allow API billing (Claude Deck Preferences → Billing).
   function fastToggle(it) {
@@ -840,6 +870,23 @@
     return h('label', { class: 'check fast-toggle', title },
       h('input', { type: 'checkbox', checked: on, disabled: !allowed, 'aria-label': 'Fast mode', onchange: (e) => run("Couldn't change fast mode", () => api('POST', `/api/chats/${it.id}/fast`, { on: e.target.checked })) }),
       it.fast.state === 'cooldown' ? 'Cooling down' : on ? 'On' : 'Off');
+  }
+
+  // Ultracode, as Claude Code's /effort ultracode on|off: Claude runs multi-agent workflows on its
+  // own, at any effort level, for this chat only. Offered while Claude Code says it's available
+  // (dynamic workflows on, and a model that supports it).
+  function ultracodeToggle(it) {
+    const on = it.ultracode.on;
+    const word = document.createTextNode(on ? 'On' : 'Off');
+    // The word follows the box at once (the header redraws later); a refusal puts both back.
+    const change = async (e) => {
+      const want = e.target.checked;
+      word.textContent = want ? 'On' : 'Off';
+      if (await run("Couldn't change ultracode", () => api('POST', `/api/chats/${it.id}/ultracode`, { on: want })) === null) { e.target.checked = !want; word.textContent = want ? 'Off' : 'On'; }
+    };
+    return h('label', { class: 'check fast-toggle', title: 'Claude orchestrates multi-agent workflows on its own, at any effort level. Uses more of your plan. This chat only.' },
+      h('input', { type: 'checkbox', checked: on, 'aria-label': 'Ultracode', onchange: change }),
+      word);
   }
 
   // ---- cost, tokens and context (chat header) ------------------------------------------------
@@ -1324,7 +1371,7 @@
   function headSignature(it) {
     return JSON.stringify([it.key, it.state, it.status, it.waitingFor, heading(it), it.title, it.name, it.model, it.requestedModel, it.requestedEffort, it.permissionMode,
       it.costUSD, it.tokens, it.context, it.sessionId, it.color, it.gitBranch, it.cwd, it.exitCode, it.note, it.userTurns, it.statusSince,
-      it.runningTasks, it.taskCount, it.mcp, it.fast, Boolean(S.showTasks[it.id]), Boolean(S.showChanges[it.key]), headFolded()]);
+      it.runningTasks, it.taskCount, it.mcp, it.fast, it.ultracode, it.applied, Boolean(S.showTasks[it.id]), Boolean(S.showChanges[it.key]), headFolded()]);
   }
 
   // Someone is using one of the header's controls (typing a model ID, a dropdown open): rebuilding
@@ -3572,13 +3619,18 @@
     return { background: v('--bg'), foreground: v('--text'), cursor: v('--text'), cursorAccent: v('--bg'), selectionBackground: 'rgba(128, 128, 128, 0.35)' };
   }
 
+  // The code font (Preferences), for the terminal, which draws its own text.
+  function codeFont() {
+    return getComputedStyle(document.documentElement).getPropertyValue('--mono').trim() || '"Cascadia Code", "Cascadia Mono", Consolas, monospace';
+  }
+
   function mountTerminal(it) {
     unmountTerminal();
     const box = $('#focus-detail .term-box');
     if (!box || typeof Terminal !== 'function') return;
     const xterm = new Terminal({
       theme: termTheme(),
-      fontFamily: '"Cascadia Code", "Cascadia Mono", Consolas, monospace',
+      fontFamily: codeFont(),
       fontSize: 13,
       cursorBlink: true,
       scrollback: 5000,
@@ -4395,7 +4447,7 @@
   }
 
   function setHistoryView(view) {
-    S.historyView = view === 'list' ? 'list' : 'folders';
+    S.historyView = view === 'list' || view === 'map' ? view : 'folders';
     store.set('historyView', S.historyView);
     renderHistory();
   }
@@ -4440,6 +4492,13 @@
         'aria-label': `Put ${m.title || 'this conversation'} back in ${m.movedFrom}`,
         onclick: () => moveConversation(m, null),
       }, Deck.icon('up', { size: 13 })) : null,
+      h('button', {
+        type: 'button',
+        class: 'ghost icon h-move',
+        title: 'Move to another folder in History: pick any folder on this PC',
+        'aria-label': `Move ${m.title || 'this conversation'} to another folder`,
+        onclick: () => pickConversationFolder(m),
+      }, Deck.icon('folder', { size: 13 })),
       h('button', {
         type: 'button',
         class: 'ghost icon h-del',
@@ -4539,6 +4598,1140 @@
     toast(folder ? `Moved to ${folderLabel(folder)}` : `Put back in ${folderLabel(now.folder)}`, 'info', { label: 'Undo', ms: 8000, run: () => moveConversation(now, before) });
   }
 
+  // A tile's Move: any folder on this PC, chosen in Claude Deck's own folder picker.
+  async function pickConversationFolder(m) {
+    const folder = await pickFolder(m.folder || m.cwd || undefined);
+    if (!folder) return;
+    if (folder.toLowerCase() === folderKey(m)) { toast('It\'s already filed under that folder.'); return; }
+    moveConversation(m, folder);
+  }
+
+  // ---- reorganize ----------------------------------------------------------------------------
+  // History drawn as a map of bubbles: History at the hub, a bubble for each folder around it
+  // (a folder inside another hangs off it), and each folder's conversations as small bubbles
+  // around their folder. Move conversations by dragging them onto a folder's bubble, or by picking
+  // them, then a folder, then Move; pick a folder alone and Add subfolder makes one inside it (a
+  // real folder, as the folder picker's New folder does). Moves are History's own notes
+  // (src/history-folders.js). Everything glides to its new place, and a folder ripples when
+  // something lands in it; under reduced motion it all just changes.
+  const REORG = { picked: new Set(), folder: null, extra: new Map(), shown: {}, undo: null, status: '', nodes: new Map(), view: { x: 0, y: 0, k: 1 }, raf: 0, drag: null, keep: new Map(), empty: false, disk: new Map(), loading: false, drives: null, open: new Map(), page: new Map(), pages: new Map(), pagesFor: null, anchor: null, fitNext: false, packs: new Map(), dirs: new Map(), win: new Map(), spacing: 50 };
+  const RG = { root: 42, session: 9, more: 12, page: 18, ring: 28, gap: 25, glide: 460 };
+  const RG_COLORS = ['cyan', 'sage', 'amber', 'violet', 'rose', 'sand', 'slate'];
+  const RG_STILL = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const svgEl = (tag, attrs, ...kids) => {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs || {})) if (v !== null && v !== undefined && v !== false) el.setAttribute(k, String(v));
+    for (const c of kids.flat()) if (c !== null && c !== undefined) el.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+    return el;
+  };
+
+  // Show empty folders reaches every folder on the PC: the map starts at the drives, every folder
+  // on the way down to one in History is on it, and an open folder shows the folders on disk
+  // inside it (reorgLoadDisk), a page at a time (reorgPages). Drives and folders with
+  // conversations start open; any folder opens or closes on a double-click.
+  const RG_PAGE = 16;
+  const RG_DRIVE = /^[a-z]:\\?$/i;
+  function rgParentPath(p) {
+    const s = p.replace(/[\\/]+$/, '');
+    if (RG_DRIVE.test(s)) return null;
+    const i = s.lastIndexOf('\\');
+    if (i < 0) return null;
+    const up = s.slice(0, i);
+    if (RG_DRIVE.test(up)) return `${up}\\`;
+    return /^\\\\[^\\]*$/.test(up) ? null : up; // a network share is as high as it goes
+  }
+
+  function reorgIsOpen(f) {
+    if (REORG.open.has(f.key)) return REORG.open.get(f.key);
+    return RG_DRIVE.test(f.path) || f.rows.length > 0 || REORG.extra.has(f.key) || REORG.keep.has(f.key);
+  }
+
+  // A folder's subfolders in pages of at most RG_PAGE, by initial: "A-C", "D-J", as many letters
+  // to a page as fit; names that don't start with a letter come first, as "#". A letter with more
+  // than a page of its own is split, each page named like a dictionary's guide words: just enough
+  // of its first and last names to tell them from the pages either side ("Sa-Sh", "Si-Sz").
+  function reorgPages(entries) {
+    if (entries.length <= RG_PAGE) return [{ label: 'All', items: entries.map((e) => e.path), title: '' }];
+    const sorted = entries.slice().sort((a, b) => { const [x, y] = [a.name.toLowerCase(), b.name.toLowerCase()]; return x < y ? -1 : x > y ? 1 : 0; });
+    const initial = (e) => { const c = e.name.charAt(0).toUpperCase(); return /[A-Z]/.test(c) ? c : '#'; };
+    const byInitial = new Map();
+    sorted.forEach((e, i) => { const c = initial(e); if (!byInitial.has(c)) byInitial.set(c, []); byInitial.get(c).push(i); });
+    const order = [...byInitial.keys()].sort((a, b) => (a === '#' ? -1 : b === '#' ? 1 : a < b ? -1 : 1));
+    // The start of `name` that `other` doesn't share (two letters at least); a long shared start
+    // is shortened to its first letters and where the two differ ("Bro…6a").
+    const tell = (name, other) => {
+      let n = 0;
+      if (other) { const [x, y] = [name.toLowerCase(), other.toLowerCase()]; while (n < x.length && x[n] === y[n]) n++; }
+      const s = name.slice(0, Math.max(2, n + 1));
+      const short = s.length > 8 ? `${s.slice(0, 3)}…${s.slice(-2)}` : s;
+      return short.charAt(0).toUpperCase() + short.slice(1);
+    };
+    const page = (from, to, label) => ({ label, items: sorted.slice(from, to + 1).map((e) => e.path), title: `${sorted[from].name} to ${sorted[to].name}` });
+    const pages = [];
+    let cur = null;
+    const flush = () => { if (cur) pages.push(page(cur.from, cur.to, cur.a === cur.b ? cur.a : `${cur.a}-${cur.b}`)); cur = null; };
+    for (const c of order) {
+      const at = byInitial.get(c);
+      if (at.length > RG_PAGE) {
+        flush();
+        for (let i = 0; i < at.length; i += RG_PAGE) {
+          const [from, to] = [at[i], at[Math.min(i + RG_PAGE, at.length) - 1]];
+          const a = tell(sorted[from].name, from > 0 ? sorted[from - 1].name : '');
+          const b = tell(sorted[to].name, to + 1 < sorted.length ? sorted[to + 1].name : '');
+          pages.push(page(from, to, a === b ? a : `${a}-${b}`));
+        }
+      } else if (cur && cur.to - cur.from + 1 + at.length <= RG_PAGE) {
+        cur.to = at[at.length - 1];
+        cur.b = c;
+      } else {
+        flush();
+        cur = { from: at[0], to: at[at.length - 1], a: c, b: c };
+      }
+    }
+    flush();
+    return pages;
+  }
+
+  // Folders nested by path: each goes under the nearest listed folder that contains it. Also the
+  // pages of every open folder with more inside than fits on one: key -> { groups, at }.
+  function reorgTree() {
+    const folders = new Map(); // key -> { key, path, rows, children }
+    const node = (p) => {
+      const key = p.toLowerCase();
+      if (!folders.has(key)) folders.set(key, { key, path: p, rows: [], children: [] });
+      return folders.get(key);
+    };
+    const loose = [];
+    for (const m of S.history.sessions) { if (m.folder) node(m.folder).rows.push(m); else loose.push(m); }
+    // Folders added here, and (while the map is open) ones that were emptied here: still places to move to.
+    for (const p of [...REORG.extra.values(), ...REORG.keep.values()]) node(p);
+    const pages = new Map();
+    if (REORG.empty) {
+      for (const p of REORG.drives || []) node(p);
+      for (const f of [...folders.values()]) for (let up = rgParentPath(f.path); up && !folders.has(up.toLowerCase()); up = rgParentPath(up)) node(up);
+      const queue = [...folders.values()];
+      while (queue.length) {
+        const f = queue.shift();
+        const inside = REORG.disk.get(f.key);
+        if (!inside || !inside.length || !reorgIsOpen(f)) continue;
+        const groups = reorgPages(inside);
+        const at = Math.min(REORG.page.get(f.key) || 0, groups.length - 1);
+        if (groups.length > 1) pages.set(f.key, { groups, at });
+        for (const p of groups[at].items) if (!folders.has(p.toLowerCase())) queue.push(node(p));
+      }
+    }
+    const all = [...folders.values()].sort((a, b) => a.key.length - b.key.length);
+    const roots = [];
+    for (const f of all) {
+      const parent = all.filter((x) => x !== f && f.key.startsWith(x.key.replace(/[\\/]+$/, '') + '\\')).pop();
+      (parent ? parent.children : roots).push(Object.assign(f, { parent: parent || null }));
+    }
+    const byName = (a, b) => folderLabel(a.path, 1).localeCompare(folderLabel(b.path, 1));
+    for (const f of all) f.children.sort(byName);
+    return { roots: roots.sort(byName), loose, folders, pages };
+  }
+
+  // Where every bubble belongs: key -> { kind, x, y, r, parent, color, ... }. History's hub is at
+  // 0,0. A folder's conversations fan out on rings on the side away from its parent, newest
+  // first (the rest behind a "+N" bubble); folders inside it sit beyond those rings.
+  function reorgLayout() {
+    const { roots, loose } = reorgTree();
+    const out = new Map();
+    const tops = roots.slice();
+    if (loose.length) tops.push({ key: '(none)', path: '', rows: loose, children: [], parent: null });
+    // A color for each branch from where History first splits: above that (a lone hub, or the
+    // drive and folders over everything in History) the map is slate; then each branch gets its
+    // own color, carried by everything under it. Branches with no conversations stay slate.
+    const held = new Map();
+    const holds = (f) => { if (!held.has(f)) held.set(f, f.rows.length > 0 || f.children.some(holds)); return held.get(f); };
+    const hue = (i) => RG_COLORS[i % (RG_COLORS.length - 1)];
+    const prep = (f, color) => {
+      f.color = color || 'slate';
+      // A folder with nothing filed under it is a small, hollow bubble.
+      f.r = f.rows.length ? 24 + Math.min(16, Math.sqrt(f.rows.length) * 2.4) : f.children.length ? 20 : 15;
+      const rows = f.rows.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      f.items = rows.slice(0, REORG.shown[f.key] || RG.page);
+      f.more = rows.length - f.items.length;
+      if (color) { for (const c of f.children) prep(c, color); return; }
+      const split = f.rows.length > 0 || f.children.filter(holds).length > 1;
+      let i = 0;
+      for (const c of f.children) prep(c, split ? hue(i++) : holds(c) ? null : 'slate');
+    };
+    const split = tops.filter((f) => f.path && holds(f)).length > 1;
+    let hues = 0;
+    for (const f of tops) prep(f, !f.path ? 'slate' : split ? hue(hues++) : holds(f) ? null : 'slate');
+    // Spacing: a radial tree. Each folder's cluster (its bubble and name, its conversations and
+    // every folder inside it) has a shape, worked out from the inside out. A folder's subfolders
+    // sit round it in alphabetical order, each in its own wedge of the turn, and no two wedges
+    // overlap, so nothing in one branch touches or crosses anything in another and every link runs
+    // down the middle of its own wedge. They sit just clear of the folder's conversations, as near
+    // as the wedges allow: the ring only grows when the folders on it need the room. Wedges leave
+    // out the folder's own name, and (except at the hub) the line its own link comes in along.
+    //
+    // A folder's name is drawn level, just outside its bubble, square to its link (on the
+    // clockwise side: under a folder that points right, beside one that points up; reorgSync), so
+    // the link coming in never meets it and straight ahead stays free for the folders inside.
+    // Which way that is on screen isn't known until the whole map is laid out, so the room kept
+    // for it is everywhere a level name could fall on that side, whichever way the folder ends up
+    // facing; its conversations and subfolders keep clear of all of it. The hub's name sits under
+    // it, as the hub always faces up.
+    // A cluster whose contents haven't changed keeps its shape from the last time (REORG.packs).
+    // The Spacing slider (REORG.spacing, 0 to 100) mainly sets how long lines may be
+    // (reorgCompact); it also eases the room left between branches a little (S, 1 at the middle).
+    const S = 0.67 + (Math.min(100, Math.max(0, REORG.spacing)) / 100) * 0.66;
+    const PAD = 12 * S; // space between neighbouring branches
+    const TURN = Math.PI * 2;
+    // A folder's subfolders radiate outward: on the half facing away from its own parent, never more
+    // than a quarter turn either side of straight on (the hub's go all the way round).
+    const AROUND = Math.PI;
+    const SIDE = Math.PI * 1.5; // its conversations: three quarters of a turn, away from its parent
+    const wrap = (a) => a - TURN * Math.floor((a + Math.PI) / TURN); // into -pi..pi
+    const turned = (p, d, t) => {
+      const [cos, sin] = [Math.cos(t), Math.sin(t)];
+      return { x: d * cos + p.x * cos - p.y * sin, y: d * sin + p.x * sin + p.y * cos, r: p.r };
+    };
+    // How much of the turn round 0,0 some circles take: [lo, hi] either side of `mid`.
+    const cone = (pts, mid, pad = PAD) => {
+      let [lo, hi] = [Infinity, -Infinity];
+      for (const p of pts) {
+        const dist = Math.hypot(p.x, p.y);
+        const half = dist <= p.r + pad / 2 ? Math.PI : Math.asin((p.r + pad / 2) / dist);
+        const a = wrap(Math.atan2(p.y, p.x) - mid);
+        lo = Math.min(lo, a - half);
+        hi = Math.max(hi, a + half);
+      }
+      return [mid + lo, mid + hi];
+    };
+    // A level box of w x h, its middle `c` (in a frame turned by -theta from the screen), as a
+    // row of circles that cover it.
+    const boxPts = (cx, cy, w, h, theta) => {
+      const half = h / 2;
+      const span = Math.max(0, w - h);
+      const n = span ? Math.ceil(span / 24) + 1 : 1;
+      const step = n > 1 ? span / (n - 1) : 0;
+      const r = Math.hypot(step / 2, half) + 2;
+      const [ux, uy] = [Math.cos(theta), -Math.sin(theta)]; // the screen's x axis, in this frame
+      const pts = [];
+      for (let i = 0; i < n; i++) { const s = n > 1 ? -span / 2 + i * step : 0; pts.push({ x: cx + s * ux, y: cy + s * uy, r: Math.max(r, n > 1 ? 0 : Math.hypot(w / 2, half) + 2) }); }
+      return pts;
+    };
+    // Where a folder's name can be, in its own frame (facing along the x axis): for the hub, the
+    // one place under it; otherwise every place a level name just outside the bubble, square to
+    // its link, could be, for every way the folder might face on screen. That's each way within
+    // its window (REORG.win: the way it faced last time, give or take), or all round for a folder
+    // with none yet.
+    const NAME_GAP = 4;
+    const windowOf = (f) => REORG.win.get(f.key) || { center: 0, half: Math.PI };
+    const nameRoom = (f, hub) => {
+      const { w, h } = reorgLabelSize(f);
+      if (hub) return boxPts(-(f.r + 5 + h / 2), 0, w, h, -Math.PI / 2); // the hub faces up: under it is -x here
+      // An empty folder with nothing open under it: its name runs along its line, straight out
+      // from the bubble, so it takes no more room round its parent than a conversation does.
+      if (reorgAlongLine(f)) return boxPts(f.r + NAME_GAP + w / 2, 0, w, h, 0);
+      const win = windowOf(f);
+      const all = win.half >= Math.PI;
+      const ways = all ? 16 : Math.max(3, Math.ceil((2 * win.half) / (Math.PI / 36)) + 1);
+      const pts = [];
+      for (let i = 0; i < ways; i++) {
+        const theta = all ? (i / 16) * TURN : win.center - win.half + (i * 2 * win.half) / (ways - 1);
+        const out = Math.abs(Math.sin(theta)) * (w / 2) + Math.abs(Math.cos(theta)) * (h / 2);
+        for (const p of boxPts(0, f.r + NAME_GAP + out, w, h, theta)) pts.push({ ...p, r: p.r + 2 });
+      }
+      return pts;
+    };
+    // Lays `kids` out round a parent at 0,0 whose own things reach out to `inner`, in the free
+    // parts of the turn `arcs` ([from, to] in order). Every child sits at the ring distance or,
+    // if it needs more to clear `inner`, further. The ring is as small as lets every child's
+    // wedge fit, in order; spare room is shared out between them (`even`: all round, as at a hub
+    // with nothing else on it; otherwise they stay together, as near straight ahead as their part
+    // of the turn allows, so a run of single folders carries straight on).
+    const pack = (kids, inner, arcs, even) => {
+      const wedge = (c, D) => cone(c.pts.map((p) => ({ x: D + p.x, y: p.y, r: p.r })), 0);
+      const nearest = (c) => {
+        const ok = (D) => c.pts.every((p) => Math.hypot(D + p.x, p.y) - p.r >= inner);
+        let [lo, hi] = [0, inner + c.R + 1];
+        for (let i = 0; i < 30; i++) { const mid = (lo + hi) / 2; if (ok(mid)) hi = mid; else lo = mid; }
+        return hi;
+      };
+      const least = new Map(kids.map((c) => [c, nearest(c)]));
+      const fit = (ring) => {
+        const plan = [];
+        let [ai, at] = [0, arcs[0][0]];
+        for (const c of kids) {
+          const D = Math.max(least.get(c), ring);
+          const [lo, hi] = wedge(c, D);
+          if (hi - lo >= TURN) return null;
+          while (at + (hi - lo) > arcs[ai][1]) { ai++; if (ai >= arcs.length) return null; at = arcs[ai][0]; }
+          plan.push({ c, D, lo, hi, ai });
+          at += hi - lo;
+        }
+        return plan;
+      };
+      let [lo, hi] = [Math.min(...least.values()), Math.min(...least.values()) + 100];
+      let plan = fit(lo);
+      if (!plan) {
+        while (!fit(hi) && hi < 1e6) { lo = hi; hi *= 2; }
+        for (let i = 0; i < 40 && hi - lo > 1; i++) { const mid = (lo + hi) / 2; if (fit(mid)) hi = mid; else lo = mid; }
+        plan = fit(hi) || kids.map((c) => ({ c, D: Math.max(least.get(c), hi), lo: 0, hi: 0, ai: 0 }));
+      }
+      // Spare room shared out within each part of the turn.
+      const out = [];
+      arcs.forEach(([from, to], ai) => {
+        const mine = plan.filter((p) => p.ai === ai);
+        if (!mine.length) return;
+        const used = mine.reduce((s, p) => s + p.hi - p.lo, 0);
+        const spare = to - from - used;
+        const gap = even ? spare / mine.length : Math.min(spare / (mine.length + 1), 0.3 * S);
+        const width = used + gap * (mine.length - 1);
+        let at = even ? from + gap / 2 : Math.min(Math.max(-width / 2, from), to - width);
+        for (const p of mine) { out.push({ c: p.c, D: p.D, t: at - p.lo }); at += p.hi - p.lo + gap; }
+      });
+      return out;
+    };
+    // Lays a folder's cluster out round 0,0 facing along the x axis: f.slots (its conversations),
+    // f.kids (the folders inside it) and f.pts (every bubble in it, and the room for every name).
+    const build = (f, hub) => {
+      for (const c of f.children) build(c, false);
+      const win = windowOf(f);
+      f.sig = `${f.key}|${f.r}|${f.items.length}|${f.more ? 1 : 0}|${hub ? 1 : 0}|${reorgLabelText(f)}|${S}|${win.half >= Math.PI ? 'all' : `${win.center.toFixed(3)}:${win.half.toFixed(3)}`}[${f.children.map((c) => c.sig).join(',')}]`;
+      const memo = REORG.packs.get(f.key);
+      if (memo && memo.sig === f.sig) {
+        const byKey = new Map(f.children.map((c) => [c.key, c]));
+        Object.assign(f, { slots: memo.slots, pts: memo.pts, R: memo.R, kids: memo.kids.map((k) => ({ c: byKey.get(k.key), D: k.D, t: k.t })) });
+        return;
+      }
+      const fan = hub ? TURN : SIDE;
+      const name = nameRoom(f, hub);
+      const own = [{ x: 0, y: 0, r: f.r + 3 }, ...name];
+      // Conversations on rings round the folder, spread from straight ahead, clear of its name.
+      const n = f.items.length + (f.more ? 1 : 0);
+      f.slots = [];
+      for (let d = f.r + RG.ring - 6; f.slots.length < n; d += RG.ring * 0.9) {
+        const cap = Math.max(1, Math.floor((fan * d) / RG.gap));
+        const ring = [];
+        for (let i = 0; i < cap; i++) {
+          const t = (i - (cap - 1) / 2) * (fan / cap);
+          const [x, y] = [d * Math.cos(t), d * Math.sin(t)];
+          if (!own.some((p) => Math.hypot(p.x - x, p.y - y) < p.r + RG.session + 3)) ring.push({ d, t });
+        }
+        ring.sort((a, b) => Math.abs(a.t) - Math.abs(b.t));
+        f.slots.push(...ring.slice(0, n - f.slots.length).sort((a, b) => a.t - b.t));
+      }
+      const pts = [...own, ...f.slots.map((s) => ({ x: s.d * Math.cos(s.t), y: s.d * Math.sin(s.t), r: RG.session + 2 }))];
+      f.kids = [];
+      if (f.children.length) {
+        // Free parts of the turn: all round at the hub, otherwise the side away from the parent;
+        // either way less the wedge the folder's own name takes.
+        // Subfolders sit beyond the folder's own name (see inner), so only their lines could meet it:
+        // the turn kept clear is just where a line from the folder would cross the name.
+        const [nlo, nhi] = cone(name, Math.atan2(name.reduce((s, p) => s + p.y, 0), name.reduce((s, p) => s + p.x, 0)), 4);
+        let arcs;
+        if (hub) arcs = [[nhi, nlo + TURN]];
+        else {
+          const [a, b] = [-AROUND / 2, AROUND / 2];
+          const [x, y] = [wrap(nlo), wrap(nlo) + (nhi - nlo)];
+          arcs = y <= a || x >= b ? [[a, b]] : [[a, Math.max(a, x)], [Math.min(b, y), b]].filter(([p, q]) => q - p > 0.01);
+          if (!arcs.length) arcs = [[a, b]];
+        }
+        const reach = Math.max(...name.map((p) => Math.hypot(p.x, p.y) + p.r));
+        const inner = Math.max((f.slots.length ? Math.max(...f.slots.map((s) => s.d)) + RG.session + 2 : f.r + 3) + 10 * S, reach + 6);
+        f.kids = pack(f.children, inner, arcs, false);
+      }
+      for (const k of f.kids) for (const p of k.c.pts) pts.push(turned(p, k.D, k.t));
+      Object.assign(f, { pts, R: Math.max(...pts.map((p) => Math.hypot(p.x, p.y) + p.r)) });
+      REORG.packs.set(f.key, { sig: f.sig, slots: f.slots, pts, R: f.R, kids: f.kids.map((k) => ({ key: k.c.key, D: k.D, t: k.t })) });
+    };
+    // Every bubble where it goes, and which way each folder faces (for drawing its name).
+    const place = (f, x, y, dir, parent) => {
+      const key = `f:${f.key}`;
+      REORG.dirs.set(f.key, parent ? dir : null);
+      out.set(key, { kind: 'folder', x, y, r: f.r, parent, color: f.color, f });
+      f.items.forEach((m, i) => { const s = f.slots[i]; out.set(`s:${m.sessionId}`, { kind: 'session', x: x + s.d * Math.cos(dir + s.t), y: y + s.d * Math.sin(dir + s.t), r: RG.session, parent: key, color: f.color, m, f }); });
+      if (f.more) { const s = f.slots[f.items.length]; out.set(`m:${f.key}`, { kind: 'more', x: x + s.d * Math.cos(dir + s.t), y: y + s.d * Math.sin(dir + s.t), r: RG.more, parent: key, color: f.color, f }); }
+      for (const k of f.kids) place(k.c, x + k.D * Math.cos(dir + k.t), y + k.D * Math.sin(dir + k.t), dir + k.t, key);
+    };
+    // One top folder is the hub itself, facing up with the full turn to use; several gather round
+    // a hub (History, or This PC with Show empty folders on).
+    const layOut = () => {
+      out.clear();
+      if (tops.length === 1) {
+        build(tops[0], true);
+        place(tops[0], 0, 0, -Math.PI / 2, null);
+        return;
+      }
+      out.set('root', { kind: 'root', x: 0, y: 0, r: RG.root, parent: null });
+      for (const f of tops) build(f, false);
+      const sig = tops.map((f) => f.sig).join(',');
+      const memo = REORG.packs.get('(hub)');
+      const ring = memo && memo.sig === sig
+        ? memo.kids.map((k) => ({ c: tops.find((f) => f.key === k.key), D: k.D, t: k.t }))
+        : pack(tops, RG.root + 14 * S, [[-Math.PI / 2, TURN - Math.PI / 2]], true);
+      REORG.packs.set('(hub)', { sig, kids: ring.map((k) => ({ key: k.c.key, D: k.D, t: k.t })) });
+      for (const k of ring) place(k.c, k.D * Math.cos(k.t), k.D * Math.sin(k.t), k.t, 'root');
+    };
+    // Room for names only where they can be: each folder's window is narrowed round the way it
+    // faces, and laid out again; one that then faces outside its window gets a wider one, until
+    // every folder faces within its own (windows only widen, so this settles). Should it not
+    // settle in a few goes, every window opens all the way round, which always holds.
+    const off = (f) => {
+      const dir = REORG.dirs.get(f.key);
+      if (typeof dir !== 'number') return false;
+      const win = REORG.win.get(f.key);
+      if (!win) { REORG.win.set(f.key, { center: dir, half: Math.PI / 10 }); return true; }
+      if (win.half >= Math.PI || Math.abs(Math.atan2(Math.sin(dir - win.center), Math.cos(dir - win.center))) <= win.half) return false;
+      REORG.win.set(f.key, { center: dir, half: Math.min(Math.PI, win.half * 2.5) });
+      return true;
+    };
+    const folders = () => [...out.values()].filter((n) => n.kind === 'folder').map((n) => n.f);
+    let settled = false;
+    for (let go = 0; go < 6 && !settled; go++) {
+      layOut();
+      settled = !folders().map(off).some(Boolean);
+    }
+    if (!settled) {
+      for (const f of folders()) REORG.win.set(f.key, { center: 0, half: Math.PI });
+      layOut();
+    }
+    reorgCompact(out, reorgLineCap(REORG.spacing));
+    return out;
+  }
+
+  // The Spacing slider (REORG.spacing, 0 to 100) as the longest a line between folders may be:
+  // 100 leaves the layout as it is; lower draws the longest lines in first.
+  const reorgLineCap = (v) => (v >= 100 ? Infinity : 20 + (Math.max(0, v) / 100) ** 2 * 700);
+
+  // Line length. Each line from a folder to a folder inside it (or from the hub) has a length: the
+  // gap between the two bubbles. Longest first, every line over the cap is drawn in: the folder at
+  // its end, and everything under it, slides straight along the line toward its parent, as far as
+  // it can without any of its bubbles, names or lines touching anything else on the map (so a
+  // shorter line is only drawn in once the longer ones have come down to it, or can't come in
+  // further). A folder never turns, so its name stays where the layout put it. Twice through, as
+  // drawing one line in can leave another room. Moves the bubbles in `out` in place.
+  function reorgCompact(out, cap) {
+    if (!Number.isFinite(cap)) return;
+    // The same layout and cap as last time (a pick, a hover redraw): the same result, kept.
+    const key = `${cap}|${[...out].map(([k, n]) => `${k}:${n.x.toFixed(1)},${n.y.toFixed(1)}`).join(';')}`;
+    if (REORG.compacted && REORG.compacted.key === key) {
+      for (const [k, at] of REORG.compacted.at) { const n = out.get(k); if (n) out.set(k, { ...n, x: at.x, y: at.y }); }
+      return;
+    }
+    const GAP = 5;
+    const CELL = 64;
+    const nodes = new Map(out);
+    const kids = new Map();
+    for (const [key, n] of nodes) if (n.parent) { if (!kids.has(n.parent)) kids.set(n.parent, []); kids.get(n.parent).push(key); }
+    // A folder's name, as drawn (reorgSync): level, beside the bubble, or under the hub.
+    const nameBox = (n) => {
+      if (n.kind !== 'folder') return null;
+      const { w, h } = reorgLabelSize(n.f);
+      const dir = REORG.dirs.get(n.f.key);
+      let [cx, cy] = [n.x, n.y + n.r + 5 + h / 2];
+      if (typeof dir === 'number') {
+        const side = dir + Math.PI / 2;
+        const off = Math.abs(Math.cos(side)) * (w / 2) + Math.abs(Math.sin(side)) * (h / 2) + n.r + 4;
+        [cx, cy] = [n.x + off * Math.cos(side), n.y + off * Math.sin(side)];
+      }
+      return { x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2 };
+    };
+    // The line into a bubble, from its parent's edge to its own.
+    const lineTo = (n) => {
+      const p = nodes.get(n.parent);
+      if (!p) return null;
+      const d = Math.hypot(n.x - p.x, n.y - p.y) || 1;
+      const [ux, uy] = [(n.x - p.x) / d, (n.y - p.y) / d];
+      return { x1: p.x + ux * p.r, y1: p.y + uy * p.r, x2: n.x - ux * n.r, y2: n.y - uy * n.r };
+    };
+    const toSeg = (s, x, y) => {
+      const [dx, dy] = [s.x2 - s.x1, s.y2 - s.y1];
+      const len = dx * dx + dy * dy;
+      const u = len ? Math.max(0, Math.min(1, ((x - s.x1) * dx + (y - s.y1) * dy) / len)) : 0;
+      return Math.hypot(s.x1 + u * dx - x, s.y1 + u * dy - y);
+    };
+    const side = (ax, ay, bx, by, cx, cy) => (bx - ax) * (cy - ay) - (by - ay) * (cx - ax) > 0;
+    const crosses = (a, b) => side(a.x1, a.y1, a.x2, a.y2, b.x1, b.y1) !== side(a.x1, a.y1, a.x2, a.y2, b.x2, b.y2)
+      && side(b.x1, b.y1, b.x2, b.y2, a.x1, a.y1) !== side(b.x1, b.y1, b.x2, b.y2, a.x2, a.y2);
+    const boxGap = (b, x, y) => Math.hypot(Math.max(b.x0 - x, 0, x - b.x1), Math.max(b.y0 - y, 0, y - b.y1));
+    const segBox = (s, b) => {
+      if (boxGap(b, s.x1, s.y1) < GAP || boxGap(b, s.x2, s.y2) < GAP) return true;
+      const edges = [[b.x0, b.y0, b.x1, b.y0], [b.x1, b.y0, b.x1, b.y1], [b.x1, b.y1, b.x0, b.y1], [b.x0, b.y1, b.x0, b.y0]];
+      return edges.some(([x1, y1, x2, y2]) => crosses(s, { x1, y1, x2, y2 }));
+    };
+    // Whether two pieces touch: c a bubble, b a name, s a line.
+    const touch = (a, b) => {
+      if (a.c && b.c) return Math.hypot(a.c.x - b.c.x, a.c.y - b.c.y) < a.c.r + b.c.r + GAP;
+      if (a.c && b.b) return boxGap(b.b, a.c.x, a.c.y) < a.c.r + GAP;
+      if (a.b && b.c) return touch(b, a);
+      if (a.b && b.b) return a.b.x0 < b.b.x1 + GAP && b.b.x0 < a.b.x1 + GAP && a.b.y0 < b.b.y1 + GAP && b.b.y0 < a.b.y1 + GAP;
+      if (a.s && b.c) return toSeg(a.s, b.c.x, b.c.y) < b.c.r + 2;
+      if (a.c && b.s) return touch(b, a);
+      if (a.s && b.b) return segBox(a.s, b.b);
+      if (a.b && b.s) return touch(b, a);
+      return crosses(a.s, b.s);
+    };
+    const bounds = (p) => (p.c ? [p.c.x - p.c.r, p.c.y - p.c.r, p.c.x + p.c.r, p.c.y + p.c.r] : p.b ? [p.b.x0, p.b.y0, p.b.x1, p.b.y1] : [Math.min(p.s.x1, p.s.x2), Math.min(p.s.y1, p.s.y2), Math.max(p.s.x1, p.s.x2), Math.max(p.s.y1, p.s.y2)]);
+    const cells = (p) => {
+      const [x0, y0, x1, y1] = bounds(p);
+      const out2 = [];
+      for (let i = Math.floor((x0 - GAP) / CELL); i <= Math.floor((x1 + GAP) / CELL); i++) for (let j = Math.floor((y0 - GAP) / CELL); j <= Math.floor((y1 + GAP) / CELL); j++) out2.push(`${i},${j}`);
+      return out2;
+    };
+    // Every piece of a bubble: its circle, its name, and the line into it (none for `skipLine`).
+    const pieces = (key, dx = 0, dy = 0, skipLine = false) => {
+      const n = nodes.get(key);
+      const m = { ...n, x: n.x + dx, y: n.y + dy };
+      const list = [{ c: { x: m.x, y: m.y, r: n.r } }];
+      const dirOf = n.kind === 'folder' ? REORG.dirs.get(n.f.key) : null;
+      if (n.kind === 'folder' && typeof dirOf === 'number' && reorgAlongLine(n.f)) {
+        // A name along the line: circles from the bubble's edge outward, covering it.
+        const { w, h } = reorgLabelSize(n.f);
+        const [ux, uy] = [Math.cos(dirOf), Math.sin(dirOf)];
+        for (let s = n.r + 4 + h / 2; s <= n.r + 4 + w - h / 2 + 0.1; s += h * 0.75) list.push({ c: { x: m.x + ux * s, y: m.y + uy * s, r: h / 2 + 1 } });
+        list.push({ c: { x: m.x + ux * (n.r + 4 + w - h / 2), y: m.y + uy * (n.r + 4 + w - h / 2), r: h / 2 + 1 } });
+      } else {
+        const box = nameBox(m);
+        if (box) list.push({ b: box });
+      }
+      if (!skipLine && n.parent) {
+        const p = nodes.get(n.parent);
+        const moved = m;
+        const pm = p ? { ...p, x: p.x + (pieces.movedSet && pieces.movedSet.has(n.parent) ? dx : 0), y: p.y + (pieces.movedSet && pieces.movedSet.has(n.parent) ? dy : 0) } : null;
+        if (pm) {
+          const d = Math.hypot(moved.x - pm.x, moved.y - pm.y) || 1;
+          const [ux, uy] = [(moved.x - pm.x) / d, (moved.y - pm.y) / d];
+          list.push({ s: { x1: pm.x + ux * pm.r, y1: pm.y + uy * pm.r, x2: moved.x - ux * n.r, y2: moved.y - uy * n.r } });
+        }
+      }
+      return list;
+    };
+    const subtree = (key) => { const list = [key]; for (let i = 0; i < list.length; i++) for (const k of kids.get(list[i]) || []) list.push(k); return list; };
+    for (let pass = 0; pass < 2; pass++) {
+      const links = [...nodes.entries()].filter(([, n]) => n.kind === 'folder' && n.parent && nodes.has(n.parent))
+        .map(([key, n]) => ({ key, len: (() => { const s = lineTo(n); return s ? Math.hypot(s.x2 - s.x1, s.y2 - s.y1) : 0; })() }))
+        .filter((l) => l.len > cap + 1)
+        .sort((a, b) => b.len - a.len);
+      for (const { key } of links) {
+        const n = nodes.get(key);
+        const p = nodes.get(n.parent);
+        const s = lineTo(n);
+        const len = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+        const most = len - Math.max(cap, 8);
+        if (most <= 1) continue;
+        const moving = new Set(subtree(key));
+        // Everything else, filed by area; the line into this folder belongs to neither side.
+        const grid = new Map();
+        for (const [k] of nodes) {
+          if (moving.has(k)) continue;
+          for (const piece of pieces(k)) for (const c of cells(piece)) { if (!grid.has(c)) grid.set(c, []); grid.get(c).push(piece); }
+        }
+        const d = Math.hypot(n.x - p.x, n.y - p.y) || 1;
+        const [ux, uy] = [(n.x - p.x) / d, (n.y - p.y) / d];
+        pieces.movedSet = moving;
+        const fits = (by) => {
+          for (const k of moving) {
+            for (const piece of pieces(k, -ux * by, -uy * by, k === key)) {
+              for (const c of cells(piece)) for (const other of grid.get(c) || []) if (touch(piece, other)) return false;
+            }
+          }
+          return true;
+        };
+        let lo = 0;
+        if (fits(most)) lo = most;
+        else {
+          let hi = most;
+          for (let i = 0; i < 12 && hi - lo > 1; i++) { const mid = (lo + hi) / 2; if (fits(mid)) lo = mid; else hi = mid; }
+        }
+        pieces.movedSet = null;
+        if (lo < 1) continue;
+        for (const k of moving) { const m = nodes.get(k); nodes.set(k, { ...m, x: m.x - ux * lo, y: m.y - uy * lo }); }
+      }
+    }
+    for (const [k, n] of nodes) out.set(k, n);
+    REORG.compacted = { key, at: new Map([...nodes].map(([k, n]) => [k, { x: n.x, y: n.y }])) };
+  }
+
+  // Whether a folder's name runs along its line (an empty folder with nothing open under it, not
+  // the hub) rather than sitting level beside its bubble.
+  function reorgAlongLine(f) {
+    return Boolean(f.path) && !f.rows.length && !f.children.length && f.parent !== undefined && REORG.dirs.get(f.key) !== null;
+  }
+
+  // A folder's name and page tag as drawn under its bubble, and the room they take on screen.
+  function reorgTag(f) {
+    const pg = REORG.pages.get(f.key);
+    return pg ? `${pg.groups[pg.at].label} · ${pg.at + 1} of ${pg.groups.length}` : '';
+  }
+  function reorgLabelText(f) { return `${reorgFolderName(f)}|${reorgTag(f)}`; }
+  const RG_TEXT = { ctx: null, widths: new Map() };
+  function rgTextWidth(s, px) {
+    const k = `${px}|${s}`;
+    if (!RG_TEXT.widths.has(k)) {
+      if (!RG_TEXT.ctx) RG_TEXT.ctx = document.createElement('canvas').getContext('2d');
+      RG_TEXT.ctx.font = `600 ${px}px ${getComputedStyle(document.body).getPropertyValue('--font').trim() || 'sans-serif'}`;
+      RG_TEXT.widths.set(k, RG_TEXT.ctx.measureText(s).width);
+    }
+    return RG_TEXT.widths.get(k);
+  }
+  function reorgLabelSize(f) {
+    const tag = reorgTag(f);
+    // Each line's halo (stroke-width 4) adds a little on both sides.
+    const w = Math.max(rgTextWidth(reorgFolderName(f), 11), tag ? rgTextWidth(tag, 10) : 0) + 8;
+    return { w, h: tag ? 27 : 14 };
+  }
+
+  // Show empty folders: the drives, and what's on disk directly inside each open folder, asked
+  // once per folder (src/folders.js listDir, which leaves out system folders). Hidden ones (a
+  // leading dot or $) and node_modules are left out.
+  async function reorgLoadDisk() {
+    if (!REORG.empty || REORG.loading) return;
+    REORG.loading = true;
+    let got = false;
+    try {
+      if (!REORG.drives) {
+        try { REORG.drives = ((await api('GET', '/api/dirs?path=')).entries || []).map((e) => e.path); } catch { REORG.drives = []; }
+        got = true;
+      }
+      // A folder listed here can bring in more open ones (a folder opened earlier, further down).
+      for (;;) {
+        const want = [...reorgTree().folders.values()].filter((f) => f.path && !REORG.disk.has(f.key) && reorgIsOpen(f));
+        if (!want.length) break;
+        for (let i = 0; i < want.length; i += 6) {
+          await Promise.all(want.slice(i, i + 6).map(async (f) => {
+            let entries = [];
+            try { entries = (await api('GET', `/api/dirs?path=${encodeURIComponent(f.path)}`)).entries || []; } catch { /* gone, or not readable: nothing inside to show */ }
+            REORG.disk.set(f.key, entries.filter((e) => !/^[.$]/.test(e.name) && e.name.toLowerCase() !== 'node_modules').map((e) => ({ name: e.name, path: e.path })));
+          }));
+        }
+        got = true;
+      }
+    } finally {
+      REORG.loading = false;
+    }
+    if (!got || !REORG.empty || !$('#dlg-reorg')) return;
+    renderReorg();
+    if (REORG.fitNext) { REORG.fitNext = false; reorgFit(); }
+  }
+
+  // Opens or closes a folder on the map (Show empty folders): the folders inside it come and go.
+  function reorgToggleOpen(n) {
+    if (n.kind !== 'folder' || !n.f.path) return;
+    if (!REORG.empty) { REORG.status = 'Turn on Show empty folders to open folders on the map.'; renderReorg(); return; }
+    REORG.open.set(n.f.key, !reorgIsOpen(n.f));
+    reorgTip(null); // what it said about opening is out of date
+    REORG.anchor = n.key;
+    REORG.pagesFor = n.f.key;
+    REORG.status = '';
+    renderReorg();
+  }
+
+  function reorgFolderName(f) {
+    if (!f.path) return 'No folder';
+    if (RG_DRIVE.test(f.path)) return f.path;
+    const named = (S.history.folderNames || {})[f.key];
+    if (named) return named.length > 24 ? `${named.slice(0, 23)}…` : named;
+    // A path too long for the label loses its start: the folder's own name, at the end, is what tells them apart.
+    const name = f.parent ? f.path.slice(f.parent.path.replace(/[\\/]+$/, '').length + 1) : shortPath(f.path, 1);
+    return name.length > 24 ? `…${name.slice(-23)}` : name;
+  }
+
+  // The bubbles on screen brought in line with History: new ones start at their parent and glide
+  // out, ones that moved glide to their new place, ones that are gone go.
+  function reorgSync() {
+    const dlg = $('#dlg-reorg');
+    if (!dlg) return;
+    const lines = dlg.querySelector('.rg-lines');
+    // Folders are drawn over conversations, so a folder's name stays readable among its bubbles.
+    const layers = { session: dlg.querySelector('.rg-sats'), more: dlg.querySelector('.rg-sats') };
+    const layer = dlg.querySelector('.rg-nodes');
+    const layout = reorgLayout();
+    // The bubble last acted on stays where it is on screen while everything around it rearranges.
+    const a = REORG.anchor && REORG.nodes.get(REORG.anchor);
+    const at = a && layout.get(REORG.anchor);
+    if (at) {
+      const [dx, dy] = [a.tx - at.x, a.ty - at.y];
+      for (const t of layout.values()) { t.x += dx; t.y += dy; }
+    }
+    for (const [key, n] of REORG.nodes) {
+      if (layout.has(key)) continue;
+      n.el.remove();
+      if (n.line) n.line.remove();
+      REORG.nodes.delete(key);
+    }
+    for (const [key, t] of layout) {
+      let n = REORG.nodes.get(key);
+      if (!n) {
+        const p = t.parent ? REORG.nodes.get(t.parent) : null;
+        n = { key, x: p ? p.x : 0, y: p ? p.y : 0, el: svgEl('g', { class: 'rg-node', 'data-key': key }), line: t.parent ? svgEl('line', { class: 'rg-line' }) : null };
+        (layers[t.kind] || layer).appendChild(n.el);
+        if (n.line) lines.appendChild(n.line);
+        REORG.nodes.set(key, n);
+      }
+      // The hub has no line; a folder that stops (or starts) being the hub loses (or gains) one.
+      if (t.parent && !n.line) { n.line = svgEl('line', { class: 'rg-line' }); lines.appendChild(n.line); } else if (!t.parent && n.line) { n.line.remove(); n.line = null; }
+      Object.assign(n, { kind: t.kind, tx: t.x, ty: t.y, r: t.r, parent: t.parent, f: t.f || null, m: t.m || null });
+      const el = n.el;
+      clear(el);
+      if (t.color) { el.style.setProperty('--c', `var(--c-${t.color})`); if (n.line) n.line.style.setProperty('--c', `var(--c-${t.color})`); }
+      if (t.kind === 'root') {
+        el.setAttribute('class', 'rg-node rg-root');
+        el.append(svgEl('circle', { r: t.r }), svgEl('text', { class: 'rg-count' }, REORG.empty ? 'This PC' : 'History'));
+      } else if (t.kind === 'folder') {
+        const chosen = Boolean(t.f.path && REORG.folder && REORG.folder.toLowerCase() === t.f.key);
+        el.setAttribute('class', `rg-node rg-fold${chosen ? ' chosen' : ''}${t.f.path ? '' : ' rg-nofolder'}${t.f.rows.length ? '' : ' rg-empty'}${el.classList.contains('bump') ? ' bump' : ''}`);
+        for (const [k, v] of [['tabindex', '0'], ['role', 'button'], ['aria-pressed', String(chosen)], ['aria-label', `Folder ${t.f.path || 'not recorded'}, ${t.f.rows.length} conversation${t.f.rows.length === 1 ? '' : 's'}`]]) el.setAttribute(k, v);
+        // A folder showing one page of what's inside says which, under its name.
+        // The name sits level, just outside the bubble, square to its link (under the hub), where
+        // the layout kept room for it (reorgLayout).
+        const tag = reorgTag(t.f);
+        const { w, h } = reorgLabelSize(t.f);
+        const dir = REORG.dirs.get(t.f.key);
+        let [cx, cy] = [0, t.r + 5 + h / 2];
+        if (typeof dir === 'number') {
+          const side = dir + Math.PI / 2; // square to the link, clockwise
+          const out = Math.abs(Math.cos(side)) * (w / 2) + Math.abs(Math.sin(side)) * (h / 2) + t.r + 4;
+          [cx, cy] = [out * Math.cos(side), out * Math.sin(side)];
+        }
+        const top = cy - h / 2;
+        // An empty folder with nothing open under it: the name runs along its line, outward (turned
+        // round on the left so it reads the right way up).
+        const along = typeof dir === 'number' && reorgAlongLine(t.f);
+        const flip = along && Math.cos(dir) < 0;
+        const deg = along ? ((dir * 180) / Math.PI + (flip ? 180 : 0)).toFixed(1) : 0;
+        const name = along
+          ? svgEl('text', { class: `rg-label rg-along${flip ? ' flip' : ''}`, x: (flip ? -(t.r + 4) : t.r + 4).toFixed(1), y: '0', transform: `rotate(${deg})` }, reorgFolderName(t.f))
+          : svgEl('text', { class: 'rg-label', x: cx.toFixed(1), y: (top + 10).toFixed(1) }, reorgFolderName(t.f));
+        el.append(svgEl('circle', { r: t.r }), t.f.rows.length ? svgEl('text', { class: 'rg-count' }, String(t.f.rows.length)) : null, name,
+          tag && !along ? svgEl('text', { class: 'rg-pagetag', x: cx.toFixed(1), y: (top + 23).toFixed(1) }, tag) : null);
+      } else if (t.kind === 'session') {
+        const picked = REORG.picked.has(t.m.sessionId);
+        el.setAttribute('class', `rg-node rg-sess${picked ? ' picked' : ''}`);
+        for (const [k, v] of [['tabindex', '0'], ['role', 'button'], ['aria-pressed', String(picked)], ['aria-label', `${t.m.title || 'Untitled conversation'}, ${when(t.m.updatedAt)}`]]) el.setAttribute(k, v);
+        el.append(svgEl('circle', { r: t.r }));
+      } else {
+        el.setAttribute('class', 'rg-node rg-more');
+        for (const [k, v] of [['tabindex', '0'], ['role', 'button'], ['aria-label', `Show more of the ${t.f.more} other conversations in ${reorgFolderName(t.f)}`]]) el.setAttribute(k, v);
+        el.append(svgEl('circle', { r: t.r }), svgEl('text', { class: 'rg-count' }, `+${t.f.more > 99 ? '99' : t.f.more}`));
+      }
+    }
+    reorgGlide();
+  }
+
+  function reorgDraw() {
+    for (const n of REORG.nodes.values()) {
+      n.el.setAttribute('transform', `translate(${n.x.toFixed(1)},${n.y.toFixed(1)})`);
+      if (!n.line) continue;
+      const p = REORG.nodes.get(n.parent);
+      if (!p) continue;
+      for (const [k, v] of [['x1', p.x], ['y1', p.y], ['x2', n.x], ['y2', n.y]]) n.line.setAttribute(k, v.toFixed(1));
+    }
+  }
+
+  // Every bubble eases from where it is to where it belongs (one that's being dragged stays put).
+  function reorgGlide() {
+    cancelAnimationFrame(REORG.raf);
+    const nodes = [...REORG.nodes.values()];
+    for (const n of nodes) { n.sx = n.x; n.sy = n.y; }
+    const t0 = performance.now();
+    const step = (now) => {
+      const p = RG_STILL.matches ? 1 : Math.min(1, Math.max(0, (now - t0) / RG.glide));
+      const e = 1 - (1 - p) ** 3;
+      const held = REORG.drag && REORG.drag.moving ? REORG.drag.key : null;
+      for (const n of nodes) {
+        if (n.key === held) continue;
+        n.x = n.sx + (n.tx - n.sx) * e;
+        n.y = n.sy + (n.ty - n.sy) * e;
+      }
+      reorgDraw();
+      if (p < 1) REORG.raf = requestAnimationFrame(step);
+    };
+    step(t0);
+  }
+
+  function reorgView() {
+    const g = $('#dlg-reorg .rg-view');
+    const v = REORG.view;
+    if (g) g.setAttribute('transform', `translate(${v.x.toFixed(1)},${v.y.toFixed(1)}) scale(${v.k.toFixed(4)})`);
+  }
+
+  // The whole map in view, as large as fits.
+  function reorgFit() {
+    const svg = $('#dlg-reorg .rg-map');
+    if (!svg || !REORG.nodes.size) return;
+    const box = svg.getBoundingClientRect();
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const n of REORG.nodes.values()) { x0 = Math.min(x0, n.tx - n.r - 60); y0 = Math.min(y0, n.ty - n.r - 12); x1 = Math.max(x1, n.tx + n.r + 60); y1 = Math.max(y1, n.ty + n.r + 26); }
+    // The strip along the bottom is the hint's.
+    const high = box.height - 30;
+    const k = Math.max(0.2, Math.min(1.5, box.width / (x1 - x0), high / (y1 - y0)));
+    REORG.view = { k, x: box.width / 2 - ((x0 + x1) / 2) * k, y: high / 2 - ((y0 + y1) / 2) * k };
+    reorgView();
+  }
+
+  // Rings spreading from a folder's bubble when something lands in it, and the bubble swelling once.
+  function reorgRipple(n) {
+    const fx = $('#dlg-reorg .rg-fx');
+    if (!fx || RG_STILL.matches) return;
+    for (let i = 0; i < 3; i++) {
+      const ring = svgEl('circle', { class: 'rg-ripple', cx: n.x.toFixed(1), cy: n.y.toFixed(1), r: n.r });
+      ring.style.setProperty('--c', n.el.style.getPropertyValue('--c'));
+      ring.style.animationDelay = `${i * 120}ms`;
+      fx.appendChild(ring);
+      setTimeout(() => ring.remove(), 1100 + i * 120);
+    }
+    n.el.classList.add('bump');
+    setTimeout(() => n.el.classList.remove('bump'), 520);
+  }
+
+  // Errors show in the dialog's own status line: a toast would sit behind the dialog.
+  async function reorgCall(fn) {
+    try { return await fn(); } catch (err) { REORG.status = err.message; renderReorg(); return null; }
+  }
+
+  async function reorgMove(sessionIds, folder) {
+    const ids = sessionIds.filter((id) => { const m = S.history.sessions.find((x) => x.sessionId === id); return m && folderKey(m) !== folder.toLowerCase(); });
+    if (!ids.length) { REORG.status = 'Already in that folder.'; renderReorg(); return; }
+    const before = ids.map((id) => { const m = S.history.sessions.find((x) => x.sessionId === id); return { sessionId: id, folder: m.movedFrom ? m.folder : null }; });
+    const res = await reorgCall(() => api('POST', '/api/history/move', { moves: ids.map((sessionId) => ({ sessionId, folder })) }));
+    if (!res) return;
+    takeHistory(res);
+    REORG.undo = { moves: before };
+    REORG.picked.clear();
+    REORG.anchor = `f:${folder.toLowerCase()}`;
+    REORG.status = `Moved ${ids.length} conversation${ids.length === 1 ? '' : 's'} to ${folderLabel(folder)}.`;
+    renderReorg();
+    const landed = REORG.nodes.get(`f:${folder.toLowerCase()}`);
+    if (landed) reorgRipple(landed);
+  }
+
+  async function reorgUndo() {
+    const undo = REORG.undo;
+    if (!undo) return;
+    if (undo.trashIds) {
+      // Deleted conversations back from the trash, one at a time; any that can't be is said so.
+      let res = null;
+      for (const trashId of undo.trashIds) {
+        const r = await reorgCall(() => api('POST', '/api/history/restore', { trashId }));
+        if (!r) return;
+        res = r;
+      }
+      if (res) takeHistory(res);
+      REORG.undo = null;
+      REORG.status = `Put back ${undo.trashIds.length} conversation${undo.trashIds.length === 1 ? '' : 's'}.`;
+      renderReorg();
+      return;
+    }
+    const res = await reorgCall(() => api('POST', '/api/history/move', { moves: undo.moves }));
+    if (!res) return;
+    takeHistory(res);
+    REORG.undo = null;
+    REORG.status = 'Move undone.';
+    renderReorg();
+  }
+
+  // The Spacing slider: remembered, and the map laid out again once it rests for a moment (drawing
+  // lines in on a big map takes a little while, so not on every step of a drag).
+  function reorgSpacing(value) {
+    REORG.spacing = Math.min(100, Math.max(0, Number.isFinite(value) ? value : 50));
+    store.set('reorgLength', REORG.spacing);
+    clearTimeout(REORG.spacingTimer);
+    REORG.spacingTimer = setTimeout(() => renderReorg(), 140);
+  }
+
+  // Delete on the map: picked conversations go to Claude Deck's trash (Undo puts them back), as
+  // History's own Delete does. With only a folder picked, the folder on disk goes to the Windows
+  // Recycle Bin after a confirmation showing its full path (src/recycle.js says what's refused).
+  async function reorgDelete() {
+    const ids = [...REORG.picked];
+    if (ids.length) {
+      const ok = await Deck.confirm({ title: `Delete ${ids.length} conversation${ids.length === 1 ? '' : 's'}?`, body: "They go to Claude Deck's trash. Undo delete puts them back; after 30 days they're removed for good.", ok: 'Delete', danger: true, safeDefault: true });
+      if (!ok) return;
+      const trashIds = [];
+      let res = null;
+      for (const id of ids) {
+        try { res = await api('DELETE', `/api/history/${id}`); trashIds.push(res.trashId); } catch (err) { REORG.status = err.message; }
+      }
+      if (res) takeHistory(res);
+      REORG.picked.clear();
+      if (trashIds.length) {
+        REORG.undo = { trashIds };
+        REORG.status = `Deleted ${trashIds.length} conversation${trashIds.length === 1 ? '' : 's'}.${trashIds.length < ids.length ? ` ${REORG.status}` : ''}`;
+      }
+      renderReorg();
+      return;
+    }
+    const folder = REORG.folder;
+    if (!folder) return;
+    const key = folder.toLowerCase();
+    const filed = S.history.sessions.filter((m) => { const k = folderKey(m); return k === key || k.startsWith(`${key.replace(/[\\/]+$/, '')}\\`); }).length;
+    const ok = await Deck.confirm({
+      title: 'Move this folder to the Recycle Bin?',
+      body: 'The folder and everything in it (files and subfolders) moves to the Windows Recycle Bin, where you can restore it.',
+      extra: h('div', { class: 'rg-confirm' },
+        h('p', { class: 'rg-confirm-path' }, folder),
+        filed ? h('p', { class: 'muted' }, `${filed} conversation${filed === 1 ? ' is' : 's are'} filed in it. ${filed === 1 ? 'It stays' : 'They stay'} in History, under this path.`) : null),
+      ok: 'Move to Recycle Bin',
+      danger: true,
+      safeDefault: true,
+    });
+    if (!ok) return;
+    REORG.status = `Moving ${folder} to the Recycle Bin…`;
+    renderReorg();
+    const res = await reorgCall(() => api('POST', '/api/folders/recycle', { path: folder }));
+    if (!res) return;
+    takeHistory(res);
+    // Gone from the map: the folder, anything under it kept or added here, and its parent's listing.
+    const under = (k) => k === key || k.startsWith(`${key.replace(/[\\/]+$/, '')}\\`);
+    for (const m of [REORG.extra, REORG.keep, REORG.disk, REORG.open]) for (const k of [...m.keys()]) if (under(k)) m.delete(k);
+    const parent = rgParentPath(folder);
+    if (parent) REORG.disk.delete(parent.toLowerCase()); // listed again, without it
+    REORG.folder = null;
+    REORG.status = `Moved ${res.recycled} to the Recycle Bin.`;
+    renderReorg();
+  }
+
+  async function reorgAddFolder() {
+    const parent = REORG.folder;
+    if (!parent) return;
+    const name = await Deck.promptText({ title: 'Add a subfolder', label: `New folder inside ${parent}`, ok: 'Add' });
+    if (name === null || !name.trim()) return;
+    const res = await reorgCall(() => api('POST', '/api/mkdir', { parent, name }));
+    if (!res) return;
+    REORG.extra.set(res.path.toLowerCase(), res.path);
+    REORG.folder = res.path;
+    REORG.status = `Added ${res.path}. Move conversations into it to keep it in History.`;
+    renderReorg();
+    const added = REORG.nodes.get(`f:${res.path.toLowerCase()}`);
+    if (added) reorgRipple(added);
+  }
+
+  // A click (or Enter) on a bubble: a conversation is picked or let go, a folder becomes the
+  // destination, "+N" shows more of that folder's conversations.
+  function reorgClick(n) {
+    REORG.anchor = n.key;
+    if (n.kind === 'session') {
+      if (REORG.picked.has(n.m.sessionId)) REORG.picked.delete(n.m.sessionId); else REORG.picked.add(n.m.sessionId);
+    } else if (n.kind === 'folder' && n.f.path) {
+      REORG.folder = REORG.folder && REORG.folder.toLowerCase() === n.f.key ? null : n.f.path;
+      REORG.pagesFor = n.f.key; // its letter tabs show, if it has any
+    } else if (n.kind === 'more') {
+      REORG.shown[n.f.key] = (REORG.shown[n.f.key] || RG.page) + RG.page;
+    } else return;
+    REORG.status = '';
+    renderReorg();
+    const again = REORG.nodes.get(n.key);
+    if (again && document.activeElement !== again.el) again.el.focus({ preventScroll: true });
+  }
+
+  function reorgTip(n, e) {
+    const tip = $('#dlg-reorg .rg-tip');
+    if (!tip) return;
+    if (!n || n.kind === 'root') { tip.hidden = true; return; }
+    clear(tip);
+    if (n.kind === 'session') tip.append(h('div', { class: 'rg-tip-title' }, n.m.title || 'Untitled conversation'), h('div', { class: 'faint' }, `${when(n.m.updatedAt)} · ${n.m.userTurns} prompt${n.m.userTurns === 1 ? '' : 's'}${n.m.movedFrom ? ` · started in ${shortPath(n.m.movedFrom, 1)}` : ''}`));
+    else if (n.kind === 'folder') {
+      const parts = [`${n.f.rows.length} conversation${n.f.rows.length === 1 ? '' : 's'}`];
+      if (!n.f.path) parts.push('can\'t be moved into');
+      else if (REORG.empty) {
+        const pg = REORG.pages.get(n.f.key);
+        const inside = REORG.disk.get(n.f.key);
+        if (!reorgIsOpen(n.f)) parts.push('double-click to show the folders inside');
+        else if (pg) parts.push(`showing ${pg.groups[pg.at].label} of ${inside.length} folders inside: click it for the other letters`);
+        else parts.push(inside && inside.length ? 'double-click to hide the folders inside' : 'no folders inside');
+      }
+      tip.append(h('div', { class: 'rg-tip-title' }, n.f.path || 'No folder recorded'), h('div', { class: 'faint' }, parts.join(' · ')));
+    }
+    else tip.append(h('div', null, `${n.f.more} more in ${reorgFolderName(n.f)}. Click to show more.`));
+    const box = tip.parentElement.getBoundingClientRect();
+    tip.hidden = false;
+    tip.style.left = `${Math.min(box.width - tip.offsetWidth - 8, Math.max(8, e.clientX - box.left + 14))}px`;
+    tip.style.top = `${Math.min(box.height - tip.offsetHeight - 8, Math.max(8, e.clientY - box.top + 16))}px`;
+  }
+
+  // Pointer work on the map: drag a conversation onto a folder, drag anything else to pan, the
+  // wheel zooms where the pointer is.
+  function wireReorgMap(svg) {
+    const nodeAt = (e) => { const g = e.target.closest && e.target.closest('.rg-node'); return g ? REORG.nodes.get(g.dataset.key) || null : null; };
+    const point = (e) => { const r = svg.getBoundingClientRect(); const v = REORG.view; return { x: (e.clientX - r.left - v.x) / v.k, y: (e.clientY - r.top - v.y) / v.k }; };
+    const setTarget = (d, n) => {
+      if (d.target === n) return;
+      if (d.target) d.target.el.classList.remove('target');
+      d.target = n;
+      if (n) n.el.classList.add('target');
+    };
+    svg.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const n = nodeAt(e);
+      REORG.drag = { id: e.pointerId, key: n ? n.key : null, sx: e.clientX, sy: e.clientY, vx: REORG.view.x, vy: REORG.view.y, moving: false, panned: false, target: null, ids: [] };
+      svg.setPointerCapture(e.pointerId);
+    });
+    svg.addEventListener('pointermove', (e) => {
+      const d = REORG.drag;
+      if (!d) { reorgTip(nodeAt(e), e); return; }
+      const far = Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 5;
+      const n = d.key ? REORG.nodes.get(d.key) : null;
+      if (n && n.kind === 'session') {
+        if (!d.moving && far) {
+          // Dragging one that's picked takes every picked one along.
+          d.moving = true;
+          d.ids = REORG.picked.has(n.m.sessionId) ? [...REORG.picked] : [n.m.sessionId];
+          svg.classList.add('dragging');
+          n.el.classList.add('dragging');
+          reorgTip(null, e);
+        }
+        if (!d.moving) return;
+        const p = point(e);
+        n.x = p.x;
+        n.y = p.y;
+        let best = null;
+        for (const f of REORG.nodes.values()) {
+          if (f.kind !== 'folder' || !f.f.path) continue;
+          const dist = Math.hypot(f.x - p.x, f.y - p.y);
+          if (dist < f.r + 20 && (!best || dist < best.dist)) best = { f, dist };
+        }
+        // Not a folder everything dragged is already in.
+        const ok = best && d.ids.some((id) => { const m = S.history.sessions.find((x) => x.sessionId === id); return m && folderKey(m) !== best.f.f.key; });
+        setTarget(d, ok ? best.f : null);
+        $('#dlg-reorg .rg-status').textContent = d.target ? `Let go to move ${d.ids.length === 1 ? 'it' : `${d.ids.length} conversations`} to ${folderLabel(d.target.f.path)}.` : `Drag onto a folder's bubble${d.ids.length > 1 ? ` (${d.ids.length} picked go together)` : ''}.`;
+        reorgDraw();
+      } else if (far || d.panned) {
+        d.panned = true;
+        svg.classList.add('panning');
+        REORG.view.x = d.vx + e.clientX - d.sx;
+        REORG.view.y = d.vy + e.clientY - d.sy;
+        reorgView();
+        reorgTip(null, e);
+      }
+    });
+    const finish = (e, cancelled) => {
+      const d = REORG.drag;
+      if (!d) return;
+      REORG.drag = null;
+      svg.classList.remove('dragging', 'panning');
+      if (svg.hasPointerCapture(d.id)) svg.releasePointerCapture(d.id);
+      const n = d.key ? REORG.nodes.get(d.key) : null;
+      if (n) n.el.classList.remove('dragging');
+      const target = d.target;
+      setTarget(d, null);
+      if (d.moving) {
+        if (target && !cancelled) reorgMove(d.ids, target.f.path);
+        else renderReorg(); // back where it was
+      } else if (!d.panned && n && !cancelled) {
+        // A second click on the same folder soon after is a double-click: it opens or closes the
+        // folder, and the first click's pick stands. (The map holds the pointer and redraws
+        // between clicks, so the browser's own dblclick doesn't reach the bubble.)
+        const now = performance.now();
+        const last = REORG.lastClick;
+        if (n.kind === 'folder' && last && last.key === n.key && now - last.t < 450) { REORG.lastClick = null; reorgToggleOpen(n); } else { REORG.lastClick = { key: n.key, t: now }; reorgClick(n); }
+      }
+    };
+    svg.addEventListener('pointerup', (e) => finish(e, false));
+    svg.addEventListener('pointercancel', (e) => finish(e, true));
+    svg.addEventListener('pointerleave', (e) => { if (!REORG.drag) reorgTip(null, e); });
+    svg.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const n = nodeAt(e);
+      if (!n) return;
+      e.preventDefault();
+      if (e.key === 'Enter' && e.shiftKey) reorgToggleOpen(n); else reorgClick(n);
+    });
+    svg.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const r = svg.getBoundingClientRect();
+      const v = REORG.view;
+      const k = Math.max(0.2, Math.min(3, v.k * Math.exp(-e.deltaY * 0.0015)));
+      const [px, py] = [e.clientX - r.left, e.clientY - r.top];
+      REORG.view = { k, x: px - ((px - v.x) * k) / v.k, y: py - ((py - v.y) * k) / v.k };
+      reorgView();
+    }, { passive: false });
+  }
+
+  function renderReorg() {
+    const dlg = $('#dlg-reorg');
+    if (!dlg) return;
+    const { folders, pages } = reorgTree();
+    REORG.pages = pages;
+    if (REORG.folder && !folders.has(REORG.folder.toLowerCase())) REORG.folder = null;
+    for (const id of [...REORG.picked]) if (!S.history.sessions.some((m) => m.sessionId === id)) REORG.picked.delete(id);
+    reorgSync();
+    // Letter tabs for the folder last picked or opened, when what's inside takes more than a page.
+    const strip = dlg.querySelector('.rg-pages');
+    const pg = REORG.pagesFor && pages.get(REORG.pagesFor);
+    clear(strip);
+    strip.hidden = !pg;
+    if (pg) {
+      const key = REORG.pagesFor;
+      strip.append(h('span', { class: 'faint' }, `In ${reorgFolderName(folders.get(key))}:`),
+        ...pg.groups.map((g, i) => h('button', {
+          type: 'button',
+          class: 'ghost small rg-page',
+          'aria-pressed': String(i === pg.at),
+          title: `${g.title ? `${g.title}: ` : ''}${g.items.length} folder${g.items.length === 1 ? '' : 's'}`,
+          onclick: () => { REORG.page.set(key, i); REORG.anchor = `f:${key}`; renderReorg(); },
+        }, g.label)));
+      const on = strip.querySelector('[aria-pressed="true"]');
+      if (on) strip.scrollLeft = Math.max(0, on.offsetLeft - strip.clientWidth / 2 + on.offsetWidth / 2);
+    }
+    dlg.querySelector('.rg-hint').textContent = `Large bubbles are folders, small ones conversations. Scroll to zoom, drag the background to pan${REORG.empty ? ', double-click a folder to open or close it' : ''}.`;
+    const n = REORG.picked.size;
+    const move = dlg.querySelector('.rg-move');
+    move.disabled = !(n && REORG.folder);
+    move.textContent = n && REORG.folder ? `Move ${n} to ${folderLabel(REORG.folder, 1)}` : 'Move';
+    dlg.querySelector('.rg-add').disabled = !REORG.folder;
+    const del = dlg.querySelector('.rg-delete');
+    del.disabled = !(n || REORG.folder);
+    del.textContent = n ? `Delete ${n} conversation${n === 1 ? '' : 's'}` : REORG.folder ? 'Delete folder' : 'Delete';
+    const undo = dlg.querySelector('.rg-undo');
+    undo.hidden = !REORG.undo;
+    undo.textContent = REORG.undo && REORG.undo.trashIds ? 'Undo delete' : 'Undo move';
+    reorgLoadDisk(); // any folder new to the map has its empty folders looked up
+    dlg.querySelector('.rg-status').textContent = REORG.status
+      || (n && REORG.folder ? '' : n ? `${n} picked. Now pick the folder to move ${n === 1 ? 'it' : 'them'} to.` : REORG.folder ? 'Folder picked. Add a subfolder in it, or pick conversations to move here.' : 'Drag a conversation onto a folder. Or pick conversations, pick a folder, then Move.');
+  }
+
+  // Takes the map down (another History view was chosen).
+  function closeReorganize() {
+    const pane = $('#dlg-reorg');
+    if (!pane) return;
+    cancelAnimationFrame(REORG.raf);
+    clearTimeout(REORG.spacingTimer);
+    pane.remove();
+  }
+
+  // Reorganize, History's third view: the map, in the view itself. Already up, it's brought up to
+  // date instead.
+  function openReorganize() {
+    if ($('#dlg-reorg')) { renderReorg(); return; }
+    Object.assign(REORG, { picked: new Set(), folder: null, undo: null, status: '', shown: {}, nodes: new Map(), drag: null, view: { x: 0, y: 0, k: 1 } });
+    REORG.keep = new Map(S.history.sessions.filter((m) => m.folder).map((m) => [m.folder.toLowerCase(), m.folder]));
+    REORG.empty = store.get('reorgEmpty', false) === true;
+    Object.assign(REORG, { disk: new Map(), drives: null, open: new Map(), page: new Map(), pages: new Map(), pagesFor: null, anchor: null, lastClick: null, fitNext: REORG.empty, packs: new Map(), dirs: new Map(), spacing: (() => { const v = Number(store.get('reorgLength', 50)); return Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 50; })() });
+    const svg = svgEl('svg', { class: 'rg-map', 'aria-label': 'History as a map: folders, and the conversations filed under each' },
+      svgEl('g', { class: 'rg-view' }, svgEl('g', { class: 'rg-lines' }), svgEl('g', { class: 'rg-fx' }), svgEl('g', { class: 'rg-sats' }), svgEl('g', { class: 'rg-nodes' })));
+    const dlg = h('div', { class: 'reorg', id: 'dlg-reorg', role: 'region', 'aria-label': 'Reorganize History' },
+      h('p', { class: 'muted rg-intro' }, 'Where each conversation is filed in History. Conversations still resume from the folder they were started in.'),
+      h('div', { class: 'rg-stage' }, svg,
+        h('div', { class: 'rg-tip', hidden: true }),
+        h('div', { class: 'rg-pages', hidden: true }),
+        h('div', { class: 'rg-tools' },
+          h('label', { class: 'rg-spacing small', title: 'How long the lines between folders may be. Lower draws the longest lines in first, each only as far as it goes without anything touching; all the way right leaves them as laid out.' }, 'Spacing',
+            h('input', { type: 'range', min: '0', max: '100', step: '1', value: String(REORG.spacing), 'aria-label': 'Spacing: how long lines between folders may be', oninput: (e) => reorgSpacing(Number(e.target.value)) })),
+          h('label', { class: 'check small', title: 'Show every folder on this PC as a place to move to, starting from the drives. Double-click a folder to open or close it.' },
+            h('input', { type: 'checkbox', checked: REORG.empty, onchange: (e) => { REORG.empty = e.target.checked; store.set('reorgEmpty', REORG.empty); REORG.anchor = null; REORG.fitNext = REORG.empty; renderReorg(); reorgFit(); } }), 'Show empty folders'),
+          h('button', { type: 'button', class: 'ghost small', title: 'Show the whole map', onclick: reorgFit }, 'Fit')),
+        h('div', { class: 'rg-hint faint small' }, 'Large bubbles are folders, small ones conversations. Scroll to zoom, drag the background to pan.')),
+      h('div', { class: 'dialog-actions' },
+        h('span', { class: 'rg-status faint small', role: 'status' }),
+        h('span', { class: 'spacer' }),
+        h('button', { type: 'button', class: 'ghost rg-undo', hidden: true, onclick: reorgUndo }, 'Undo move'),
+        h('button', { type: 'button', class: 'ghost rg-delete', title: 'Delete the picked conversations (to the trash), or the picked folder (to the Windows Recycle Bin)', onclick: reorgDelete }, 'Delete'),
+        h('button', { type: 'button', class: 'ghost rg-add', title: 'Make a new folder inside the picked folder', onclick: reorgAddFolder }, 'Add subfolder'),
+        h('button', { type: 'button', class: 'primary rg-move', onclick: () => reorgMove([...REORG.picked], REORG.folder) }, 'Move')));
+    wireReorgMap(svg);
+    clear($('#history-map')).appendChild(dlg);
+    // Everything starts at the hub and blooms out to its place.
+    renderReorg();
+    reorgFit();
+  }
+
   // Renames a folder where it sits in the list, as a session's name is: Enter saves, Esc puts it
   // back, and an empty name goes back to showing the folder's path. Only History's name for it.
   function renameHistoryFolder(g, head) {
@@ -4584,8 +5777,16 @@
   }
 
   function renderHistory() {
-    renderHistoryFolders();
     renderHistoryViewToggle();
+    // Reorganize: the map in place of the list and its preview (search, folder and sort don't
+    // apply to it). Leaving it takes the map down.
+    const map = S.historyView === 'map';
+    $('#view-history .split').hidden = map;
+    $('#history-map').hidden = !map;
+    for (const id of ['#history-search', '#history-folder', '#history-sort']) $(id).hidden = map;
+    if (map) { $('#history-summary').textContent = `${S.history.sessions.length} conversations`; openReorganize(); return; }
+    closeReorganize();
+    renderHistoryFolders();
     const list = clear($('#history-list'));
     const rows = historyFiltered();
     const live = new Set(S.history.live);
@@ -4695,9 +5896,9 @@
         live ? h('span', { class: 'status-text working' }, 'Open right now') : null),
       m.firstPrompt && m.firstPrompt !== m.title ? h('div', { class: 'muted card-prompt' }, m.firstPrompt) : null,
       h('dl', { class: 'facts' },
-        fact('Folder', m.cwd, true),
+        fact('Folder', m.cwd),
         // Moved in History's folder view; it still resumes from its own folder above.
-        fact('Filed under', m.movedFrom ? m.folder : null, true),
+        fact('Filed under', m.movedFrom ? m.folder : null),
         fact('Last active', when(m.updatedAt)),
         fact('Started', when(m.startedAt)),
         fact('Prompts', m.userTurns),
@@ -4838,10 +6039,10 @@
   // A font picker with a line set in the chosen font. Fonts this PC doesn't have are listed but
   // can't be picked.
   function fontRow(key, label, hint, sample) {
-    const preview = h('span', { class: `font-preview${key === 'fontLabels' ? ' plate-text' : ''}` }, sample);
+    const preview = h('span', { class: `font-preview${key === 'fontLabels' ? ' plate-text' : key === 'fontCode' ? ' mono' : ''}` }, sample);
     const show = (id) => { const c = FONT_CHOICES[id]; preview.style.fontFamily = c && c.stack ? c.stack : ''; };
     const sel = h('select', { 'aria-label': label, onchange: (e) => { show(e.target.value); savePrefs({ [key]: e.target.value }); } },
-      Object.entries(FONT_CHOICES).map(([id, c]) => {
+      Object.entries(FONT_CHOICES).filter(([id]) => key !== 'fontCode' || CODE_FONT_IDS.includes(id)).map(([id, c]) => {
         const have = fontInstalled(c.face);
         return h('option', { value: id, selected: S.prefs[key] === id, disabled: !have && S.prefs[key] !== id },
           id === 'default' ? `Default (${FONT_DEFAULTS[key]})` : have ? c.label : `${c.label} (not on this PC)`);
@@ -5066,6 +6267,7 @@
           themes.map(([v, t]) => h('option', { value: v, selected: p.theme === v }, t)))))),
       fontRow('fontText', 'Text font', 'Messages, lists and controls', 'Claude finished the release notes and is waiting for your next prompt.'),
       fontRow('fontLabels', 'Label font', 'The engraved capitals on plates and labels', 'Needs you · Model · Current cost'),
+      fontRow('fontCode', 'Code font', 'Code, diffs, commands, settings editors and the Inlaid CLI', 'git diff --stat src/app.js  # 0O 1lI'),
       prefRow('Tool calls', null, toggle('showToolIcons', 'Show an icon beside each tool call in a chat')),
       prefRow('/clear', 'Claude starts a new conversation either way; ↑ still recalls your earlier messages', toggle('clearChatOnClear', "Clear the chat's messages too, as Claude Code clears its screen"))));
 
@@ -5225,15 +6427,16 @@
 
   function applyTheme() {
     document.documentElement.dataset.theme = S.prefs.theme;
-    // The chosen fonts replace the text and label stacks (app.css --font and --font-plate).
-    for (const [key, prop] of [['fontText', '--font'], ['fontLabels', '--font-plate']]) {
+    // The chosen fonts replace the text, label and code stacks (app.css --font, --font-plate and
+    // --mono); everything in the page of that role uses its stack, the Inlaid CLI's terminal too.
+    for (const [key, prop] of [['fontText', '--font'], ['fontLabels', '--font-plate'], ['fontCode', '--mono']]) {
       const choice = FONT_CHOICES[S.prefs[key]];
       if (choice && choice.stack) document.documentElement.style.setProperty(prop, choice.stack);
       else document.documentElement.style.removeProperty(prop);
     }
     // Tool-call emoji are drawn either way and shown by CSS, so the toggle applies to open chats at once.
     document.documentElement.dataset.toolIcons = S.prefs.showToolIcons ? 'on' : 'off';
-    if (S.term) S.term.xterm.options.theme = termTheme();
+    if (S.term) { S.term.xterm.options.theme = termTheme(); S.term.xterm.options.fontFamily = codeFont(); }
   }
 
   function setConn(ok) {
@@ -5468,7 +6671,7 @@
     $('#history-folder').addEventListener('change', () => { S.historyLimit = 150; renderHistory(); });
     $('#history-sort').addEventListener('change', () => renderHistory());
     for (const b of $$('#history-view button')) b.addEventListener('click', () => setHistoryView(b.dataset.view));
-    $('#btn-rescan').addEventListener('click', async () => {
+      $('#btn-rescan').addEventListener('click', async () => {
       const data = await run("Couldn't rescan", () => api('POST', '/api/history/rebuild'));
       if (data) { S.history = { ...data, loaded: true }; renderHistory(); toast('History rescanned'); }
     });

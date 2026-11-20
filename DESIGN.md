@@ -283,7 +283,7 @@ Small, square-shouldered enamel. Plates are 3px, controls and rows 4px, menus, p
 - **Do** rank with weight, capitals, reversed plates and hairline rules within the 14px and 12px sizes.
 - **Do** show status as a lamp in a bezel and mix any new wash from the status token with `color-mix`.
 - **Do** put the selected list item on the reading shelf's color, flush to the shelf.
-- **Do** use 120-160ms with `cubic-bezier(0.22, 0.8, 0.3, 1)`; disable animation under reduced motion.
+- **Do** use 120-160ms with `cubic-bezier(0.22, 0.8, 0.3, 1)`; disable animation under reduced motion. The one exception is History's Reorganize map, where bubbles glide to a new place (about 460ms) and a folder ripples when something lands in it: still no bounce, still off under reduced motion.
 - **Do** keep prose, turns, tool lines and the reply bar on the shared conversation width.
 - **Do** use Cascadia for code, paths, ids and model ids.
 - **Do** derive new theme surfaces from the theme's base colors in the shared block.

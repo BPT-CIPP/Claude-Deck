@@ -30,6 +30,7 @@ const { ChatManager } = require('./chat');
 const { TerminalManager } = require('./terminals');
 const { Timeline } = require('./timeline');
 const trash = require('./trash');
+const recycle = require('./recycle');
 const update = require('./update');
 const billing = require('./billing');
 const { locateClaude, claudeVersion, autoUpdateStatus, runUpdate, updateFailure, binaryStamp, compareVersions, latestRelease } = require('./claude-locate');
@@ -445,7 +446,17 @@ async function main() {
 
   // History as the page lists it: every conversation, with the folder it's filed under
   // (src/history-folders.js), the names folders are shown under, and which are open right now.
-  const historyView = () => ({ sessions: historyFolders.annotate(history.list()), folderNames: historyFolders.names(), live: liveSessionIds() });
+  // A conversation is listed under the name its session has in the Sessions view: the names of
+  // the sessions listed now are noted first (a session can get its conversation after it was
+  // named, and /clear gives it a new one), so they outlast the session.
+  const historyView = () => {
+    const named = Object.fromEntries(live.state.sessions.filter((s) => s.sessionId && s.name).map((s) => [s.sessionId, s.name]));
+    const titles = historyFolders.setTitles(named);
+    return { sessions: historyFolders.withTitles(historyFolders.annotate(history.list()), titles), folderNames: historyFolders.names(), live: liveSessionIds() };
+  };
+  // A session renamed in the Sessions view: History shows its conversation under that name too
+  // (an empty name goes back to Claude Code's own title).
+  const nameInHistory = (sessionId, name) => { if (sessionId && typeof name === 'string') historyFolders.setTitles({ [sessionId]: name }); };
 
   const routes = {
     'GET /api/ping': () => ({ ok: true, pid: process.pid, version: VERSION }),
@@ -557,6 +568,7 @@ async function main() {
       return chats.rewind(p.id, b.messageId, { files: b.files === true });
     },
     'POST /api/chats/:id/fast': async (req, p) => chats.setFastMode(p.id, (await readBody(req)).on === true),
+    'POST /api/chats/:id/ultracode': async (req, p) => chats.setUltracode(p.id, (await readBody(req)).on === true),
     // Claude Code's /config options, through the chat's own Claude Code (src/claude-config.js):
     // GET lists them with current values; POST { changes: { key: value } } applies them.
     'GET /api/chats/:id/config': (req, p) => chats.configOptions(p.id),
@@ -571,7 +583,9 @@ async function main() {
     'POST /api/chats/:id/resume': (req, p) => chats.resume(p.id),
     'PATCH /api/chats/:id': async (req, p) => {
       const b = await readBody(req);
-      return chats.update(p.id, { name: b.name, color: COLORS.includes(b.color) ? b.color : undefined });
+      const c = chats.update(p.id, { name: b.name, color: COLORS.includes(b.color) ? b.color : undefined });
+      nameInHistory(c.sessionId, b.name);
+      return c;
     },
     // Continue a chat in a Windows Terminal tab instead (same conversation).
     'POST /api/chats/:id/to-terminal': async (req, p) => {
@@ -643,7 +657,9 @@ async function main() {
     'POST /api/terminals/:id/resume': (req, p) => terminals.resume(p.id),
     'PATCH /api/terminals/:id': async (req, p) => {
       const b = await readBody(req);
-      return terminals.update(p.id, { name: b.name, color: COLORS.includes(b.color) ? b.color : undefined });
+      const t = terminals.update(p.id, { name: b.name, color: COLORS.includes(b.color) ? b.color : undefined });
+      nameInHistory(t.sessionId, b.name);
+      return t;
     },
     // Continue a terminal's conversation in a Windows Terminal tab, or as a chat, instead.
     'POST /api/terminals/:id/to-terminal': async (req, p) => {
@@ -706,6 +722,8 @@ async function main() {
       const entry = registry.update(p.id, patch);
       if (!entry) throw new UserError('That session is no longer tracked.', 404);
       live.tick();
+      const shown = live.state.sessions.find((s) => s.id === p.id);
+      nameInHistory(shown && shown.sessionId, patch.name);
       return entry;
     },
 
@@ -722,6 +740,20 @@ async function main() {
       if (!history.get(p.sessionId)) throw new UserError('That conversation was not found in history.', 404);
       const b = await readBody(req);
       historyFolders.set(p.sessionId, b.folder === null || b.folder === undefined ? null : b.folder);
+      return historyView();
+    },
+    // { moves: [{ sessionId, folder }] }: several conversations filed at once (History's Reorganize);
+    // folder null puts one back where it was started. All are checked before any is moved.
+    'POST /api/history/move': async (req) => {
+      const b = await readBody(req);
+      const moves = Array.isArray(b.moves) ? b.moves : [];
+      if (!moves.length || moves.length > 2000) throw new UserError('Choose the conversations to move.');
+      await history.refreshIfOlderThan(1000);
+      for (const m of moves) {
+        if (!m || !UUID_RE.test(m.sessionId || '') || !history.get(m.sessionId)) throw new UserError('One of those conversations was not found in history.', 404);
+        if (m.folder !== null && m.folder !== undefined && (typeof m.folder !== 'string' || !path.isAbsolute(m.folder.trim()))) throw new UserError('Choose a folder from the list.');
+      }
+      for (const m of moves) historyFolders.set(m.sessionId, m.folder === undefined ? null : m.folder);
       return historyView();
     },
     // { folder, name }: the name a folder is shown under in History ('' goes back to its path).
@@ -820,6 +852,15 @@ async function main() {
     'POST /api/mkdir': async (req) => {
       const body = await readBody(req);
       return folders.makeDir(body.parent, body.name);
+    },
+    // { path }: a folder on disk moved to the Windows Recycle Bin (History's Reorganize map, after
+    // a confirmation showing the full path). Refused for a folder a session is open in, and for
+    // folders Windows, Claude Code or Claude Deck need (src/recycle.js).
+    'POST /api/folders/recycle': async (req) => {
+      const body = await readBody(req);
+      const openIn = [...live.state.sessions.filter((s) => s.state === 'running').map((s) => s.cwd), ...live.state.external.map((s) => s.cwd)];
+      const result = await recycle.recycleFolder(body.path, { openIn });
+      return { ...result, ...historyView() };
     },
     'POST /api/open-folder': async (req) => {
       const body = await readBody(req);
@@ -1100,7 +1141,11 @@ async function main() {
   try { trash.purgeOld(); } catch (err) { console.error('emptying old trash failed:', err); }
   // Trashed conversations keep their folder note until the trash is emptied of them; after that
   // it's forgotten with them.
-  try { historyFolders.prune([...history.list().map((m) => m.sessionId), ...trash.trashedSessionIds()]); } catch (err) { console.error('tidying history folders failed:', err); }
+  try {
+    const known = [...history.list().map((m) => m.sessionId), ...trash.trashedSessionIds()];
+    historyFolders.prune(known);
+    historyFolders.pruneTitles(known);
+  } catch (err) { console.error('tidying history folders failed:', err); }
   live.start();
   usage.start();
   detectClaude().then(() => { refreshModels(); checkLatestClaude(); }).catch((err) => console.error('checking Claude Code failed:', err));

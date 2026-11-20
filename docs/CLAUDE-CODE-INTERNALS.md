@@ -566,6 +566,29 @@ them and shows any that arrive; the person's own `promptSuggestionEnabled` setti
 on top of the plan (one of the reasons it can be refused is `extra_usage_disabled`), so Claude Deck
 allows it only with *Allow API billing*.
 
+✅ **Ultracode** (2.1.321, against the mock). Standing dynamic-workflow orchestration at any effort
+level, for the session only (`/effort ultracode on|off` in the terminal). `control_request`
+`get_settings` returns it under `applied`: `ultracode` (in effect), `ultracodeRequested` and
+`ultracodeAvailable` (dynamic workflows on and a model that supports it; Claude Code's own schema
+says hosts should offer an Ultracode control only while this is true). `apply_flag_settings`
+`{settings: {ultracode: true|false}}` turns it on or off (success, and `get_settings` reads it
+back; `effective.ultracode` follows too). It must be a boolean ("apply_flag_settings: ultracode must
+be a boolean"), and is refused with `ultracode_unavailable` when unavailable. `result` messages
+don't carry it. With no `enableWorkflows` in settings it was still available (workflows on by
+default). Claude Deck reads it after `initialize` and after a model change, and offers the header's
+Ultracode toggle while it's available (`src/chat.js` `_readApplied`, `setUltracode`).
+
+✅ **What a session actually runs with** (2.1.321, against the mock). `get_settings` `applied`
+also carries `model` (the resolved ID: `claude-opus-5-5` with nothing set, `claude-sonnet-5-5` with
+`"model": "sonnet"` in settings) and `effort` (the level in effect; it follows `apply_flag_settings`
+`effortLevel` at once). `effective` holds the settings as written (`model`, `effortLevel`,
+`permissions.defaultMode`). Seen: with `"effortLevel": "high"` in settings, `applied.effort` still
+said `medium` at start-up, so `effective` isn't what runs; Claude Deck shows `applied`. The session's
+permission mode isn't in `get_settings`; `system/init` reports `permissionMode` once a turn starts.
+Claude Code's own names for the modes (its Shift+Tab indicator): `default` Manual, `plan` Plan,
+`acceptEdits` Accept edits, `auto` Auto, `dontAsk` Don't Ask, `bypassPermissions` Bypass
+Permissions. Claude Deck's header shows these resolved values instead of "Default" entries.
+
 ⚠️ **`mcp_authenticate` `{serverName, redirectUri?}`.** From the code: `{authUrl,
 requiresUserAction: true, callbackExpected: true, redirectScheme, state, callbackPort?}` for a server
 using OAuth, where Claude Code listens for the browser's return itself, and `{authUrl,
