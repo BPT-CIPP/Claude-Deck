@@ -96,6 +96,13 @@ Read from Claude Code 2.1.308's own code (the JavaScript bundled in `claude.exe`
   succeeds. `src/server.js` runs `claude update` up to three times when it fails like this, and
   `src/claude-locate.js` `updateFailure` picks out the reason. The native installer's path doesn't
   use npm; it fails with `Error: Failed to install native update` and the error on the next line.
+- ✅ **2.1.328 reworded that npm failure** (its bundled code, read 2026-11-20; same `npm view ...
+  --prefer-online` with a 5 s timeout): `Couldn't check for updates`, then `Couldn't get the latest
+  version from the npm registry`, and the "Try:" list now ends `• Check if you need to log in: npm
+  whoami`. Claude Deck matched only the old wording, so it stopped retrying and showed that last line
+  as the reason. `updateFailure` matches both; the compat suite reads `claude.exe` for the message so
+  a future rewording shows up in the nightly run. `npm view` took 3.0 s and 2.8 s on the same PC that
+  day.
 - ✅ npm's `https://registry.npmjs.org/-/package/@anthropic-ai/claude-code/dist-tags` lists the
   release channels: `{ latest, stable, next }`. `autoUpdatesChannel` in settings picks `latest`
   (the default) or `stable`. Claude Deck reads this to say a newer version is out; Claude Code

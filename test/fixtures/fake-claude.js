@@ -717,21 +717,22 @@ function updateMode() {
   process.stdout.write('Current version: 0.0.0\nChecking for updates to latest version...\n');
   if (state.npmSlowRuns > 0) {
     fs.writeFileSync(file, JSON.stringify({ npmSlowRuns: state.npmSlowRuns - 1 }));
-    // What 2.1.309 prints (its bundled code, read 2026-10-27), to stderr.
+    // What 2.1.328 prints (its bundled code, read 2026-11-20), to stderr. 2.1.309 said "Failed to
+    // check for updates" / "Unable to fetch latest version from npm registry" instead.
     process.stderr.write([
-      'Failed to check for updates',
-      'Unable to fetch latest version from npm registry',
+      "Couldn't check for updates",
+      "Couldn't get the latest version from the npm registry",
       '',
       'Possible causes:',
-      '  • Network connectivity issues',
+      '  • Network problems',
       '  • npm registry is unreachable',
       '  • Corporate proxy/firewall blocking npm',
       '',
       'Try:',
       '  • Check your internet connection',
-      '  • Run with --debug flag for more details',
+      '  • Run with --debug for details',
       '  • Manually check: npm view @anthropic-ai/claude-code version',
-      '  • Check if you need to login: npm whoami',
+      '  • Check if you need to log in: npm whoami',
       '',
     ].join('\n'));
     process.exit(1);
