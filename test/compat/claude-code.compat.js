@@ -105,6 +105,19 @@ test("command line: the effort levels and permission modes Claude Deck offers ar
   }
 });
 
+test("command line: claude update's npm-lookup failure is worded as Claude Deck expects (Update Claude Code retries it)", { skip: /\.[cm]?js$/i.test(CLAUDE) && 'not a claude.exe' }, () => {
+  // Claude Code gives npm 5 s to name the newest version; Claude Deck retries when that's what failed,
+  // recognizing it by the message (src/claude-locate.js updateFailure). 2.1.328 reworded it, which
+  // stopped the retry. Read from the program itself: the failure can't be caused on demand.
+  const { updateFailure } = require('../../src/claude-locate');
+  const bin = fs.readFileSync(CLAUDE);
+  const strings = [];
+  for (let at = bin.indexOf('npm registry'); at !== -1; at = bin.indexOf('npm registry', at + 1)) {
+    strings.push(...(bin.toString('latin1', Math.max(0, at - 80), at + 20).match(/[^\x00-\x1f"`]*npm registry/) || []));
+  }
+  assert.ok(updateFailure(strings.join('\n')).npmLookup, `none of these is recognized: ${JSON.stringify(strings.slice(0, 8))}`);
+});
+
 test("command line: MCP servers are added and removed by `claude mcp`, kept where Claude Deck reads them (Settings → MCP servers)", async () => {
   const mcp = require('../../src/mcp-config');
   const m = new mcp.McpConfig();

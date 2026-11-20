@@ -34,6 +34,9 @@ test("a failed claude update gives its reason, not its last line of advice", () 
   // last line once became the whole error ("check if you need to login"), read as Claude's sign-in.
   const npmSlow = 'Current version: 2.1.309\nChecking for updates to latest version...\n\x1b[31mFailed to check for updates\x1b[39m\nUnable to fetch latest version from npm registry\n\nPossible causes:\n  • Network connectivity issues\n\nTry:\n  • Check your internet connection\n  • Check if you need to login: npm whoami';
   assert.deepStrictEqual(updateFailure(npmSlow), { npmLookup: true, reason: "Claude Code couldn't get the newest version number from npm in time" });
+  // 2.1.328's wording of the same failure (its bundled code, read 2026-11-20).
+  const npmSlow328 = "Current version: 2.1.328\nChecking for updates to latest version…\n\x1b[31mCouldn't check for updates\x1b[39m\nCouldn't get the latest version from the npm registry\n\nPossible causes:\n  • Network problems\n\nTry:\n  • Check your internet connection\n  • Manually check: npm view @anthropic-ai/claude-code version\n  • Check if you need to log in: npm whoami";
+  assert.deepStrictEqual(updateFailure(npmSlow328), { npmLookup: true, reason: "Claude Code couldn't get the newest version number from npm in time" });
   const native = 'Current version: 2.1.309\nChecking for updates to latest version...\nError: Failed to install native update\nchecksum mismatch\nTry running "claude doctor" for diagnostics';
   assert.deepStrictEqual(updateFailure(native), { npmLookup: false, reason: 'Error: Failed to install native update' });
   assert.deepStrictEqual(updateFailure('something else went wrong\n'), { npmLookup: false, reason: 'something else went wrong' });

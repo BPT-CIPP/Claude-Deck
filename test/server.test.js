@@ -184,7 +184,7 @@ test('Update Claude Code tries again when npm was too slow, says so if it stays 
   slowRuns(1); // slow once, then fine: the second try updates
   let res = await update();
   assert.deepStrictEqual([res.ok, res.npmLookup, res.reason], [true, false, null]);
-  assert.match(logged(), /attempt 1: failed\n {4}Current version: 0\.0\.0[\s\S]*Check if you need to login: npm whoami[\s\S]*attempt 2: finished/);
+  assert.match(logged(), /attempt 1: failed\n {4}Current version: 0\.0\.0[\s\S]*Check if you need to log in: npm whoami[\s\S]*attempt 2: finished/);
 
   slowRuns(5); // slow every time: three tries, then the reason
   res = await update();

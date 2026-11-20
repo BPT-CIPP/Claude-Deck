@@ -6,6 +6,15 @@ What changed in each version of Claude Deck. The format follows
 PATCH for fixes. Each version's section becomes the notes of its GitHub release (see
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md#versioning-and-releases)).
 
+## [1.23.1] - 2026-11-20
+
+### Fixed
+- **Update Claude Code works with Claude Code 2.1.328.** Claude Code gives npm 5 seconds to name the
+  newest version, and Claude Deck tries again when that's what failed. Claude Code 2.1.328 words
+  that failure differently, so Claude Deck no longer recognized it: it gave up after one try and
+  showed Claude Code's last line of advice ("Check if you need to log in: npm whoami") as the
+  reason. It now recognizes both wordings and tries up to three times again.
+
 ## [1.23.0] - 2026-11-20
 
 ### Added
@@ -715,6 +724,7 @@ PATCH for fixes. Each version's section becomes the notes of its GitHub release 
   plan usage, a Claude Code settings editor, themes, keyboard shortcuts, and the team workflow
   (verify gate, Stop hook, GitHub Actions checks, sandbox).
 
+[1.23.1]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.23.0...v1.23.1
 [1.23.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.21.0...v1.22.0
 [1.21.0]: https://github.com/BPT-CIPP/Claude-Deck/compare/v1.20.0...v1.21.0
