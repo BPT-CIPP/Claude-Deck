@@ -481,6 +481,38 @@ error response with the reason (`Connection closed` for the server that can't st
 ⚠️ **Signing in** (`needs-auth`): `mcp_authenticate`; see "Terminal features in stream-json". Claude
 Deck opens the address it answers with and watches `mcp_status` until the server connects.
 
+### MCP servers, as configured (2.1.325)
+
+Checked with 2.1.325 from Node (`execFile`, as Claude Deck runs it), with a throwaway
+`CLAUDE_CONFIG_DIR` and project folder. Settings → MCP servers (`src/mcp-config.js`) relies on it.
+
+✅ **Where each scope is kept:**
+- `user`: `<config>/.claude.json` `mcpServers.<name>`.
+- `local`: the same file, `projects["C:/path/to/folder"].mcpServers.<name>`. The project key is
+  the folder with forward slashes.
+- `project`: `<folder>/.mcp.json` `mcpServers.<name>` (created by the add; left as
+  `{"mcpServers": {}}` after the last remove).
+
+Each entry is what was added: `{type: 'stdio', command, args, env?}` or `{type: 'http' | 'sse',
+url, headers?}`. Plugin servers and claude.ai connectors are kept elsewhere and aren't in these.
+
+✅ **`claude mcp add-json [--scope user|local|project] <name> <json>`** adds the server, run in the
+project folder for `local` and `project`, and exits 0 with one line ("Added stdio MCP server <name>
+to user config"). Refusals exit 1 with the reason on the first line: a name already used in that
+scope ("MCP server <name> already exists in user config"), JSON that isn't a valid server
+("Invalid configuration: : Invalid input", for a stdio server with no command), or a name with
+other characters ("Invalid name has space. Names can only contain letters, numbers, hyphens, and
+underscores."). Windows PowerShell 5.1 strips the JSON's double
+quotes when passing it to a native program, which Claude Code reports as "Invalid configuration:
+Invalid input"; Node's `execFile` passes it intact.
+
+✅ **`claude mcp remove [--scope ...] <name>`** removes it and exits 0 ("Removed MCP server <name>
+from <scope> config", then a "File modified: ..." line); a name not in that scope exits 1 with
+`No MCP server named "<name>" in <scope> scope`.
+
+⚠️ **`claude mcp list`** connects to every server to report its health, so it's slow and starts
+each server; Claude Deck reads the files above instead.
+
 ## Pasted text
 
 ⚠️ How Claude Code's prompt takes a long paste, read from the code inside `claude.exe` 2.1.284 (it's

@@ -78,6 +78,8 @@ src/launcher.js         claude argument building, model aliases, wt.exe new-tab 
 src/tab-host.js         runs inside each Windows Terminal tab; starts claude, reports pid and session id
 src/settings-files.js   Claude settings and CLAUDE.md: read, write (backup first), restore
 src/plugins.js          plugins and marketplaces, through Claude Code's own `claude plugin ... --json`
+src/mcp-config.js       configured MCP servers: listed from Claude Code's files, added and removed
+                        through `claude mcp add-json` / `claude mcp remove`
 src/folders.js          directory listing and new-folder for the in-app folder picker
 src/timeline.js         change timeline: files per turn from Claude's file checkpoints, diffs, restore, undo
 src/trash.js            deleting a conversation: moves its files to the trash, Undo, 30-day purge
@@ -194,4 +196,5 @@ Claude Code's files live in `%USERPROFILE%\.claude\` (or `CLAUDE_CONFIG_DIR`). C
 there only through the settings editor (`src/settings-files.js`: backup first, refused if the file
 changed since it was opened) and when deleting a conversation from History (`src/trash.js`: moved to
 the trash, never deleted outright). "Always allow" answers to permission prompts are saved by Claude
-Code itself.
+Code itself, and so are MCP servers added or removed in Settings (`src/mcp-config.js` runs
+`claude mcp add-json` / `claude mcp remove`).

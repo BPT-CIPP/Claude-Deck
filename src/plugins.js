@@ -191,4 +191,4 @@ function runClaude(args, cwd) {
   });
 }
 
-module.exports = { PluginManager, lastJson };
+module.exports = { PluginManager, lastJson, runClaude };

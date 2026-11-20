@@ -715,6 +715,7 @@ html.lamps-dim .lamp.waiting { background: color-mix(in srgb, var(--waiting) 55%
   color: var(--plate-text);
 }
 .focus-group .lamp { width: 7px; height: 7px; border-width: 1.5px; }
+.fg-clear { margin-left: 6px; vertical-align: middle; }
 .focus-item { position: relative; }
 .focus-row {
   display: flex;
@@ -760,7 +761,7 @@ html.lamps-dim .lamp.waiting { background: color-mix(in srgb, var(--waiting) 55%
 .app.rail-collapsed .focus-splitter { display: none; }
 .app.rail-collapsed .track-head { flex-direction: column; padding: 10px 6px; }
 .app.rail-collapsed .track-head input, .app.rail-collapsed .track-summary, .app.rail-collapsed .fr-text,
-.app.rail-collapsed .fr-del, .app.rail-collapsed .focus-group { display: none; }
+.app.rail-collapsed .fr-del, .app.rail-collapsed .focus-group, .app.rail-collapsed .fg-clear { display: none; }
 .app.rail-collapsed .focus-list { padding: 8px 0 24px 8px; }
 .app.rail-collapsed .focus-row { justify-content: center; padding: 10px 8px; }
 
@@ -1194,6 +1195,14 @@ label.pp-row { cursor: pointer; }
 .market-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; border-bottom: 1px solid var(--line-soft); }
 .market-name { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .market .row input { flex: 1; }
+/* Settings → MCP servers: the groups, and the Add form. */
+.mcp .folder { display: flex; gap: 8px; }
+.mcp .folder input { flex: 1; }
+.mcp-group { display: flex; flex-direction: column; gap: 2px; }
+.mcp-what { font-family: var(--mono); }
+.mcp-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px 14px; }
+.mcp-form .field:has(textarea), .mcp-form .row { grid-column: 1 / -1; }
+.mcp-form textarea { font-family: var(--mono); font-size: var(--fs-s); }
 
 /* ---- usage view (Most tokens this week) ------------------------------------------------------ */
 .usage-view { flex: 1; overflow-y: auto; padding: 22px 32px 40px; }
@@ -1420,7 +1429,9 @@ dialog.week-dialog { width: min(780px, calc(100vw - 32px)); }
 .restore-list li { display: flex; gap: 8px; align-items: center; padding: 3px 0; }
 
 /* ---- Claude Code Settings -------------------------------------------------------------------- */
-.settings { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* #settings-root sits between the view and .settings: without these, it grows to its content and
+   main clips the bottom instead of .settings-body scrolling. */
+#settings-root, .settings { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .scope-bar { display: flex; gap: 12px; align-items: center; padding: 12px 28px; flex-wrap: wrap; }
 .scope-bar .folder { display: flex; gap: 6px; flex: 1; min-width: 320px; }
 .scope-bar .folder input { flex: 1; }

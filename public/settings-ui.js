@@ -25,8 +25,12 @@
   // Plugin marketplaces aren't a file: Claude Code's own `claude plugin marketplace` commands
   // manage them (src/plugins.js), so they get their own page instead of the file editor.
   const MARKETPLACES = 'marketplaces';
-  const SCOPE_ORDER = ['user', 'project', 'local', 'memory-user', 'memory-project', MARKETPLACES];
-  const SCOPE_TABS = { user: 'User', project: 'Project', local: 'Project (local)', 'memory-user': 'User memory', 'memory-project': 'Project memory', [MARKETPLACES]: 'Plugin marketplaces' };
+  // MCP servers aren't a settings file either: listed from Claude Code's config, changed through
+  // its own `claude mcp` commands (src/mcp-config.js).
+  const MCP = 'mcp';
+  const SCOPE_ORDER = ['user', 'project', 'local', 'memory-user', 'memory-project', MARKETPLACES, MCP];
+  const SCOPE_TABS = { user: 'User', project: 'Project', local: 'Project (local)', 'memory-user': 'User memory', 'memory-project': 'Project memory', [MARKETPLACES]: 'Plugin marketplaces', [MCP]: 'MCP servers' };
+  const MCP_FORM = { name: '', scope: 'user', type: 'stdio', command: '', args: '', env: '', url: '', headers: '' };
 
   const T = {
     ctx: null,
@@ -51,6 +55,7 @@
     mounted: false,
     loaded: false,
     market: { list: null, error: null, busy: false },
+    mcp: { data: null, error: null, busy: false, form: { ...MCP_FORM } },
   };
 
   const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
@@ -580,6 +585,125 @@
       h('small', { class: 'faint' }, 'Claude Code downloads it from there. Only add marketplaces you trust: plugins run with your permissions.'));
   }
 
+  // ---- MCP servers ---------------------------------------------------------------------------
+  // The MCP servers Claude Code is set up to start (src/mcp-config.js): listed from its files,
+  // added and removed through its own `claude mcp` commands. Every project's servers always; with
+  // a project folder, that project's shared (.mcp.json) and just-you ones too.
+  const MCP_GROUPS = [
+    ['user', 'Every project', "Saved in your Claude Code config; every session starts them."],
+    ['project', 'This project, shared', "Saved in the project's .mcp.json, so everyone using the project gets them (Claude Code asks each person to approve them first)."],
+    ['local', 'This project, just you', 'Saved in your Claude Code config, for this project only.'],
+  ];
+  const MCP_TYPES = [['stdio', 'Command (stdio)'], ['http', 'HTTP'], ['sse', 'SSE']];
+
+  async function loadMcp() {
+    T.mcp.error = null;
+    try {
+      T.mcp.data = await api('GET', `/api/mcp-config?folder=${encodeURIComponent(T.folder)}`);
+    } catch (err) {
+      T.mcp.data = null;
+      T.mcp.error = err.message;
+    }
+    if (T.scope === MCP) render();
+  }
+
+  // One change at a time; each runs a Claude Code command, which answers with the list again.
+  async function mcpAction(label, fn, after) {
+    if (T.mcp.busy) return;
+    T.mcp.busy = true;
+    render();
+    try {
+      const res = await fn();
+      T.mcp.data = res;
+      toast(res && res.message ? res.message : 'Done');
+      if (after) after();
+    } catch (err) {
+      // Claude Code's refusals already start with the label (src/mcp-config.js).
+      toast(err.message.startsWith(label) ? err.message : `${label}: ${err.message}`, 'error');
+    }
+    T.mcp.busy = false;
+    render();
+  }
+
+  function mcpRow(s) {
+    const what = s.type === 'stdio' ? [s.command, ...s.args].filter(Boolean).join(' ') : s.url;
+    const extra = [s.env.length ? `env: ${s.env.join(', ')}` : '', s.headers.length ? `headers: ${s.headers.join(', ')}` : ''].filter(Boolean).join(' · ');
+    return h('div', { class: 'market-row' },
+      h('div', { class: 'market-name' },
+        h('strong', null, s.name),
+        h('small', { class: 'faint' }, `${MCP_TYPES.find(([t]) => t === s.type) ? MCP_TYPES.find(([t]) => t === s.type)[1] : s.type} · `, h('span', { class: 'mcp-what' }, what || '')),
+        extra ? h('small', { class: 'faint' }, extra) : null),
+      h('button', {
+        type: 'button',
+        class: 'danger small',
+        disabled: T.mcp.busy,
+        onclick: async () => {
+          const ok = await Deck.confirm({ title: `Remove ${s.name}?`, body: 'Claude Code stops starting this MCP server. Sessions already running keep it until they end.', ok: 'Remove', danger: true });
+          if (ok) mcpAction(`Couldn't remove ${s.name}`, () => api('POST', '/api/mcp-config/remove', { name: s.name, scope: s.scope, folder: T.folder }));
+        },
+      }, 'Remove'));
+  }
+
+  function mcpBody() {
+    const m = T.mcp;
+    const f = m.form;
+    const busy = m.busy;
+    const folderInput = h('input', { type: 'text', value: T.folder, list: 'settings-folders', placeholder: 'Project folder (for its own servers)', spellcheck: 'false', 'aria-label': 'Project folder' });
+    const dl = h('datalist', { id: 'settings-folders' });
+    T.ctx.folders().then((x) => { for (const p of [...(x.favorites || []), ...(x.recent || []).map((r) => r.path)]) dl.appendChild(h('option', { value: p })); });
+    const setFolder = (value) => { if (value === T.folder) return; T.folder = value; loadMcp(); };
+    folderInput.addEventListener('change', () => setFolder(folderInput.value.trim()));
+    let groups;
+    if (m.error) groups = h('p', { class: 's-error' }, m.error);
+    else if (!m.data) groups = h('p', { class: 'faint' }, 'Loading…');
+    else {
+      groups = MCP_GROUPS.map(([scope, title, note]) => {
+        const needsFolder = scope !== 'user';
+        const list = m.data[scope] || [];
+        return h('div', { class: 'mcp-group' },
+          h('h3', null, title),
+          h('small', { class: 'faint' }, note),
+          needsFolder && !m.data.folder ? h('p', { class: 'faint' }, 'Choose a project folder above to see them.')
+            : list.length ? h('div', { class: 'market-list' }, list.map(mcpRow))
+              : h('p', { class: 'faint' }, 'None.'));
+      });
+    }
+    // The Add form keeps what's typed across redraws (T.mcp.form).
+    const field = (label, el) => h('label', { class: 'field' }, h('span', null, label), el);
+    const text = (key, attrs) => h('input', { type: 'text', value: f[key], spellcheck: 'false', disabled: busy, oninput: (e) => { f[key] = e.target.value; }, ...attrs });
+    const area = (key, attrs) => h('textarea', { rows: '3', spellcheck: 'false', disabled: busy, oninput: (e) => { f[key] = e.target.value; }, ...attrs }, f[key]);
+    const where = h('select', { 'aria-label': 'Where to add it', disabled: busy, onchange: (e) => { f.scope = e.target.value; } },
+      MCP_GROUPS.map(([scope, title]) => h('option', { value: scope, selected: f.scope === scope, disabled: scope !== 'user' && !(m.data && m.data.folder) }, title)));
+    const type = h('select', { 'aria-label': 'How it runs', disabled: busy, onchange: (e) => { f.type = e.target.value; render(); } },
+      MCP_TYPES.map(([t, label]) => h('option', { value: t, selected: f.type === t }, label)));
+    const add = () => {
+      if (!f.name.trim()) { toast('Enter a name for the server.', 'error'); return; }
+      mcpAction(`Couldn't add ${f.name.trim()}`, () => api('POST', '/api/mcp-config', { ...f, name: f.name.trim(), folder: T.folder }),
+        () => { T.mcp.form = { ...MCP_FORM, scope: f.scope, type: f.type }; });
+    };
+    return h('div', { class: 'inner market mcp' },
+      h('p', { class: 'muted' }, "The MCP servers Claude Code starts in its sessions. Claude Code saves each change itself; sessions pick changes up when they start or are resumed. Servers that plugins bring, and claude.ai connectors, aren't listed here."),
+      h('div', { class: 'folder' }, folderInput, dl,
+        h('button', { type: 'button', class: 'ghost', onclick: async () => { const p = await T.ctx.pickFolder(T.folder); if (p) setFolder(p); } }, 'Browse…')),
+      busy ? h('span', { class: 'faint' }, 'Working…') : null,
+      groups,
+      h('h3', null, 'Add a server'),
+      h('div', { class: 'mcp-form' },
+        field('Name', text('name', { placeholder: 'e.g. github', 'aria-label': 'Server name' })),
+        field('Where', where),
+        field('How it runs', type),
+        f.type === 'stdio' ? [
+          field('Command', text('command', { placeholder: 'e.g. npx', 'aria-label': 'Command' })),
+          field('Arguments, one per line', area('args', { placeholder: '-y\n@modelcontextprotocol/server-github', 'aria-label': 'Arguments' })),
+          field('Environment variables, NAME=value per line', area('env', { placeholder: 'GITHUB_TOKEN=...', 'aria-label': 'Environment variables' })),
+        ] : [
+          field('URL', text('url', { placeholder: 'https://example.com/mcp', 'aria-label': 'URL' })),
+          field('Headers, Name: value per line', area('headers', { placeholder: 'Authorization: Bearer ...', 'aria-label': 'Headers' })),
+        ],
+        h('div', { class: 'row' }, h('button', { type: 'button', class: 'primary', disabled: busy, onclick: add }, 'Add'))),
+      h('small', { class: 'faint' }, 'Only add servers you trust: a command runs with your permissions, and a server sees what Claude sends it.'));
+  }
+
   function render() {
     const root = clear(T.root);
     const scopes = h('div', { class: 'seg', role: 'tablist', 'aria-label': 'Which file' },
@@ -589,6 +713,10 @@
       h('span', { class: 'faint', style: { fontSize: '13px' } }, 'Running sessions may need a restart to pick up changes.'));
     if (T.scope === MARKETPLACES) {
       root.appendChild(h('div', { class: 'settings' }, title, bar, h('div', { class: 'settings-body' }, marketplacesBody())));
+      return;
+    }
+    if (T.scope === MCP) {
+      root.appendChild(h('div', { class: 'settings' }, title, bar, h('div', { class: 'settings-body' }, mcpBody())));
       return;
     }
     const def = scopeDef();
@@ -647,6 +775,13 @@
       T.loaded = true;
       render();
       loadMarketplaces();
+      return;
+    }
+    if (T.scope === MCP) {
+      T.file = null;
+      T.loaded = true;
+      render();
+      loadMcp();
       return;
     }
     if (scopeDef().needsFolder && !T.folder) {

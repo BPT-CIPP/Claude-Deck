@@ -20,6 +20,7 @@ const folders = require('./folders');
 const appInstall = require('./app-install');
 const { UsageMonitor } = require('./usage');
 const { PluginManager } = require('./plugins');
+const mcpConfig = require('./mcp-config');
 const promptHistory = require('./prompt-history');
 const { HistoryIndex, readTranscript, UUID_RE } = require('./history');
 const historyFolders = require('./history-folders');
@@ -251,6 +252,7 @@ async function main() {
   const timeline = new Timeline({ history });
   const usage = new UsageMonitor();
   const plugins = new PluginManager();
+  const mcpServers = new mcpConfig.McpConfig();
   // A plugin change is saved either way; applying it to the chat it was made from is a bonus.
   const reloadChatPlugins = (chatId, pluginId, enabled) => chats.reloadPlugins(chatId, { pluginId, enabled })
     .catch((err) => ({ applied: false, reason: err.message }));
@@ -904,6 +906,11 @@ async function main() {
     'POST /api/plugins/marketplaces': async (req) => plugins.addMarketplace((await readBody(req)).source),
     'POST /api/plugins/marketplaces/remove': async (req) => plugins.removeMarketplace((await readBody(req)).name),
     'POST /api/plugins/marketplaces/update': async (req) => plugins.updateMarketplaces((await readBody(req)).name),
+    // MCP servers as configured (Settings → MCP servers): listed from Claude Code's files, added and
+    // removed through Claude Code's own commands (src/mcp-config.js). Each change returns the list again.
+    'GET /api/mcp-config': (req, p, url) => mcpConfig.list(url.searchParams.get('folder') || ''),
+    'POST /api/mcp-config': async (req) => { const b = await readBody(req); const r = await mcpServers.add(b); return { ...r, ...mcpConfig.list(b.folder || '') }; },
+    'POST /api/mcp-config/remove': async (req) => { const b = await readBody(req); const r = await mcpServers.remove(b); return { ...r, ...mcpConfig.list(b.folder || '') }; },
 
     'GET /api/prefs': () => prefsStore.load(),
     'PUT /api/prefs': async (req) => {
