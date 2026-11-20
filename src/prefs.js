@@ -20,6 +20,7 @@ const DEFAULTS = Object.freeze({
   theme: 'system',             // one of THEMES
   fontText: 'default',         // one of FONTS: messages, lists and controls
   fontLabels: 'default',       // one of FONTS: the engraved capitals on plates and labels
+  fontCode: 'default',         // one of CODE_FONTS: code, diffs, commands, editors and the Inlaid CLI
   showToolIcons: false,        // an emoji beside each tool call in a chat
   clearChatOnClear: true,      // /clear also empties the chat's messages, as Claude Code clears its screen
   showExternal: true,          // show Claude sessions running outside Claude Deck
@@ -34,7 +35,10 @@ const THEMES = ['system', 'dark', 'light', 'claude', 'midnight', 'graphite', 'no
 
 // Fonts that ship with Windows, so nothing is downloaded; each id's font stack is FONT_CHOICES in
 // public/app.js. 'default' is each role's own (Segoe UI Variable for text, Bahnschrift for labels).
-const FONTS = ['default', 'segoe', 'aptos', 'calibri', 'verdana', 'tahoma', 'trebuchet', 'georgia', 'bahnschrift', 'cascadia', 'consolas'];
+const FONTS = ['default', 'segoe', 'aptos', 'calibri', 'verdana', 'tahoma', 'trebuchet', 'georgia', 'bahnschrift', 'cascadia', 'consolas', 'lucida', 'courier'];
+// The code font must keep every character the same width (code, diffs and the terminal line up by
+// it), so only fixed-width fonts. 'default' is Cascadia Code.
+const CODE_FONTS = ['default', 'cascadia', 'consolas', 'lucida', 'courier'];
 
 const ENUMS = {
   windowMode: ['single', 'perSession'],
@@ -42,6 +46,7 @@ const ENUMS = {
   theme: THEMES,
   fontText: FONTS,
   fontLabels: FONTS,
+  fontCode: CODE_FONTS,
 };
 
 function file() {
@@ -85,4 +90,4 @@ function save(patch) {
   return next;
 }
 
-module.exports = { DEFAULTS, THEMES, FONTS, load, save };
+module.exports = { DEFAULTS, THEMES, FONTS, CODE_FONTS, load, save };

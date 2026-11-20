@@ -227,6 +227,44 @@ test('a chat forks into a new one (named, with a first message), and only the li
   for (const id of [chat.id, fork.body.id]) await call('POST', `/api/chats/${id}/end`, {});
 });
 
+test('a session renamed in Sessions is listed under that name in History, and several conversations move at once', async () => {
+  const fs = require('fs');
+  const { line } = require('./helpers');
+  const { port } = JSON.parse(fs.readFileSync(path.join(box.dataDir, 'runtime.json'), 'utf8'));
+  const token = JSON.parse(fs.readFileSync(path.join(box.dataDir, 'secret.json'), 'utf8')).token;
+  const call = async (method, url, body) => {
+    const r = await fetch(`http://127.0.0.1:${port}${url}`, { method, headers: { 'x-deck-token': token, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, body: await r.json() };
+  };
+  const folder = path.join(box.root, 'rename-here');
+  fs.mkdirSync(folder, { recursive: true });
+  const chat = (await call('POST', '/api/chats', { cwd: folder })).body;
+  // Its conversation's transcript, as Claude Code would have written it, with Claude Code's own title.
+  const dir = path.join(box.claudeDir, 'projects', 'C--rename-here');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${chat.sessionId}.jsonl`),
+    line({ sessionId: chat.sessionId, cwd: folder, type: 'user', message: { role: 'user', content: 'Hello' }, timestamp: '2026-11-01T10:00:00.000Z' })
+    + line({ sessionId: chat.sessionId, type: 'custom-title', customTitle: 'Title from Claude Code' }));
+  const titleNow = async () => (await call('GET', '/api/history?refresh=1')).body.sessions.find((s) => s.sessionId === chat.sessionId).title;
+  assert.strictEqual(await titleNow(), 'Title from Claude Code');
+  assert.strictEqual((await call('PATCH', `/api/chats/${chat.id}`, { name: 'Renamed in Sessions' })).status, 200);
+  assert.strictEqual(await titleNow(), 'Renamed in Sessions');
+  // The name outlasts the session.
+  await call('POST', `/api/chats/${chat.id}/end`, {});
+  assert.strictEqual(await titleNow(), 'Renamed in Sessions');
+
+  // Reorganize's move: all or none.
+  const SID = 'dddddddd-4444-4444-8444-444444444444';
+  let r = await call('POST', '/api/history/move', { moves: [{ sessionId: SID, folder: 'C:\\sorted' }, { sessionId: chat.sessionId, folder: 'C:\\sorted' }] });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(r.body.sessions.filter((s) => s.folder === 'C:\\sorted').map((s) => s.sessionId).sort(), [SID, chat.sessionId].sort());
+  r = await call('POST', '/api/history/move', { moves: [{ sessionId: SID, folder: null }, { sessionId: chat.sessionId, folder: 'relative' }] });
+  assert.strictEqual(r.status, 400);
+  assert.strictEqual((await call('GET', '/api/history')).body.sessions.find((s) => s.sessionId === SID).folder, 'C:\\sorted', 'nothing moved when one move was refused');
+  r = await call('POST', '/api/history/move', { moves: [{ sessionId: SID, folder: null }, { sessionId: chat.sessionId, folder: null }] });
+  assert.deepStrictEqual(r.body.sessions.find((s) => s.sessionId === SID).movedFrom, null);
+});
+
 test('restart hands over to a new server on the same port, exiting as "another copy is serving"', async () => {
   const fs = require('fs');
   const runtime = () => JSON.parse(fs.readFileSync(path.join(box.dataDir, 'runtime.json'), 'utf8'));

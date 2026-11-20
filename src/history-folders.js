@@ -81,4 +81,43 @@ function rename(folder, name) {
   return all;
 }
 
-module.exports = { load, set, annotate, prune, names, rename, MAX_NAME };
+// The names sessions were given in Claude Deck (Rename in the Sessions view), by conversation, so
+// History shows a conversation under the name its session has. Claude Code's transcript keeps its
+// own title; this is Claude Deck's note beside it.
+//
+//   <dataDir>/history-titles.json   { "<sessionId>": "<name>" }
+const titlesFile = () => path.join(paths.dataDir(), 'history-titles.json');
+
+function titles() {
+  const stored = readJson(titlesFile(), {});
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
+  return Object.fromEntries(Object.entries(stored).filter(([id, name]) => UUID_RE.test(id) && typeof name === 'string' && name.trim()));
+}
+
+// { sessionId: name }: a name is kept, an empty one forgotten (History shows Claude Code's title
+// again). Written only when something changes.
+function setTitles(changes) {
+  const all = titles();
+  let changed = false;
+  for (const [id, name] of Object.entries(changes || {})) {
+    if (!UUID_RE.test(id)) continue;
+    const clean = typeof name === 'string' ? name.trim().slice(0, 120) : '';
+    if (clean && all[id] !== clean) { all[id] = clean; changed = true; } else if (!clean && id in all) { delete all[id]; changed = true; }
+  }
+  if (changed) writeJsonAtomic(titlesFile(), all);
+  return all;
+}
+
+function withTitles(sessions, given = titles()) {
+  return sessions.map((m) => (given[m.sessionId] ? { ...m, title: given[m.sessionId] } : m));
+}
+
+function pruneTitles(sessionIds) {
+  const keep = new Set(sessionIds);
+  const all = titles();
+  const next = Object.fromEntries(Object.entries(all).filter(([id]) => keep.has(id)));
+  if (Object.keys(next).length !== Object.keys(all).length) writeJsonAtomic(titlesFile(), next);
+  return next;
+}
+
+module.exports = { load, set, annotate, prune, names, rename, titles, setTitles, withTitles, pruneTitles, MAX_NAME };

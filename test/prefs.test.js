@@ -37,6 +37,11 @@ test('every font is offered in Preferences, and only known fonts are accepted', 
   assert.strictEqual(prefs.save({ fontText: 'aptos', fontLabels: 'segoe' }).fontText, 'aptos');
   assert.strictEqual(prefs.load().fontLabels, 'segoe');
   assert.throws(() => prefs.save({ fontText: 'Comic Sans MS' }), /must be one of/);
+  // The code font: fixed-width fonts only, since code, diffs and the terminal line up by it.
+  assert.strictEqual(prefs.load().fontCode, 'default');
+  assert.strictEqual(prefs.save({ fontCode: 'consolas' }).fontCode, 'consolas');
+  assert.throws(() => prefs.save({ fontCode: 'aptos' }), /must be one of/);
+  for (const id of prefs.CODE_FONTS) assert.ok(prefs.FONTS.includes(id), `the code font ${id} is a known font`);
 });
 
 test('pinned folders are paths and presets have a name and options; anything else is refused or left out', () => {
